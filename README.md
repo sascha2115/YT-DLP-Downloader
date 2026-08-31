@@ -72,5 +72,12 @@ python3 -m unittest temp.test_subtitle_progress -v
 - **yt-dlp extraction errors**: try the nightly pre-release — `python3 -m pip install -U --pre "yt-dlp[default]"` (inside the venv; add `--break-system-packages` for system-wide installs on PEP 668 distros). Roll back with the same command without `--pre`.
 - **Archives**: The `archive/` directory contains legacy releases and should not be touched. (It exists only in the developer's local workspace — it is not part of this repository.)
 
+## Legal Note
+This repository contains only a graphical interface that invokes the separately installed `yt-dlp` command-line tool; it ships no downloader binaries and contains no media content.
+
+Downloading material from YouTube can violate YouTube's Terms of Service, and most platform content is protected by copyright. Use this app only for material you own or are allowed to download, and only for personal, private purposes. Do not redistribute or monetize downloaded content.
+
+The MIT license covers this project's code — it does not grant any rights to third-party content. You are solely responsible for complying with the laws and terms of service that apply in your jurisdiction.
+
 ## License
 MIT © 2026
