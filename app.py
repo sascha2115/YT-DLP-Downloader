@@ -13,7 +13,7 @@
 # python3 app.py --simulate-download-error
 # ==================================================================================================================================
 #
-APP_VERSION = "1.1.21"
+APP_VERSION = "1.1.22"
 import gc
 import glob
 import html
