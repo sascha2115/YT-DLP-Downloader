@@ -137,6 +137,8 @@ pip install -r requirements.txt
 pip install yt-dlp               # recommended: keep the downloader inside the venv
 ```
 
+> **fish shell (the CachyOS default):** `source .venv/bin/activate` is the POSIX/bash script and fails in fish with `case builtin not inside of switch block`. Use the fish variant — `source .venv/bin/activate.fish` — or skip activation entirely and call the venv binaries directly: `.venv/bin/pip install -r requirements.txt` and `.venv/bin/python app.py` (works from any shell).
+
 On Linux the `pyobjc` requirement is skipped automatically (environment marker), so only `PyQt6` and `requests` are installed.
 
 > The venv also sidesteps PEP 668 ("externally-managed-environment") on Debian 12+, Ubuntu 23.04+, and Fedora, which refuse bare `pip install` outside venvs.
