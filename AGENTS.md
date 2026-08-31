@@ -46,5 +46,6 @@
 
 ## Common gotchas
 - GUI updates must use signals, not direct widget modifications.
+- Never bind the same key sequence to both a `QShortcut` and a menu `QAction` — Qt treats the duplicate as ambiguous and fires **neither** (silent failure). One binding per key; menu `QAction`s already work window-globally. Observed with `Ctrl+,`/Preferences (fixed).
 - Avoid relative paths when invoking external binaries; rely on `find_binary()` (wraps `shutil.which()` and adds macOS/pip fallbacks).
 - Do not modify `archive/` files – they are frozen snapshots.

@@ -542,9 +542,10 @@ class YTDLPDownloaderGUI(QMainWindow):
         self.signals.set_download_button_label.connect(self.set_download_button_label)
         self.signals.set_download_button_status.connect(self.set_download_button_status)
 
-        # Shortcut for Preferences (Cmd+,)
-        self.prefs_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
-        self.prefs_shortcut.activated.connect(self.open_preferences_dialog)
+        # Preferences shortcut: owned by the "Preferences..." QAction in
+        # setup_menu_bar() ("Ctrl+,"/"Cmd+,"). Do NOT also bind a QShortcut
+        # for the same key here — two active shortcuts with the identical
+        # sequence make Qt treat the keypress as ambiguous and neither fires.
 
         # Timer for fetching UI title entryfield
         self.fetch_title_timer = QTimer()
