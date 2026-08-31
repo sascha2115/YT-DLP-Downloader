@@ -8,8 +8,7 @@
 
 ## Repository layout (flat at the root, plus `assets/`)
 - `app.py` – main entrypoint; run from the repo root with `python3 app.py`.
-- `app-120-copy.py` – frozen copy of the current version (snapshot convention, do not edit). Local only — not in the published repo.
-- `archive/` – legacy versioned copies (`app-100-copy.py` … `app-119-findbinary.py`); no edits. Local only — not in the published repo.
+- `archive/` – frozen legacy snapshots of past versions; local only, not part of the published repo; do not edit.
 - `temp/` – isolated test scripts and scratch files.
 - `build-macos.sh` – macOS packaging one-liner (PyInstaller windowed `.app` bundle).
 - `build-linux.sh` – packaging one-liner for Linux (run on a Linux machine; PyInstaller cannot cross-compile).
@@ -48,4 +47,4 @@
 ## Common gotchas
 - GUI updates must use signals, not direct widget modifications.
 - Avoid relative paths when invoking external binaries; rely on `find_binary()` (wraps `shutil.which()` and adds macOS/pip fallbacks).
-- Do not modify `archive/` files or `app-120-copy.py` – they are frozen snapshots.
+- Do not modify `archive/` files – they are frozen snapshots.

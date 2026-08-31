@@ -24,7 +24,7 @@ git clone https://github.com/sascha2115/YT-DLP-Downloader.git ytdl
 cd ytdl
 ```
 
-The repo root holds `app.py`, the build scripts, and docs; icons and `styles.qss` live in `assets/`. `archive/` and `app-120-copy.py` are frozen snapshots — nothing in them is needed to run the app.
+The repo root holds `app.py`, the build scripts, and docs; icons and `styles.qss` live in `assets/`.
 
 ## 2. macOS
 
