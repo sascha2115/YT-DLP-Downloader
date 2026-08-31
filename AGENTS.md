@@ -6,7 +6,7 @@
 - No CI workflow exists (no `.github/`, no `ci.yml` / `pre-commit.yml`). Build and test are manual, see below.
 - Runtime preferences are NOT the repo's `preferences.json` – the app reads and writes `~/Library/Application Support/YT-DLP Downloader/preferences.json` (see `PREFERENCES_DIR` in `app.py`, edited via the in-app dialog). The repo-root `preferences.json` is only a reference sample (`channel_name_map`).
 
-## Repository layout (everything flat at the root)
+## Repository layout (flat at the root, plus `assets/`)
 - `app.py` – main entrypoint; run from the repo root with `python3 app.py`.
 - `app-120-copy.py` – frozen copy of the current version (snapshot convention, do not edit). Local only — not in the published repo.
 - `archive/` – legacy versioned copies (`app-100-copy.py` … `app-119-findbinary.py`); no edits. Local only — not in the published repo.
@@ -15,7 +15,7 @@
 - `build-linux.sh` – packaging one-liner for Linux (run on a Linux machine; PyInstaller cannot cross-compile).
 - `setup.md` – complete from-source install guide for macOS and Linux (system packages, external binaries, venv, packaging, troubleshooting).
 - `YT-DLP Downloader.spec`, `build/`, `dist/` – PyInstaller spec and build outputs.
-- `AppIcon.icns`, `AppIcon.png`, `styles.qss` – icons and stylesheet; `styles.qss` is loaded via `resource_path()`, which resolves relative to the script in source runs and to the bundle in PyInstaller builds.
+- `assets/` – icons (`AppIcon.icns`, `AppIcon.png`) and stylesheet (`styles.qss`); `styles.qss` is loaded via `resource_path()`, which resolves relative to the script in source runs and to the bundle in PyInstaller builds.
 - `scratch/` – scratch space.
 
 ## Execution scaffold

@@ -24,7 +24,7 @@ git clone https://github.com/sascha2115/YT-DLP-Downloader.git ytdl
 cd ytdl
 ```
 
-Everything lives flat in the repo root: `app.py`, `styles.qss`, icons, and the build scripts. `archive/` and `app-120-copy.py` are frozen snapshots — nothing in them is needed to run the app.
+The repo root holds `app.py`, the build scripts, and docs; icons and `styles.qss` live in `assets/`. `archive/` and `app-120-copy.py` are frozen snapshots — nothing in them is needed to run the app.
 
 ## 2. macOS
 
@@ -72,7 +72,7 @@ On macOS this installs `PyQt6`, `requests`, and `pyobjc-framework-Cocoa` (the la
 python3 app.py
 ```
 
-The working directory does not matter; `styles.qss` is resolved relative to the script.
+The working directory does not matter; the stylesheet and icon under `assets/` are resolved relative to the script.
 
 ### 2.5 Package as a .app bundle
 
@@ -224,7 +224,7 @@ Create `~/.local/share/applications/ytdl-downloader.desktop` (adjust the paths):
 Type=Application
 Name=YT-DLP Downloader
 Exec=/absolute/path/to/ytdl/.venv/bin/python /absolute/path/to/ytdl/app.py
-Icon=/absolute/path/to/ytdl/AppIcon.png
+Icon=/absolute/path/to/ytdl/assets/AppIcon.png
 Terminal=false
 Categories=Network;AudioVideo;
 ```

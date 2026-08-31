@@ -14,7 +14,7 @@
 # External binaries on the TARGET machine (not bundled by PyInstaller):
 #   yt-dlp, ffmpeg, deno  — e.g. sudo apt install ffmpeg; pip install yt-dlp
 #
-# NOTE: styles.qss is bundled via --add-data; the ':' separator is correct on
-# Linux (it would be ';' on Windows).
-pyinstaller --name "YT-DLP Downloader" --windowed --icon AppIcon.png \
-    --add-data "styles.qss:." app.py --clean --noconfirm
+# NOTE: assets/ (icons + styles.qss) is bundled via --add-data; the ':' separator
+# is correct on Linux (it would be ';' on Windows).
+pyinstaller --name "YT-DLP Downloader" --windowed --icon assets/AppIcon.png \
+    --add-data "assets:assets" app.py --clean --noconfirm

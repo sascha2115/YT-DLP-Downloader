@@ -8,7 +8,7 @@
 # but now we create ".edl" files for Kodi to skip those chapters. This is smoother.
 # And so the subtitles resyncing is not really needed anymore.
 # ----------------------------------------------------------------------------------------------------------------------------------
-# pyinstaller --name "YT-DLP Downloader" --windowed --icon AppIcon.icns --add-data "styles.qss:." app.py --clean --noconfirm
+# pyinstaller --name "YT-DLP Downloader" --windowed --icon assets/AppIcon.icns --add-data "assets:assets" app.py --clean --noconfirm
 # ----------------------------------------------------------------------------------------------------------------------------------
 # python3 app.py --simulate-download-error
 # ==================================================================================================================================
@@ -480,7 +480,7 @@ class YTDLPDownloaderGUI(QMainWindow):
 
         # Window/taskbar icon: Linux window managers take it from QIcon (macOS
         # takes it from the .app bundle), so set it whenever a PNG icon ships.
-        _icon_path = resource_path("AppIcon.png")
+        _icon_path = resource_path("assets/AppIcon.png")
         if os.path.exists(_icon_path):
             self.setWindowIcon(QIcon(_icon_path))
 
@@ -1142,7 +1142,7 @@ class YTDLPDownloaderGUI(QMainWindow):
     # Add CSS Styling
     # ----------------------------------------------------------------------------------------------------
     def apply_styles(self):
-        qss_path = resource_path("styles.qss")
+        qss_path = resource_path("assets/styles.qss")
         try:
             with open(qss_path, "r") as f:
                 stylesheet = f.read()
