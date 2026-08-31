@@ -221,7 +221,27 @@ All directories are created automatically on first run. Preferences are edited v
 
 ## 7. Optional: Linux application-menu entry
 
-Create `~/.local/share/applications/ytdl-downloader.desktop` (adjust the paths):
+**One-shot setup** — if the clone lives at `~/ytdl`, this creates the launcher file with real
+paths filled in (works in fish, bash and zsh — `$HOME` expands automatically):
+
+```bash
+mkdir -p ~/.local/share/applications
+printf '%s\n' \
+"[Desktop Entry]" \
+"Type=Application" \
+"Name=YT-DLP Downloader" \
+"Exec=$HOME/ytdl/.venv/bin/python $HOME/ytdl/app.py" \
+"Icon=$HOME/ytdl/assets/AppIcon.png" \
+"StartupWMClass=ytdl-downloader" \
+"Terminal=false" \
+"Categories=Network;AudioVideo;" \
+> ~/.local/share/applications/ytdl-downloader.desktop
+update-desktop-database ~/.local/share/applications
+```
+
+(For a clone in a different location, adjust the two paths after `Exec=` and `Icon=`.)
+
+**What the file contains** (`~/.local/share/applications/ytdl-downloader.desktop`), for manual creation:
 
 ```ini
 [Desktop Entry]
