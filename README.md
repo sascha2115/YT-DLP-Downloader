@@ -77,7 +77,7 @@ This repository contains only a graphical interface that invokes the separately 
 
 Downloading material from YouTube can violate YouTube's Terms of Service, and most platform content is protected by copyright. Use this app only for material you own or are allowed to download, and only for personal, private purposes. Do not redistribute or monetize downloaded content.
 
-The MIT license covers this project's code — it does not grant any rights to third-party content. You are solely responsible for complying with the laws and terms of service that apply in your jurisdiction.
+The MIT license covers this project's code — it does not grant any rights to third-party content. You are solely responsible for complying with the laws of your jurisdiction and with the terms of service of the sites you download from.
 
 ## License
 MIT © 2026
