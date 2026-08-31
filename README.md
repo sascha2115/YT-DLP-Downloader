@@ -70,7 +70,7 @@ python3 -m unittest temp.test_subtitle_progress -v
 - **Signals**: Do not update UI widgets directly from background threads; use the `SignalEmitter` class.
 - **External binaries**: Use `find_binary()` internally (PATH → pip scripts dir → common macOS/Linux install locations); use absolute paths in your own scripts.
 - **yt-dlp extraction errors**: try the nightly pre-release — `python3 -m pip install -U --pre "yt-dlp[default]"` (inside the venv; add `--break-system-packages` for system-wide installs on PEP 668 distros). Roll back with the same command without `--pre`.
-- **Archives**: The `archive/` directory contains legacy releases and should not be touched.
+- **Archives**: The `archive/` directory contains legacy releases and should not be touched. (It exists only in the developer's local workspace — it is not part of this repository.)
 
 ## License
 MIT © 2026

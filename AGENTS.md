@@ -8,8 +8,8 @@
 
 ## Repository layout (everything flat at the root)
 - `app.py` – main entrypoint; run from the repo root with `python3 app.py`.
-- `app-120-copy.py` – frozen copy of the current version (snapshot convention, do not edit).
-- `archive/` – legacy versioned copies (`app-100-copy.py` … `app-119-findbinary.py`); no edits.
+- `app-120-copy.py` – frozen copy of the current version (snapshot convention, do not edit). Local only — not in the published repo.
+- `archive/` – legacy versioned copies (`app-100-copy.py` … `app-119-findbinary.py`); no edits. Local only — not in the published repo.
 - `temp/` – isolated test scripts and scratch files.
 - `build.sh` – packaging one-liner (PyInstaller windowed `.app` bundle).
 - `build-linux.sh` – packaging one-liner for Linux (run on a Linux machine; PyInstaller cannot cross-compile).
