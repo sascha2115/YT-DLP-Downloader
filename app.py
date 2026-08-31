@@ -51,7 +51,7 @@ if IS_MACOS:
 else:
     NSApplication = NSImage = NSImageView = NSColor = NSBezierPath = None
     NSMakeRect = None
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal, QRectF
+from PyQt6.QtCore import QCoreApplication, QObject, Qt, QTimer, pyqtSignal, QRectF
 from PyQt6.QtGui import (
     QAction,
     QBrush,
@@ -4419,7 +4419,15 @@ def format_srt_time(seconds):
 if __name__ == "__main__":
     simulate_download_error = "--simulate-download-error" in sys.argv
 
+    # Stable app identity: Qt derives the X11 WM_CLASS and the Wayland app_id
+    # from these. Together with StartupWMClass=ytdl-downloader in the desktop
+    # launcher file, the window manager can associate running windows with the
+    # launcher's taskbar entry (icon + grouping) — without this, Python
+    # windows fall back to a generic identity like "app.py"/"python3".
+    QCoreApplication.setApplicationName("ytdl-downloader")
     app = QApplication(sys.argv)
+    app.setDesktopFileName("ytdl-downloader")
+
     window = YTDLPDownloaderGUI()
     window.simulate_download_error = simulate_download_error
     window.show()

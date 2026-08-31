@@ -229,9 +229,12 @@ Type=Application
 Name=YT-DLP Downloader
 Exec=/absolute/path/to/ytdl/.venv/bin/python /absolute/path/to/ytdl/app.py
 Icon=/absolute/path/to/ytdl/assets/AppIcon.png
+StartupWMClass=ytdl-downloader
 Terminal=false
 Categories=Network;AudioVideo;
 ```
+
+> `StartupWMClass` matches the app identity set in `app.py` (`setApplicationName`/`setDesktopFileName`); it makes the window manager associate the running window with this launcher so the taskbar shows **one** entry with the correct icon instead of a generic one. Keep the desktop file named `ytdl-downloader.desktop` to match.
 
 Then refresh the menu database: `update-desktop-database ~/.local/share/applications`.
 
