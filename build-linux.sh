@@ -16,5 +16,26 @@
 #
 # NOTE: assets/ (icons + styles.qss) is bundled via --add-data; the ':' separator
 # is correct on Linux (it would be ';' on Windows).
-pyinstaller --name "YT-DLP Downloader" --windowed --icon assets/AppIcon.png \
+
+# Locate pyinstaller: project venv first, then pip --user (~/.local/bin),
+# then PATH. The script itself runs under bash regardless of the launching
+# shell (fish, zsh, ...), so no venv activation is required.
+PYINSTALLER=""
+for candidate in \
+    "$(dirname "$0")/.venv/bin/pyinstaller" \
+    "$HOME/.local/bin/pyinstaller" \
+    "$(command -v pyinstaller 2>/dev/null)"
+do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        PYINSTALLER="$candidate"
+        break
+    fi
+done
+if [ -z "$PYINSTALLER" ]; then
+    echo "pyinstaller not found — install it into the project venv:"
+    echo "    .venv/bin/pip install pyinstaller"
+    exit 1
+fi
+
+"$PYINSTALLER" --name "YT-DLP Downloader" --windowed --icon assets/AppIcon.png \
     --add-data "assets:assets" app.py --clean --noconfirm

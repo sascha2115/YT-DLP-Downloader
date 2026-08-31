@@ -80,6 +80,7 @@ The working directory does not matter; the stylesheet and icon under `assets/` a
 pip install pyinstaller
 ./build-macos.sh    # → dist/YT-DLP Downloader.app
 ```
+> `build-macos.sh` finds `pyinstaller` on its own — project venv first, then `~/.local/bin` (pip `--user` installs), then `PATH`. No venv activation needed.
 
 The bundle is **unsigned**, so the first launch may be blocked by Gatekeeper: right-click the app → *Open*, or allow it under *System Settings → Privacy & Security*.
 
@@ -156,11 +157,12 @@ python3 app.py
 ### 3.5 Package for Linux
 
 ```bash
-pip install pyinstaller
+.venv/bin/pip install pyinstaller
 ./build-linux.sh       # → dist/YT-DLP Downloader/
 # single-file alternative:
-pyinstaller --onefile app.py    # → dist/app
+.venv/bin/pyinstaller --onefile app.py    # → dist/app
 ```
+> `build-linux.sh` finds `pyinstaller` on its own — project venv first, then `~/.local/bin` (pip `--user` installs), then `PATH`. No activation needed, even in fish.
 
 > **PyInstaller cannot cross-compile.** Linux binaries must be built *on* Linux and macOS `.app` bundles *on* macOS. To ship for both platforms, build on each (a Linux VM, container, or CI runner works).
 
