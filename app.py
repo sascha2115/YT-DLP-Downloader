@@ -1297,6 +1297,12 @@ class YTDLPDownloaderGUI(QMainWindow):
                 cb.setText(f"{name} ({status})")
                 cb.setEnabled(True)
                 self.subtitle_unavailable.discard(code)
+                # A language marked "(auto)" only exists as original
+                # auto-generated captions for this video; check it
+                # automatically so a subtitle is downloaded without an
+                # extra click. "(real)" entries keep their manual state.
+                if status == "auto":
+                    cb.setChecked(True)
             else:
                 # No subtitles available: label it "(none)", uncheck it and
                 # keep it disabled (also across UI re-enables, see

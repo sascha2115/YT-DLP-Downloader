@@ -424,6 +424,26 @@ class TestSubtitleCheckboxDisable(unittest.TestCase):
         self.assertFalse(gui.subtitle_checkboxes["de"].checked)
         self.assertFalse(gui.subtitle_checkboxes["es"].checked)
 
+    def test_auto_subtitles_checked_automatically(self):
+        # Languages marked "(auto)" (original auto-generated captions) are
+        # checked automatically so a subtitle is downloaded without an
+        # extra click. "(real)" languages keep their manual state.
+        self.gui.video_state["available_subtitles"] = {"en": "real", "de": "auto"}
+        self.gui._update_subtitle_checkboxes("en")
+        self.assertTrue(self.gui.subtitle_checkboxes["de"].checked)
+        self.assertTrue(self.gui.subtitle_checkboxes["de"].text().endswith("(auto)"))
+        self.assertFalse(self.gui.subtitle_checkboxes["en"].checked)
+
+    def test_auto_rechecked_on_next_fetch_even_if_unchecked(self):
+        # Each new info fetch re-evaluates: an "(auto)" language is checked
+        # again, even if the user unchecked it for the previous video.
+        self.gui.video_state["available_subtitles"] = {"de": "auto"}
+        self.gui._update_subtitle_checkboxes("de")
+        self.assertTrue(self.gui.subtitle_checkboxes["de"].checked)
+        self.gui.subtitle_checkboxes["de"].setChecked(False)
+        self.gui._update_subtitle_checkboxes("de")
+        self.assertTrue(self.gui.subtitle_checkboxes["de"].checked)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
