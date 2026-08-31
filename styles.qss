@@ -1,0 +1,191 @@
+QMainWindow {
+    background-color: #2a2a2a;
+    color: #ccc;
+}
+
+QLabel {
+    color: #ccc;
+}
+
+QGroupBox {
+    font-weight: normal;
+    border: 1px solid #555;
+    border-radius: 8px;
+    margin: 8px 0 0;
+    padding: 10px 0 5px;
+    color: #ccc;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 2px 0;
+    color: #888;
+    font-size: 10px;
+}
+
+QLineEdit {
+    padding: 8px;
+    border: 1px solid #525252;
+    border-radius: 14px;
+    background-color: #383838;
+    color: #fff;
+    font-size: 14px;
+}
+QLineEdit:focus {
+    border: 1px solid #777;
+}
+QLineEdit:disabled {
+    color: #999;
+}
+
+QPushButton {
+    min-width: 26px;
+    padding: 8px 10px 9px;
+    margin: 0 5px 0 0;
+    border: 1px solid #3d4e5f;
+    border-radius: 16px;
+    background-color: #345;
+    color: #eee;
+    font-size: 13px;
+    font-weight: normal;
+}
+QPushButton:hover {
+    background-color: #357;
+    border: 1px solid #4d5e6f;
+}
+QPushButton:pressed {
+    background-color: #8ac;
+}
+QPushButton:disabled {
+    color: #789;
+}
+
+QPushButton#downloadButton {
+    padding: 10px 15px;
+    border: 1px solid #687;
+    border-radius: 27px;
+    background-color: #475;
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    min-height: 32px;
+    /* margin: 20px 60px 15px; */
+    letter-spacing: 1px;
+}
+QPushButton#downloadButton:hover {
+    background-color: #4f7f5f;
+}
+QPushButton#downloadButton:pressed {
+    background-color: #558565;
+}
+QPushButton#downloadButton:disabled {
+    border: 1px solid #555;
+    background-color: #3f5544;
+    color: #84a090;
+}
+
+/* Download button error state (set via dynamic property: status="error") */
+QPushButton#downloadButton[status="error"] {
+    border: 1px solid #a55;
+    background-color: #7a2d2d;
+    color: #ffb6b6; /* light red text */
+}
+QPushButton#downloadButton[status="error"]:hover {
+    background-color: #8a3434;
+}
+QPushButton#downloadButton[status="error"]:pressed {
+    background-color: #6a2626;
+}
+QPushButton#downloadButton[status="error"]:disabled {
+    border: 1px solid #555;
+    background-color: #4a2a2a;
+    color: #caa;
+}
+
+/* Download button success state (set via dynamic property: status="success") */
+QPushButton#downloadButton[status="success"] {
+    /* keep the default green background/border, just tweak text color */
+    color: #bfffc8; /* light green text */
+}
+QPushButton#downloadButton[status="success"]:disabled {
+    border: 1px solid #555;
+    background-color: #3f5544;
+    color: #84a090;
+}
+
+QPushButton#xthumbnailButton:disabled {
+    color: transparent;
+    background-color: transparent;
+    border-color: transparent;
+}
+
+QPushButton#clearLink {
+    background: #234;
+    border: none;
+    border-radius: 6px;
+    color: #ccc;
+    font-weight: normal;
+    padding: 0 4px;
+    margin: 0;
+    text-decoration: none;
+    font-size: 12px;
+    min-height: 0;
+    max-height: 20px;
+}
+QPushButton#clearLink:hover {
+    background: #345;
+}
+
+QProgressBar {
+    border: none;
+    text-align: center;
+    background: #272727;
+    color: #ccc;
+    height: 18px;
+    margin: 0;
+}
+QProgressBar::chunk {
+    background-color: #259;
+    margin: 0;
+}
+
+QTextEdit {
+    border: 1px solid #444;
+    border-radius: 6px;
+    background-color: #222;
+    color: #aaa;
+    font-family: "Menlo", "Courier New";
+    font-size: 12px;
+}
+
+QTextBrowser {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 14px;
+}
+
+QRadioButton {
+    spacing: 5px;
+    font-size: 13px;
+    margin: 4px 0;
+}
+QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+}
+
+QCheckBox {
+    margin: 4px 5px 2px;
+}
+/* Subtitle checkboxes for languages reported as "(none)" */
+QCheckBox:disabled {
+    color: #666;
+}
+
+QToolTip {
+    background: transparent;
+    color: #fff;
+    font-size: 13px;
+    padding: 2px 3px;
+    border: 1px solid #777;
+    border-radius: 1px;
+}

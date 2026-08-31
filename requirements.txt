@@ -1,0 +1,21 @@
+# YT-DLP Downloader - Python Dependencies
+# Install with: pip install -r requirements.txt
+#
+# External binaries (not pip packages, install separately):
+#   macOS: brew install yt-dlp ffmpeg deno
+#   Linux: pip install yt-dlp · distro ffmpeg package (includes ffprobe) ·
+#          deno via official installer script (~/.deno/bin)
+
+# GUI framework
+PyQt6>=6.4
+
+# HTTP library for API requests (SponsorBlock, video metadata)
+requests>=2.28
+
+# macOS framework bindings (AppKit, Foundation for Dock tile integration).
+# The environment marker skips it on Linux/Windows, where pyobjc cannot install.
+pyobjc-framework-Cocoa>=9.0; sys_platform == "darwin"
+
+# Build tool for creating standalone macOS app (only needed for development)
+# Uncomment to install: pip install pyinstaller
+# pyinstaller>=6.0
