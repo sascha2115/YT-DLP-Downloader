@@ -235,3 +235,5 @@ Categories=Network;AudioVideo;
 
 Then refresh the menu database: `update-desktop-database ~/.local/share/applications`.
 
+The app then appears in the application launcher (search for *YT-DLP*) with its icon — right-click it there to **Add to Favorites**, or launch it once and right-click the taskbar entry → **Pin to Taskmanager** (Plasma). To place a copy on the desktop: `cp ~/.local/share/applications/ytdl-downloader.desktop ~/Desktop/ && chmod +x ~/Desktop/ytdl-downloader.desktop`. If the launcher entry doesn't show up immediately, rebuild Plasma's cache with `kbuildsycoca6`.
+
