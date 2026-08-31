@@ -11,7 +11,7 @@
 - `app-120-copy.py` – frozen copy of the current version (snapshot convention, do not edit). Local only — not in the published repo.
 - `archive/` – legacy versioned copies (`app-100-copy.py` … `app-119-findbinary.py`); no edits. Local only — not in the published repo.
 - `temp/` – isolated test scripts and scratch files.
-- `build.sh` – packaging one-liner (PyInstaller windowed `.app` bundle).
+- `build-macos.sh` – macOS packaging one-liner (PyInstaller windowed `.app` bundle).
 - `build-linux.sh` – packaging one-liner for Linux (run on a Linux machine; PyInstaller cannot cross-compile).
 - `setup.md` – complete from-source install guide for macOS and Linux (system packages, external binaries, venv, packaging, troubleshooting).
 - `YT-DLP Downloader.spec`, `build/`, `dist/` – PyInstaller spec and build outputs.
@@ -23,7 +23,7 @@
 - Run GUI: `python3 app.py` (cwd-independent; `resource_path()` uses `sys._MEIPASS` or `__file__`).
 - Test flag: `python3 app.py --simulate-download-error` (makes downloads raise immediately).
 - External binaries `yt-dlp`, `ffmpeg`, `deno` are typically installed via Homebrew (not pip); `find_binary()` also detects a pip-installed copy in the launching Python's bin.
-- Packaging: `./build.sh` → `dist/YT-DLP Downloader.app`; a bare single-file binary via `pyinstaller --onefile app.py` → `dist/app`.
+- Packaging: `./build-macos.sh` → `dist/YT-DLP Downloader.app`; a bare single-file binary via `pyinstaller --onefile app.py` → `dist/app`.
 
 ## Execution flow
 - GUI triggers `fetch_video_info` → `start_download`.

@@ -13,7 +13,7 @@ The app is a PyQt6 GUI around `yt-dlp` with SponsorBlock support. It needs three
 | yt-dlp | Homebrew or pip | pip or distro package |
 | ffmpeg + ffprobe | Homebrew | distro package |
 | deno (optional, recommended) | Homebrew | official installer script |
-| Packaging | `./build.sh` → `.app` | `./build-linux.sh` → onedir |
+| Packaging | `./build-macos.sh` → `.app` | `./build-linux.sh` → onedir |
 
 > **Why Python 3.10+?** The code uses PEP 604 unions (`X | None`) in type annotations, which are evaluated at import time. Older interpreters fail with a `TypeError` at startup. Check with `python3 --version`.
 
@@ -78,7 +78,7 @@ The working directory does not matter; the stylesheet and icon under `assets/` a
 
 ```bash
 pip install pyinstaller
-./build.sh          # → dist/YT-DLP Downloader.app
+./build-macos.sh    # → dist/YT-DLP Downloader.app
 ```
 
 The bundle is **unsigned**, so the first launch may be blocked by Gatekeeper: right-click the app → *Open*, or allow it under *System Settings → Privacy & Security*.

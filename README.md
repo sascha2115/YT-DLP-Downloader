@@ -35,7 +35,7 @@ python app.py
 ## Packaging a MacOS App
 ```bash
 # Canonical build: windowed .app bundle with icon and stylesheet
-./build.sh
+./build-macos.sh
 # The bundle will be in "dist/YT-DLP Downloader.app"
 ```
 Alternative bare binary: `pyinstaller --onefile app.py` → `dist/app`.
