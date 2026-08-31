@@ -424,25 +424,31 @@ class TestSubtitleCheckboxDisable(unittest.TestCase):
         self.assertFalse(gui.subtitle_checkboxes["de"].checked)
         self.assertFalse(gui.subtitle_checkboxes["es"].checked)
 
-    def test_auto_subtitles_checked_automatically(self):
-        # Languages marked "(auto)" (original auto-generated captions) are
-        # checked automatically so a subtitle is downloaded without an
-        # extra click. "(real)" languages keep their manual state.
+    def test_real_subtitles_checked_with_priority_over_auto(self):
+        # If any language has "(real)" subtitles, only those are checked —
+        # even when another language only offers "(auto)" captions.
         self.gui.video_state["available_subtitles"] = {"en": "real", "de": "auto"}
         self.gui._update_subtitle_checkboxes("en")
-        self.assertTrue(self.gui.subtitle_checkboxes["de"].checked)
+        self.assertTrue(self.gui.subtitle_checkboxes["en"].checked)
+        self.assertFalse(self.gui.subtitle_checkboxes["de"].checked)
         self.assertTrue(self.gui.subtitle_checkboxes["de"].text().endswith("(auto)"))
-        self.assertFalse(self.gui.subtitle_checkboxes["en"].checked)
 
-    def test_auto_rechecked_on_next_fetch_even_if_unchecked(self):
-        # Each new info fetch re-evaluates: an "(auto)" language is checked
-        # again, even if the user unchecked it for the previous video.
+    def test_auto_fallback_checked_when_no_real_exists(self):
+        # Without "(real)" subtitles, "(auto)" languages are checked instead.
         self.gui.video_state["available_subtitles"] = {"de": "auto"}
         self.gui._update_subtitle_checkboxes("de")
         self.assertTrue(self.gui.subtitle_checkboxes["de"].checked)
-        self.gui.subtitle_checkboxes["de"].setChecked(False)
-        self.gui._update_subtitle_checkboxes("de")
-        self.assertTrue(self.gui.subtitle_checkboxes["de"].checked)
+        self.assertFalse(self.gui.subtitle_checkboxes["en"].checked)
+        self.assertFalse(self.gui.subtitle_checkboxes["es"].checked)
+
+    def test_stale_auto_unchecked_when_real_appears(self):
+        # A checkbox left checked from a previous video's "(auto)" fallback
+        # is unchecked when a newer fetch reports "(real)" elsewhere.
+        self.gui.subtitle_checkboxes["de"].setChecked(True)
+        self.gui.video_state["available_subtitles"] = {"en": "real", "de": "auto"}
+        self.gui._update_subtitle_checkboxes("en")
+        self.assertTrue(self.gui.subtitle_checkboxes["en"].checked)
+        self.assertFalse(self.gui.subtitle_checkboxes["de"].checked)
 
 
 if __name__ == "__main__":
