@@ -75,7 +75,7 @@ python3 -m unittest temp.test_subtitle_progress -v
 ## Legal Note
 This repository contains only a graphical interface that invokes the separately installed `yt-dlp` command-line tool; it ships no downloader binaries and contains no media content.
 
-Downloading material from YouTube can violate YouTube's Terms of Service, and most platform content is protected by copyright. Use this app only for material you own or are allowed to download, and only for personal, private purposes. Do not redistribute or monetize downloaded content.
+Downloading material from YouTube can violate YouTube's Terms of Service, and most platform content is protected by copyright. Use this app only for content you have the right to access — your own uploads, Creative Commons-licensed media, public domain works, or content you have explicit permission to download — and only for personal, private purposes. Do not redistribute or monetize downloaded content. The author does not condone copyright infringement.
 
 The MIT license covers this project's code — it does not grant any rights to third-party content. You are solely responsible for complying with the laws of your jurisdiction and with the terms of service of the sites you download from.
 
