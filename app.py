@@ -13,7 +13,7 @@
 # python3 app.py --simulate-download-error
 # ==================================================================================================================================
 #
-APP_VERSION = "1.1.22"
+APP_VERSION = "1.1.23"
 import gc
 import glob
 import html
@@ -381,6 +381,21 @@ class DownloadProgressManager:
         self.active_stream = self.STREAM_VIDEO
         self.download_count = 0
         self.started = False
+        # Last "[download] Destination:" path seen. yt-dlp RE-PRINTS the
+        # destination of the file it is RETRYING after a network error, so
+        # a repeated destination must not advance the stream accounting.
+        self.last_destination: str | None = None
+
+    @staticmethod
+    def _normalize_destination(dest: str | None) -> str | None:
+        """Collapse differences that do not identify a different FILE."""
+        if not dest:
+            return None
+        dest = dest.strip().strip('"').strip("'").strip()
+        # Strip transient download suffixes (".part", ".ytdl", ".temp")
+        while dest.endswith((".part", ".ytdl", ".temp")):
+            dest = dest.rsplit(".", 1)[0]
+        return dest
 
     def mark_started(self):
         self.started = True
@@ -388,8 +403,20 @@ class DownloadProgressManager:
     def is_started(self):
         return self.started
 
-    def on_download_destination(self):
-        """Called when yt-dlp starts downloading a new file (video then audio)."""
+    def on_download_destination(self, dest: str | None = None):
+        """Called when yt-dlp starts downloading a new file (video then audio).
+
+        After a mid-download error ("Got error ... Retrying (n/10)...") yt-dlp
+        re-prints the destination of the SAME file. That re-print must not
+        bump the download count or switch the active stream (video → audio);
+        only a genuinely different destination file may do that.
+        """
+        normalized = self._normalize_destination(dest)
+        if normalized and normalized == self.last_destination:
+            # Same file again: a retry, not the next stream
+            return
+        if normalized:
+            self.last_destination = normalized
         self.download_count += 1
         if self.media_type == "audio":
             self.active_stream = self.STREAM_AUDIO
@@ -3847,9 +3874,14 @@ class YTDLPDownloaderGUI(QMainWindow):
             m = RE_DEST.search(line)
             in_subtitle_transfer = bool(m and self._is_subtitle_path(m.group(1)))
             state["downloading_subtitles"] = in_subtitle_transfer
-            # Only real media destinations start/switch a progress stream
+            # Only real media destinations start/switch a progress stream.
+            # The destination path lets the manager recognize a RETRY
+            # re-print of the same file after a network error (yt-dlp
+            # re-prints it instead of starting the next stream).
             if not in_subtitle_transfer:
-                progress_manager.on_download_destination()
+                progress_manager.on_download_destination(
+                    m.group(1) if m else None
+                )
         elif m := RE_ALREADY.search(line):
             # An "already downloaded" line is a completed item on its own, so
             # it must not inherit a subtitle-transfer flag. An "already

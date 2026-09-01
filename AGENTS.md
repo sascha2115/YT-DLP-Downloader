@@ -42,6 +42,7 @@
 ## Subtitle & progress parsing
 - yt-dlp downloads subtitles BEFORE the media streams; their `[download] Destination:` and percent lines must not affect the video/audio progress bars or the captured media filename.
 - Detection lives in `SUBTITLE_EXTENSIONS` + `YTDLPDownloaderGUI._is_subtitle_path()`; exclusion logic in `_parse_download_output()` / `_update_download_progress()` (state key `downloading_subtitles`).
+- Retry re-prints: after a mid-download error ("Got error ... Retrying (n/10)...") yt-dlp RE-PRINTS the `[download] Destination:` of the SAME file. `DownloadProgressManager.on_download_destination(dest)` therefore dedupes by normalized destination path (`last_destination`, strips quotes/`.part`/`.ytdl`/`.temp`) so a retry does not advance the stream accounting video → audio. A captured example lives in `temp/retry-timeout-capture.log` (replay: `python3 temp/replay_ytdlp_output.py temp/retry-timeout-capture.log video`).
 - Languages whose info fetch reports "(none)" availability get their checkbox disabled and unchecked in `_update_subtitle_checkboxes()`; the set `subtitle_unavailable` makes `_set_ui_enabled_state()` keep them disabled across UI re-enables (fetch/download start/end). After an info fetch, `_update_subtitle_checkboxes()` auto-marks the selection in every mode via `_auto_select_subtitles()`: languages with "(real)" subtitles are checked; if none exist, "(auto)" languages are checked instead. Re-running a fetch re-applies this rule (manual unchecked states do not survive a fetch).
 
 ## Common gotchas

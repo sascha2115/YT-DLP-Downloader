@@ -105,6 +105,29 @@ VIDEO_WITH_SUBS_LINES = [
     "Deleting original file Me at the zoo [jNQXAC9IVRw].f395.mp4 (pass -k to keep)",
 ]
 
+# Real yt-dlp output (2026.08.31) captured on a flaky connection: the video
+# stream hit network timeouts twice. On every "Got error ... Retrying (n/10)"
+# yt-dlp RE-PRINTS the "[download] Destination:" line of the file it is
+# RETRYING (shown as one terminal row because the chunks are \r-separated,
+# which is how the app's universal-newlines reader yields them). Those
+# re-prints must not count as the next stream (video -> audio).
+RETRY_DEST = "Danny Jones/S26E0831 - Title.f399.mp4"
+VIDEO_WITH_RETRIES_LINES = [
+    "[youtube] Extracting URL: https://www.youtube.com/watch?v=0SW6vtFmxEg",
+    "[info] 0SW6vtFmxEg: Downloading 1 format(s): 399+251",
+    f"[download] Destination: {RETRY_DEST}",
+    "",
+    "[download]  23.2% of  801.55MiB at    1.28MiB/s ETA 08:02",
+    "[download] Got error: HTTPSConnectionPool(host='rr5---sn-4g5lznlk.googlevideo.com', port=443): Read timed out.. Retrying (1/10)...",
+    f"[download] Destination: {RETRY_DEST}",
+    "",
+    "[download]  56.5% of  801.55MiB at    1.96MiB/s ETA 02:58",
+    "[download] Got error: HTTPSConnectionPool(host='rr5---sn-4g5lznlk.googlevideo.com', port=443): Read timed out.. Retrying (2/10)...",
+    f"[download] Destination: {RETRY_DEST}",
+    "",
+    "[download]  98.4% of  801.55MiB at    2.07MiB/s ETA 00:06",
+]
+
 
 class TestSubtitlePathDetection(unittest.TestCase):
     def setUp(self):
@@ -189,6 +212,70 @@ class TestVideoWithSubtitles(unittest.TestCase):
     def test_media_filename_not_hijacked_by_subtitle(self):
         state = feed(self.gui, make_state(self.gui), VIDEO_WITH_SUBS_LINES)
         self.assertEqual(state["merged_filename"], "Me at the zoo [jNQXAC9IVRw].mp4")
+
+
+class TestRetryAfterDownloadError(unittest.TestCase):
+    """A mid-download network error makes yt-dlp re-print the destination of
+    the file it retries; that re-print must not switch video -> audio."""
+
+    def setUp(self):
+        self.gui = make_gui("video")
+
+    def test_retry_percentages_stay_in_video_bar(self):
+        state = feed(self.gui, make_state(self.gui), VIDEO_WITH_RETRIES_LINES)
+        pm = state["progress_manager"]
+        # 23.2% → 56.5% → 98.4%: all of the SAME video stream
+        self.assertEqual((pm.video_progress, pm.audio_progress), (984, 0))
+        # The re-printed destinations are retries, not new files
+        self.assertEqual(pm.download_count, 1)
+        # Single-stream download: dock fraction is the plain video fraction
+        self.assertAlmostEqual(pm.get_combined_fraction(), 0.984)
+
+    def test_progress_signal_tracks_video_stream_through_retries(self):
+        feed(self.gui, make_state(self.gui), VIDEO_WITH_RETRIES_LINES)
+        self.assertEqual(
+            self.gui.signals.update_download_progress.emitted[-1], (984, 0)
+        )
+
+    def test_real_audio_destination_after_retries_still_switches(self):
+        lines = VIDEO_WITH_RETRIES_LINES + [
+            "[download] 100% of  801.55MiB in 00:10:22 at  1.29MiB/s",
+            "[download] Destination: Danny Jones/S26E0831 - Title.f251.webm",
+            "[download]  40.0% of   12.34MiB at  250.00KiB/s ETA 00:02",
+        ]
+        state = feed(self.gui, make_state(self.gui), lines)
+        pm = state["progress_manager"]
+        self.assertEqual((pm.video_progress, pm.audio_progress), (1000, 400))
+        self.assertEqual(pm.download_count, 2)
+
+    def test_on_download_destination_ignores_retry_reprint(self):
+        pm = app.DownloadProgressManager(media_type="video")
+        pm.on_download_destination("/d/Title.f399.mp4")
+        self.assertEqual(
+            (pm.download_count, pm.active_stream), (1, pm.STREAM_VIDEO)
+        )
+        # Retry re-print of the same file (quoted, with a transient suffix)
+        pm.on_download_destination(' "/d/Title.f399.mp4.part" ')
+        self.assertEqual(
+            (pm.download_count, pm.active_stream), (1, pm.STREAM_VIDEO)
+        )
+        # ...so the following percent still lands in the video bar
+        pm.update_from_ytdlp_percent(50.0)
+        self.assertEqual((pm.video_progress, pm.audio_progress), (500, 0))
+        # A genuinely different destination is the next stream (audio)
+        pm.on_download_destination("/d/Title.f251.webm")
+        self.assertEqual(
+            (pm.download_count, pm.active_stream), (2, pm.STREAM_AUDIO)
+        )
+
+    def test_no_arg_call_still_counts(self):
+        # Backwards compatibility: on_download_destination() without a path
+        # (regex failed) behaves like before.
+        pm = app.DownloadProgressManager(media_type="video")
+        pm.on_download_destination()
+        self.assertEqual((pm.download_count, pm.active_stream), (1, pm.STREAM_VIDEO))
+        pm.on_download_destination()
+        self.assertEqual((pm.download_count, pm.active_stream), (2, pm.STREAM_AUDIO))
 
 
 class TestVideoOnlyWithSubtitles(unittest.TestCase):
