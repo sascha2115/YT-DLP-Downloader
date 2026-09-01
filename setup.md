@@ -169,7 +169,7 @@ python3 app.py
 ## 4. Verify the installation
 
 ```bash
-# Parser/progress unit tests — no GUI or network needed (expect: Ran 21 tests, OK)
+# Parser/progress unit tests — no GUI or network needed (expect: Ran 29 tests, OK)
 python3 -m unittest temp.test_subtitle_progress -v
 
 # Launch with the built-in error simulation (downloads raise by design)
@@ -219,10 +219,19 @@ All directories are created automatically on first run. Preferences are edited v
 - **`error: externally-managed-environment`** from pip — you are outside a venv; redo §2.3 / §3.3.
 - **No dock badge/progress on Linux** — expected: dock-tile integration is macOS-only; progress is shown in the main window on all platforms.
 
-## 7. Optional: Linux application-menu entry
+## 7. Optional: Linux application-menu entry (launches the packaged app)
+
+The menu entry below starts the **packaged app** built by `./build-linux.sh` (§3.5) — not the
+from-source version — so build the bundle first if you haven't:
+
+```bash
+.venv/bin/pip install pyinstaller
+./build-linux.sh       # → dist/YT-DLP Downloader/
+```
 
 **One-shot setup** — if the clone lives at `~/ytdl`, this creates the launcher file with real
-paths filled in (works in fish, bash and zsh — `$HOME` expands automatically):
+paths filled in (works in fish, bash and zsh — `$HOME` expands automatically; the inner `\"`
+quotes the `Exec` value because the bundle path contains spaces):
 
 ```bash
 mkdir -p ~/.local/share/applications
@@ -230,7 +239,7 @@ printf '%s\n' \
 "[Desktop Entry]" \
 "Type=Application" \
 "Name=YT-DLP Downloader" \
-"Exec=$HOME/ytdl/.venv/bin/python $HOME/ytdl/app.py" \
+"Exec=\"$HOME/ytdl/dist/YT-DLP Downloader/YT-DLP Downloader\"" \
 "Icon=$HOME/ytdl/assets/AppIcon.png" \
 "StartupWMClass=ytdl-downloader" \
 "Terminal=false" \
@@ -247,12 +256,24 @@ update-desktop-database ~/.local/share/applications
 [Desktop Entry]
 Type=Application
 Name=YT-DLP Downloader
-Exec=/absolute/path/to/ytdl/.venv/bin/python /absolute/path/to/ytdl/app.py
+Exec="/absolute/path/to/ytdl/dist/YT-DLP Downloader/YT-DLP Downloader"
 Icon=/absolute/path/to/ytdl/assets/AppIcon.png
 StartupWMClass=ytdl-downloader
 Terminal=false
 Categories=Network;AudioVideo;
 ```
+
+> **Quoting:** `Exec=` must be double-quoted here — the bundle path contains spaces, and an
+> unquoted `Exec` value would be split into separate arguments. With a `--onefile` build the
+> executable is `dist/app` (no spaces): `Exec=/absolute/path/to/ytdl/dist/app`.
+> The bundle needs no Python or venv at runtime, but `yt-dlp`, `ffmpeg`, and `deno` must
+> still be installed on the machine — they are never bundled (§1).
+
+> **Frozen snapshot:** the entry starts whatever is inside `dist/` at build time. After
+> changing `app.py`, re-run `./build-linux.sh`; otherwise the menu keeps starting the old
+> build. To launch the **from-source version** instead (picks up edits immediately), point
+> `Exec=` at the venv interpreter:
+> `Exec=/absolute/path/to/ytdl/.venv/bin/python /absolute/path/to/ytdl/app.py`.
 
 > `StartupWMClass` matches the app identity set in `app.py` (`setApplicationName`/`setDesktopFileName`); it makes the window manager associate the running window with this launcher so the taskbar shows **one** entry with the correct icon instead of a generic one. Keep the desktop file named `ytdl-downloader.desktop` to match.
 
