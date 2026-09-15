@@ -12,9 +12,11 @@ or from temp/:
     python3 -m unittest test_subtitle_progress -v
 """
 
+import inspect
 import os
 import sys
 import unittest
+from unittest import mock
 
 # Make the repo root (where app.py lives) importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,6 +44,7 @@ class FakeSignals:
             "set_indeterminate",
             "update_download_progress",
             "update_dock_progress",
+            "title_fetch_complete",
         ):
             setattr(self, name, FakeSignal())
 
@@ -536,6 +539,142 @@ class TestSubtitleCheckboxDisable(unittest.TestCase):
         self.gui._update_subtitle_checkboxes("en")
         self.assertTrue(self.gui.subtitle_checkboxes["en"].checked)
         self.assertFalse(self.gui.subtitle_checkboxes["de"].checked)
+
+
+# ====================================================================================================
+# Info-fetch error visibility: yt-dlp failures must reach the output/debug panel
+# ====================================================================================================
+
+class InfoFetchHarness(ParserHarness):
+    """
+    Harness binding the REAL get_video_info() + the debug-dump helper.
+
+    The failure paths of get_video_info() only touch `yt_dlp_bin`, `deno_bin`,
+    `signals.append_output`, `_dump_ytdlp_error_output()` and
+    `signals.title_fetch_complete` — all provided here. No Qt event loop.
+    """
+
+    get_video_info = app.YTDLPDownloaderGUI.get_video_info
+    _dump_ytdlp_error_output = app.YTDLPDownloaderGUI._dump_ytdlp_error_output
+
+    def __init__(self):
+        super().__init__(media_type="video")
+        self.yt_dlp_bin = "/fake/bin/yt-dlp"
+        self.deno_bin = None  # falsy -> skips the shutil.which() check
+
+
+class FakeCompletedProcess:
+    """Stand-in for subprocess.CompletedProcess (no process spawned)."""
+
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class InfoFetchErrorDebugTests(unittest.TestCase):
+    """
+    Before the fix, get_video_info() swallowed yt-dlp's captured output on
+    failure: a 403 or "Sign in to confirm you're not a bot" error left the
+    app silently "stopped" with nothing in the output panel.
+    """
+
+    URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    def _logged_lines(self, gui):
+        return [args[0] for args in gui.signals.append_output.emitted]
+
+    def _patched_run(self, returncode=0, stdout="", stderr=""):
+        return mock.patch.object(
+            app.subprocess,
+            "run",
+            lambda cmd, **kwargs: FakeCompletedProcess(returncode, stdout, stderr),
+        )
+
+    def test_403_error_is_shown_in_output_panel(self):
+        gui = InfoFetchHarness()
+        stderr = (
+            "[youtube] dQw4w9WgXcQ: Downloading webpage\n"
+            "ERROR: [youtube] dQw4w9WgXcQ: Unable to download webpage: "
+            "<urlopen error [Errno 403]> (caused by <HTTPError 403: Forbidden>)"
+        )
+        with self._patched_run(returncode=1, stderr=stderr):
+            gui.get_video_info(self.URL)
+
+        logged = self._logged_lines(gui)
+        # Headline includes the exit code...
+        self.assertTrue(any("exited with code 1" in line for line in logged), logged)
+        # ...and the raw yt-dlp error line is visible in the panel.
+        self.assertTrue(
+            any("HTTPError 403: Forbidden" in line for line in logged), logged
+        )
+        # The failure is still reported to the fetch-finished handler.
+        done = gui.signals.title_fetch_complete.emitted[-1][0]
+        self.assertTrue(done["error"])
+
+    def test_sign_in_error_is_shown_in_output_panel(self):
+        gui = InfoFetchHarness()
+        stderr = "ERROR: [youtube] xyz123: Sign in to confirm you're not a bot."
+        with self._patched_run(returncode=1, stderr=stderr):
+            gui.get_video_info(self.URL)
+
+        logged = self._logged_lines(gui)
+        self.assertTrue(
+            any("Sign in to confirm" in line for line in logged), logged
+        )
+
+    def test_timeout_shows_partial_output(self):
+        gui = InfoFetchHarness()
+
+        def fake_run(cmd, **kwargs):
+            exc = app.subprocess.TimeoutExpired(cmd, 15)
+            # subprocess.run() attaches whatever was captured before the kill
+            exc.stdout = "[youtube] xyz123: Downloading webpage"
+            exc.stderr = ""
+            raise exc
+
+        with mock.patch.object(app.subprocess, "run", fake_run):
+            gui.get_video_info(self.URL)
+
+        logged = self._logged_lines(gui)
+        self.assertTrue(
+            any("Timeout fetching video info" in line for line in logged), logged
+        )
+        self.assertTrue(
+            any("[youtube] xyz123: Downloading webpage" in line for line in logged),
+            logged,
+        )
+
+    def test_dump_prefixes_lines_and_keeps_the_tail(self):
+        gui = InfoFetchHarness()
+        stderr = "\n".join(f"noise {i}" for i in range(50)) + "\nERROR: the real error"
+        gui._dump_ytdlp_error_output("headline", stderr=stderr)
+
+        logged = self._logged_lines(gui)
+        self.assertEqual(logged[0], "headline")
+        self.assertIn("[yt-dlp] ERROR: the real error", logged)
+        # Default cap is 40 lines: 51 emitted -> 11 earlier ones omitted
+        self.assertIn("[yt-dlp] (11 earlier lines omitted)", logged)
+        self.assertNotIn("[yt-dlp] noise 9", logged)
+        self.assertIn("[yt-dlp] noise 49", logged)
+
+    def test_dump_decodes_bytes_and_handles_empty_output(self):
+        gui = InfoFetchHarness()
+        gui._dump_ytdlp_error_output("boom", stderr=b"ERROR: binary bytes")
+        self.assertIn("[yt-dlp] ERROR: binary bytes", self._logged_lines(gui))
+
+        gui2 = InfoFetchHarness()
+        gui2._dump_ytdlp_error_output("empty", stdout="", stderr=None)
+        self.assertIn(
+            "[yt-dlp] (no output was captured)", self._logged_lines(gui2)
+        )
+
+    def test_legacy_undefined_parts_reference_removed(self):
+        # The old "Could not parse the result" branch referenced an undefined
+        # `parts` variable -> NameError instead of a useful message.
+        source = inspect.getsource(app.YTDLPDownloaderGUI.get_video_info)
+        self.assertNotIn("len(parts)", source)
+        self.assertIn("no audio formats", source)
 
 
 if __name__ == "__main__":

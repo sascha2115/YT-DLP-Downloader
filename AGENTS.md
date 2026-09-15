@@ -26,6 +26,7 @@
 
 ## Execution flow
 - GUI triggers `fetch_video_info` → `start_download`.
+- Info-fetch failures are surfaced in the output panel: `get_video_info()` dumps yt-dlp's captured stdout/stderr via `_dump_ytdlp_error_output()` (headline includes the exit code; a timeout dumps the partial output captured before the kill). Previously stderr was swallowed, so 403/sign-in errors made the app look like it silently stopped.
 - Progress reported via `DownloadProgressManager` and `SignalEmitter` signals.
 
 ## SponsorBlock handling

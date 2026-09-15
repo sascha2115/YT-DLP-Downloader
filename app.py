@@ -13,7 +13,7 @@
 # python3 app.py --simulate-download-error
 # ==================================================================================================================================
 #
-APP_VERSION = "1.1.23"
+APP_VERSION = "1.1.24"
 import gc
 import glob
 import html
@@ -1757,22 +1757,82 @@ class YTDLPDownloaderGUI(QMainWindow):
                         self.signals.append_output.emit("🚩 Could not find title")
                         error_status["error"] = True
                 else:
+                    # yt-dlp returned info but no audio codec was present in
+                    # the format list. The legacy message here referenced an
+                    # undefined `parts` variable and crashed with a NameError.
                     self.signals.append_output.emit(
-                        f"🚩 Could not parse the result from yt-dlp --print (parts: {len(parts)})"
+                        "🚩 yt-dlp returned no audio formats for this video"
                     )
                     error_status["error"] = True
 
             else:
+                # yt-dlp failed (HTTP 403, sign-in wall, geo-block, ...).
+                # Surface its captured output in the output/debug panel
+                # instead of failing silently.
+                self._dump_ytdlp_error_output(
+                    f"🚩 yt-dlp exited with code {result.returncode} while fetching video info",
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                )
                 error_status["error"] = True
 
-        except subprocess.TimeoutExpired:
-            self.signals.append_output.emit("👉 Timeout fetching video info")
+        except subprocess.TimeoutExpired as timeout_error:
+            self.signals.append_output.emit(
+                "👉 Timeout fetching video info (yt-dlp killed after 15s)"
+            )
+            # subprocess.run() attaches whatever it captured before the kill.
+            partial_stdout = getattr(timeout_error, "stdout", None)
+            if not partial_stdout:
+                partial_stdout = getattr(timeout_error, "output", None)
+            self._dump_ytdlp_error_output(
+                "yt-dlp output captured before the timeout:",
+                stdout=partial_stdout,
+                stderr=getattr(timeout_error, "stderr", None),
+            )
             error_status["error"] = True
         except Exception as e:
             self.signals.append_output.emit(f"🚩 Error fetching video info: {e}")
             error_status["error"] = True
 
         self.signals.title_fetch_complete.emit(error_status)
+
+    # ----------------------------------------------------------------------------------------------------
+    # Dump raw yt-dlp output into the debug panel (info-fetch failures)
+    # ----------------------------------------------------------------------------------------------------
+    def _dump_ytdlp_error_output(self, headline, stdout=None, stderr=None, max_lines=40):
+        """
+        Print yt-dlp's captured process output to the output/debug panel.
+
+        get_video_info() runs yt-dlp via subprocess.run(capture_output=True),
+        which used to swallow everything yt-dlp printed on failure. Without
+        this dump, errors like "HTTP Error 403: Forbidden" or "Sign in to
+        confirm you're not a bot" never reached the UI and the app appeared
+        to just stop. Only the last `max_lines` lines are kept (yt-dlp prints
+        the actual ERROR at the end of its output).
+        """
+        self.signals.append_output.emit(headline)
+        showed_something = False
+        for stream_name, data in (("stdout", stdout), ("stderr", stderr)):
+            if data is None:
+                continue
+            if isinstance(data, bytes):
+                data = data.decode("utf-8", errors="replace")
+            lines = [line.strip() for line in str(data).splitlines()]
+            lines = [line for line in lines if line]
+            if not lines:
+                continue
+            self.signals.append_output.emit(f"--- yt-dlp {stream_name} ---")
+            if len(lines) > max_lines:
+                self.signals.append_output.emit(
+                    f"[yt-dlp] ({len(lines) - max_lines} earlier lines omitted)"
+                )
+            for line in lines[-max_lines:]:
+                if len(line) > 1000:
+                    line = line[:1000] + " …"
+                self.signals.append_output.emit(f"[yt-dlp] {line}")
+            showed_something = True
+        if not showed_something:
+            self.signals.append_output.emit("[yt-dlp] (no output was captured)")
 
     # ----------------------------------------------------------------------------------------------------
     # Finished Title fetch thread

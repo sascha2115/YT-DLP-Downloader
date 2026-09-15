@@ -169,7 +169,7 @@ python3 app.py
 ## 4. Verify the installation
 
 ```bash
-# Parser/progress unit tests — no GUI or network needed (expect: Ran 29 tests, OK)
+# Parser/progress unit tests — no GUI or network needed (expect: Ran 35 tests, OK)
 python3 -m unittest temp.test_subtitle_progress -v
 
 # Launch with the built-in error simulation (downloads raise by design)
