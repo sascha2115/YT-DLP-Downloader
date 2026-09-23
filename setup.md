@@ -24,7 +24,7 @@ git clone https://github.com/sascha2115/YT-DLP-Downloader.git ytdl
 cd ytdl
 ```
 
-The repo root holds `app.py`, the build scripts, and docs; icons and `styles.qss` live in `assets/`.
+The repo root holds `main.py` (the thin launcher), the `ytdl/` application package, the build scripts, and docs; icons and `styles.qss` live in `assets/`.
 
 ## 2. macOS
 
@@ -69,7 +69,7 @@ On macOS this installs `PyQt6`, `requests`, and `pyobjc-framework-Cocoa` (the la
 ### 2.4 Run
 
 ```bash
-python3 app.py
+python3 main.py
 ```
 
 The working directory does not matter; the stylesheet and icon under `assets/` are resolved relative to the script.
@@ -138,7 +138,7 @@ pip install -r requirements.txt
 pip install yt-dlp               # recommended: keep the downloader inside the venv
 ```
 
-> **fish shell (the CachyOS default):** `source .venv/bin/activate` is the POSIX/bash script and fails in fish with `case builtin not inside of switch block`. Use the fish variant — `source .venv/bin/activate.fish` — or skip activation entirely and call the venv binaries directly: `.venv/bin/pip install -r requirements.txt` and `.venv/bin/python app.py` (works from any shell).
+> **fish shell (the CachyOS default):** `source .venv/bin/activate` is the POSIX/bash script and fails in fish with `case builtin not inside of switch block`. Use the fish variant — `source .venv/bin/activate.fish` — or skip activation entirely and call the venv binaries directly: `.venv/bin/pip install -r requirements.txt` and `.venv/bin/python main.py` (works from any shell).
 
 On Linux the `pyobjc` requirement is skipped automatically (environment marker), so only `PyQt6` and `requests` are installed.
 
@@ -149,10 +149,10 @@ On Linux the `pyobjc` requirement is skipped automatically (environment marker),
 ### 3.4 Run
 
 ```bash
-python3 app.py
+python3 main.py
 ```
 
-**Wayland:** if the window fails to open, run with `QT_QPA_PLATFORM=xcb python3 app.py` (via XWayland) or install your distro's `qt6-wayland` package.
+**Wayland:** if the window fails to open, run with `QT_QPA_PLATFORM=xcb python3 main.py` (via XWayland) or install your distro's `qt6-wayland` package.
 
 ### 3.5 Package for Linux
 
@@ -160,7 +160,7 @@ python3 app.py
 .venv/bin/pip install pyinstaller
 ./build-linux.sh       # → dist/YT-DLP Downloader/
 # single-file alternative:
-.venv/bin/pyinstaller --onefile app.py    # → dist/app
+.venv/bin/pyinstaller --onefile main.py    # → dist/main
 ```
 > `build-linux.sh` finds `pyinstaller` on its own — project venv first, then `~/.local/bin` (pip `--user` installs), then `PATH`. No activation needed, even in fish.
 
@@ -173,7 +173,7 @@ python3 app.py
 python3 -m unittest temp.test_subtitle_progress -v
 
 # Launch with the built-in error simulation (downloads raise by design)
-python3 app.py --simulate-download-error
+python3 main.py --simulate-download-error
 ```
 
 On startup the app checks for `yt-dlp`, `ffmpeg`, and `deno` and prints
@@ -203,7 +203,7 @@ All directories are created automatically on first run. Preferences are edited v
   3. `/usr/local/bin`, `/opt/homebrew/bin`, `/opt/local/bin`, `/home/linuxbrew/.linuxbrew/bin`, `~/.deno/bin`, `~/.local/bin`
   4. (macOS only) `/Library/Frameworks/Python.framework/Versions/*/bin`
 
-  If your binary lives elsewhere, symlink it into `~/.local/bin` or extend the fallback list in `find_binary()` in `app.py`.
+  If your binary lives elsewhere, symlink it into `~/.local/bin` or extend the fallback list in `find_binary()` in `main.py`.
 - **`yt-dlp` errors on a specific video** (extraction/site breakage) — try the **nightly pre-release**, which upstream publishes for exactly this:
   ```bash
   # inside the app's venv (recommended; no --break-system-packages needed there):
@@ -265,17 +265,17 @@ Categories=Network;AudioVideo;
 
 > **Quoting:** `Exec=` must be double-quoted here — the bundle path contains spaces, and an
 > unquoted `Exec` value would be split into separate arguments. With a `--onefile` build the
-> executable is `dist/app` (no spaces): `Exec=/absolute/path/to/ytdl/dist/app`.
+> executable is `dist/main` (no spaces): `Exec=/absolute/path/to/ytdl/dist/main`.
 > The bundle needs no Python or venv at runtime, but `yt-dlp`, `ffmpeg`, and `deno` must
 > still be installed on the machine — they are never bundled (§1).
 
 > **Frozen snapshot:** the entry starts whatever is inside `dist/` at build time. After
-> changing `app.py`, re-run `./build-linux.sh`; otherwise the menu keeps starting the old
+> changing `main.py`, re-run `./build-linux.sh`; otherwise the menu keeps starting the old
 > build. To launch the **from-source version** instead (picks up edits immediately), point
 > `Exec=` at the venv interpreter:
-> `Exec=/absolute/path/to/ytdl/.venv/bin/python /absolute/path/to/ytdl/app.py`.
+> `Exec=/absolute/path/to/ytdl/.venv/bin/python /absolute/path/to/ytdl/main.py`.
 
-> `StartupWMClass` matches the app identity set in `app.py` (`setApplicationName`/`setDesktopFileName`); it makes the window manager associate the running window with this launcher so the taskbar shows **one** entry with the correct icon instead of a generic one. Keep the desktop file named `ytdl-downloader.desktop` to match.
+> `StartupWMClass` matches the app identity set in `main.py` (`setApplicationName`/`setDesktopFileName`); it makes the window manager associate the running window with this launcher so the taskbar shows **one** entry with the correct icon instead of a generic one. Keep the desktop file named `ytdl-downloader.desktop` to match.
 
 Then refresh the menu database: `update-desktop-database ~/.local/share/applications`.
 

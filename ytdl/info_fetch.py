@@ -1,0 +1,817 @@
+"""Video-info fetching: yt-dlp subprocess, parsing, SponsorBlock.
+
+Mixin for YTDLPDownloaderGUI (assembled in ytdl/app.py);
+methods access shared state via self."""
+
+import json
+import re
+import shutil
+import subprocess
+import threading
+import time
+from datetime import datetime
+import requests
+from ytdl import preferences as prefs
+from ytdl.description import clean_youtube_description
+from ytdl.sites import DEFAULT_SITE, SUPPORTED_SITES, is_plausible_url, site_wants_js_runtime
+from ytdl.utils import sanitize_title
+from ytdl.widgets import SB_DISPLAY_NAMES
+
+
+class InfoFetchMixin:
+    def fetch_video_info(self):
+        url = self.get_clean_url()
+        if not url:
+            self.title_entry.setText("Please enter a valid video URL")
+            return
+
+        # Cheap syntactic pre-check: garbage like "nonsense" must not reach
+        # the yt-dlp subprocess (it would only surface as a generic-extractor
+        # error down there).
+        if not is_plausible_url(url):
+            self.title_entry.setText("Please enter a valid video URL")
+            return
+
+        # yt-dlp only needs the URL; the video ID is only required for
+        # SponsorBlock (YouTube-only). Any supported site may proceed without one.
+        if not self.is_supported_url(url):
+            self.title_entry.setText("Please enter a supported video URL")
+            return
+
+        self.title_entry.setText("Fetching video info...")
+        # Reset any prior error styling as soon as we start fetching info again
+        self.set_download_button_status("")
+        # Temporarily update the Download button label while we fetch metadata
+        self.download_button.setText("Getting Info...")
+        # Set state variable
+        self.video_state["is_fetching_info"] = True
+        self._set_ui_enabled_state(False)
+        self.download_button.setEnabled(False)
+        self._reset_download_progress_bars()
+        self._set_download_busy(True)
+        self.signals.update_dock_tile.emit("")
+        self.clearDockProgress()
+        self.clear_output()
+        thread = threading.Thread(target=self.get_video_info, args=(url,))
+        thread.daemon = True
+        thread.start()
+
+    def get_video_info(self, url):
+        error_status = {"error": False}
+        try:
+            cmd = [self.yt_dlp_bin]
+
+            # Use a JS runtime for extraction if available. Only extractors
+            # that evaluate JavaScript need one (YouTube); per-site profiles
+            # opt out (e.g. Rumble).
+            if (
+                self.deno_bin
+                and shutil.which(self.deno_bin)
+                and site_wants_js_runtime(self.video_state.get("site", DEFAULT_SITE))
+            ):
+                cmd.extend(["--js-runtimes", f"deno:{self.deno_bin}"])
+
+            cmd.extend(
+                [
+                    "--print-json",
+                    "--no-warnings",
+                    "--skip-download",
+                    url,
+                ]
+            )
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                json_data = json.loads(result.stdout.strip())
+
+                # yt-dlp JSON fields can sometimes be present but null/None.
+                # Guard against "NoneType has no attribute 'strip'" by normalizing values.
+                def _s(key: str, default: str = "") -> str:
+                    val = json_data.get(key, default)
+                    return str(val).strip() if val is not None else ""
+
+                title = _s("title")
+                upload_date = _s("upload_date")
+                duration = _s("duration_string")
+                duration_sec = json_data.get("duration") or 0
+                youtube_channel = _s("channel")
+                channel = prefs.CHANNEL_NAME_MAP.get(youtube_channel, youtube_channel)
+                thumbnail_url = _s("thumbnail")
+                language = _s("language")
+                height = str(json_data.get("height", ""))
+                raw_description = _s("description")
+                description = clean_youtube_description(raw_description)
+                ext = _s("ext")
+                vcodec = _s("vcodec")
+                fps = str(json_data.get("fps", ""))
+                
+                subs_dict = json_data.get("subtitles", {})
+                autos_dict = json_data.get("automatic_captions", {})
+                all_formats = json_data.get("formats", [])
+
+                # Update consolidated state
+                self.update_video_state(
+                    original_title=title,
+                    channel=channel,
+                    description=description,
+                    thumbnail_url=thumbnail_url,
+                    upload_date=upload_date,
+                    language=language,
+                    detected_ext=ext,
+                    detected_vcodec=vcodec,
+                    duration_sec=duration_sec,
+                )
+
+                self.signals.append_output.emit(f"Channel: {youtube_channel}")
+                if channel != youtube_channel:
+                    self.signals.append_output.emit(f"Podcast: {channel}")
+
+                # Format and display info
+                formatted_date = upload_date
+                short_date = upload_date
+                if upload_date:
+                    try:
+                        dt = datetime.strptime(upload_date, "%Y%m%d")
+                        formatted_date = dt.strftime("%Y-%m-%d")  # For display: "2026-01-10"
+                        short_date = dt.strftime("S%yE%m%d")      # For title: "S26E0110"
+                    except ValueError:
+                        pass
+
+                    self.signals.append_output.emit(f"Upload date: {formatted_date}")
+
+                self.signals.append_output.emit(f"Duration: {duration}")
+
+                # Resolutions
+                # Exclude audio-only formats: Rumble's "audio-192p" carries a
+                # bogus height (192) and would pollute the list. yt-dlp sets
+                # video_ext="none" on audio-only formats generically.
+                unique_heights = sorted(list(set(
+                    f.get("height") for f in all_formats
+                    if f.get("height") and isinstance(f.get("height"), int)
+                    and (f.get("vcodec") not in (None, "none") or f.get("video_ext", "none") != "none")
+                )), reverse=True)
+                
+                if unique_heights:
+                    res_str = " | ".join([f"{h}p" for h in unique_heights])
+                    self.signals.append_output.emit(f"Resolutions: {res_str}")
+                elif height and height.isdigit():
+                    self.signals.append_output.emit(f"Max Resolution: {height}p")
+
+                if fps and fps not in ("NA", "None", "", "None.0"):
+                    self.signals.append_output.emit(f"FPS: {fps}")
+
+                # Show bitrates for the selected resolution only
+                if all_formats and height and height.isdigit():
+                    try:
+                        selected_height = int(height)
+                        # Keep only video streams at the selected height with a real bitrate
+                        matching_fmts = [
+                            f for f in all_formats
+                            if f.get("vbr")
+                            and f.get("vcodec") not in (None, "none")
+                            and f.get("height") == selected_height
+                        ]
+                        # Sort by vbr descending (premium stream will appear first)
+                        matching_fmts.sort(key=lambda f: f["vbr"], reverse=True)
+                        if matching_fmts:
+                            bitrate_strs = [f"{round(f['vbr'])} kbps" for f in matching_fmts]
+                            label_key = "Video Bitrate" if len(bitrate_strs) == 1 else "Video Bitrates"
+                            self.signals.append_output.emit(f"{label_key}: {' | '.join(bitrate_strs)}")
+                    except Exception:
+                        pass
+
+                # Codecs availability
+                available_codecs = set()
+                for f in all_formats:
+                    vc = (f.get("vcodec") or "").lower()
+                    if vc and vc != "none":
+                        if vc.startswith("avc1"):
+                            available_codecs.add("H264")
+                        elif vc.startswith("vp9") or vc.startswith("vp09"):
+                            available_codecs.add("VP9")
+                        elif vc.startswith("av01"):
+                            available_codecs.add("AV1")
+                
+                if available_codecs:
+                    codec_order = {"H264": 1, "VP9": 2, "AV1": 3}
+                    sorted_codecs = sorted(list(available_codecs), key=lambda x: codec_order.get(x, 99))
+                    self.signals.append_output.emit(f"Video Codecs: {' | '.join(sorted_codecs)}")
+
+                # Audio Codecs availability.
+                # Generic across sites: Rumble reports plain "aac" (not
+                # "mp4a.*") and its muxed HLS formats report no codecs at
+                # all, while YouTube DASH video-only streams explicitly say
+                # acodec="none". Only an explicit "none" everywhere means a
+                # video truly has no audio.
+                available_audio = set()
+                unknown_codec = False
+                for f in all_formats:
+                    raw_acodec = f.get("acodec")
+                    ac = (raw_acodec or "").lower()
+                    if not ac or ac == "none":
+                        if raw_acodec is None:
+                            # Codec unknown (e.g. muxed HLS) - may carry audio
+                            unknown_codec = True
+                        continue
+                    if ac.startswith("mp4a") or ac.startswith("aac"):
+                        available_audio.add("AAC")
+                    elif ac.startswith("opus"):
+                        available_audio.add("Opus")
+                    elif ac.startswith("vorbis"):
+                        available_audio.add("Vorbis")
+                    elif ac.startswith("mp3"):
+                        available_audio.add("MP3")
+                    else:
+                        # Unknown codec family - show it as-is (e.g. FLAC, EC-3)
+                        available_audio.add(ac.split(".")[0].upper())
+
+                # A format with an unknown codec may still carry audio
+                audio_capable = bool(available_audio) or unknown_codec
+
+                if available_audio:
+                    audio_order = {"AAC": 1, "Opus": 2, "MP3": 3, "Vorbis": 4}
+                    sorted_audio = sorted(list(available_audio), key=lambda x: audio_order.get(x, 99))
+                    self.signals.append_output.emit(f"Audio Codecs: {' | '.join(sorted_audio)}")
+
+                if audio_capable:
+
+                    # Subtitles availability analysis
+                    available_subs = {}
+                    try:
+                        # subs_dict and autos_dict are already extracted from json_data above
+
+                        # Filter automatic captions to only include ORIGINAL ones (not auto-translations)
+                        original_autos = {}
+                        for lang_code, formats in autos_dict.items():
+                            if not formats:
+                                continue
+                            
+                            # Original auto-captions don't have "tlang=" in their URL.
+                            # We check the URL of the first format.
+                            url = formats[0].get("url", "")
+                            # Also check for lang matches if possible
+                            if "tlang=" not in url:
+                                # Standardize the key - sometimes YouTube provides 'en-orig' or 'en'
+                                base = lang_code.split("-")[0].lower()
+                                original_autos[base] = formats
+
+                        # We check for our 3 target languages for the UI checkboxes.
+                        # Some sites (Rumble) report generated subtitles as
+                        # "<code>-auto" inside `subtitles` instead of YouTube's
+                        # `automatic_captions` - classify those as "(auto)".
+                        target_langs = [("English", "en"), ("German", "de"), ("Spanish", "es")]
+                        for name, code in target_langs:
+                            keys = [k for k in subs_dict.keys() if k.split("-")[0].lower() == code]
+                            manual = [k for k in keys if "auto" not in k.lower()]
+                            if manual:
+                                available_subs[code] = "real"
+                            elif keys or code in original_autos:
+                                available_subs[code] = "auto"
+
+                        # Build the full report for the output log as requested
+                        # Use sorted union of manual keys and original auto keys
+                        all_langs = sorted(list(set([k.split("-")[0] for k in list(subs_dict.keys()) + list(original_autos.keys())])))
+                        report_tokens = []
+                        
+                        for lang_code in all_langs:
+                            lang_keys = [k for k in subs_dict.keys() if k.startswith(lang_code)]
+                            # Check manual (site keys that are not generated "<...>-auto")
+                            if any("auto" not in k.lower() for k in lang_keys):
+                                report_tokens.append(f"{lang_code} (real)")
+                            # Check auto (site-generated keys or YouTube original auto-captions)
+                            if any("auto" in k.lower() for k in lang_keys) or any(
+                                k.startswith(lang_code) for k in original_autos.keys()
+                            ):
+                                report_tokens.append(f"{lang_code} (auto)")
+
+                        if report_tokens:
+                            self.signals.append_output.emit(f"Subtitles: {', '.join(report_tokens)}")
+                        else:
+                            self.signals.append_output.emit("Subtitles: None available")
+
+                        # Cache availability BEFORE emitting, so the
+                        # main-thread slot always reads the fresh data
+                        self.video_state["available_subtitles"] = available_subs
+                        # Update checkbox labels in UI
+                        self.signals.update_subtitle_checkboxes.emit(language or "")
+
+                    except (json.JSONDecodeError, Exception) as e:
+                        print(f"Error parsing subtitle info: {e}")
+
+                    if language:
+                        # Normalize language (e.g., 'en-US' -> 'en')
+                        base_lang = language.split("-")[0]
+                        # optional: Check the detected language
+                        # self.signals.update_subtitle_checkboxes.emit(base_lang)
+                    # self.signals.append_output.emit(f"Language: {language}")
+
+                    # Set title (without channel name - channel is added to folder name only)
+                    if title:
+                        # Special Case: PowerfulJRE (Joe Rogan)
+                        if youtube_channel == "PowerfulJRE":
+                            # Look for episode number: e.g. "#2464" or " 2464"
+                            ep_match = re.search(r"(?:#| )(\d+)(?: -| |$)", title)
+                            if ep_match:
+                                try:
+                                    ep_num = int(ep_match.group(1))
+                                    # We pad to 4 digits to match the general S##E#### format
+                                    short_date = f"S01E{ep_num:04d}"
+                                    self.video_state["episode_code"] = short_date
+                                    # Remove episode number from title (e.g. "Joe Rogan Experience #2467 - Michael Pollan" -> "Joe Rogan Experience - Michael Pollan")
+                                    match_str = ep_match.group(0)
+                                    title = title.replace(match_str, " - ")
+                                    # Clean up title if we introduced double dash or extra space
+                                    title = re.sub(r"\s+", " ", title).replace(" - - ", " - ").strip().strip("-").strip()
+                                except (ValueError, IndexError):
+                                    pass
+
+                        # Special Case: Shawn Ryan Show
+                        elif youtube_channel == "Shawn Ryan Show":
+                            # Look for SRS episode number: e.g. "| SRS #285" or "SRS #285"
+                            ep_match = re.search(r"(?:[|]\s*)?SRS\s*#?\s*(\d+)", title)
+                            if ep_match:
+                                try:
+                                    ep_num = int(ep_match.group(1))
+                                    # User requested no offset for SRS: e.g. 285 becomes S01E0285
+                                    short_date = f"S01E{ep_num:04d}"
+                                    self.video_state["episode_code"] = short_date
+                                    # Remove episode tag from title
+                                    match_str = ep_match.group(0)
+                                    title = title.replace(match_str, "")
+                                    # Clean up title
+                                    title = re.sub(r"\s+", " ", title).replace(" - - ", " - ").strip().strip("-").strip().strip("|").strip()
+                                except (ValueError, IndexError):
+                                    pass
+
+                        # Special Case: Lex Fridman
+                        elif youtube_channel == "Lex Fridman":
+                            # Look for episode number: e.g. "| Lex Fridman Podcast #491"
+                            ep_match = re.search(r"(?:[|]\s*)?Lex Fridman Podcast\s*#?\s*(\d+)", title)
+                            if ep_match:
+                                try:
+                                    ep_num = int(ep_match.group(1))
+                                    # Lex Fridman: e.g. 491 becomes S01E0491
+                                    short_date = f"S01E{ep_num:04d}"
+                                    self.video_state["episode_code"] = short_date
+                                    # Remove episode tag from title
+                                    match_str = ep_match.group(0)
+                                    title = title.replace(match_str, "")
+                                    # Clean up title
+                                    title = re.sub(r"\s+", " ", title).replace(" - - ", " - ").strip().strip("-").strip().strip("|").strip()
+                                except (ValueError, IndexError):
+                                    pass
+
+                        # Special Case: PBD Podcast
+                        elif youtube_channel == "PBD Podcast":
+                            # Look for episode number: e.g. "| PBD #754" or "| PBD Podcast #754"
+                            ep_match = re.search(r"(?:[|]\s*)?PBD(?: Podcast)?\s*#?\s*(\d+)", title)
+                            if ep_match:
+                                try:
+                                    ep_num = int(ep_match.group(1))
+                                    # PBD Podcast: e.g. 754 becomes S01E0754
+                                    short_date = f"S01E{ep_num:04d}"
+                                    self.video_state["episode_code"] = short_date
+                                    # Remove episode tag from title
+                                    match_str = ep_match.group(0)
+                                    title = title.replace(match_str, "")
+                                    # Clean up title
+                                    title = re.sub(r"\s+", " ", title).replace(" - - ", " - ").strip().strip("-").strip().strip("|").strip()
+                                except (ValueError, IndexError):
+                                    pass
+
+                        sanitized_title = sanitize_title(title)
+                        full_title = short_date + " - " + sanitized_title
+                        self.signals.update_title.emit(full_title)
+
+                        # Fetch SponsorBlock segments
+                        self.check_sponsorblock(url)
+                    else:
+                        self.signals.append_output.emit("🚩 Could not find title")
+                        error_status["error"] = True
+                else:
+                    # Every format explicitly says acodec="none" (no unknown-
+                    # codec/muxed formats either), so the video has no audio.
+                    # Kept as a hard error so the Download button stays off.
+                    self.signals.append_output.emit(
+                        "🚩 yt-dlp returned no audio formats for this video"
+                    )
+                    error_status["error"] = True
+
+            else:
+                # yt-dlp failed (HTTP 403, sign-in wall, geo-block, ...).
+                # Surface its captured output in the output/debug panel
+                # instead of failing silently.
+                self._dump_ytdlp_error_output(
+                    f"🚩 yt-dlp exited with code {result.returncode} while fetching video info",
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                )
+                error_status["error"] = True
+
+        except subprocess.TimeoutExpired as timeout_error:
+            self.signals.append_output.emit(
+                "👉 Timeout fetching video info (yt-dlp killed after 15s)"
+            )
+            # subprocess.run() attaches whatever it captured before the kill.
+            partial_stdout = getattr(timeout_error, "stdout", None)
+            if not partial_stdout:
+                partial_stdout = getattr(timeout_error, "output", None)
+            self._dump_ytdlp_error_output(
+                "yt-dlp output captured before the timeout:",
+                stdout=partial_stdout,
+                stderr=getattr(timeout_error, "stderr", None),
+            )
+            error_status["error"] = True
+        except Exception as e:
+            self.signals.append_output.emit(f"🚩 Error fetching video info: {e}")
+            error_status["error"] = True
+
+        self.signals.title_fetch_complete.emit(error_status)
+
+    def _dump_ytdlp_error_output(self, headline, stdout=None, stderr=None, max_lines=40):
+        """
+        Print yt-dlp's captured process output to the output/debug panel.
+
+        get_video_info() runs yt-dlp via subprocess.run(capture_output=True),
+        which used to swallow everything yt-dlp printed on failure. Without
+        this dump, errors like "HTTP Error 403: Forbidden" or "Sign in to
+        confirm you're not a bot" never reached the UI and the app appeared
+        to just stop. Only the last `max_lines` lines are kept (yt-dlp prints
+        the actual ERROR at the end of its output).
+        """
+        self.signals.append_output.emit(headline)
+        showed_something = False
+        for stream_name, data in (("stdout", stdout), ("stderr", stderr)):
+            if data is None:
+                continue
+            if isinstance(data, bytes):
+                data = data.decode("utf-8", errors="replace")
+            lines = [line.strip() for line in str(data).splitlines()]
+            lines = [line for line in lines if line]
+            if not lines:
+                continue
+            self.signals.append_output.emit(f"--- yt-dlp {stream_name} ---")
+            if len(lines) > max_lines:
+                self.signals.append_output.emit(
+                    f"[yt-dlp] ({len(lines) - max_lines} earlier lines omitted)"
+                )
+            for line in lines[-max_lines:]:
+                if len(line) > 1000:
+                    line = line[:1000] + " …"
+                self.signals.append_output.emit(f"[yt-dlp] {line}")
+            showed_something = True
+        if not showed_something:
+            self.signals.append_output.emit("[yt-dlp] (no output was captured)")
+
+    def _get_description_summary(
+        self, description: str, max_chars: int = 220, min_words: int = 10
+    ) -> str:
+        """
+        Return a human-friendly short summary of the description.
+
+        Previous behavior used `split(".", 1)` which breaks on abbreviations like "Dr.".
+        This tries to find the first real sentence boundary, but requires at least
+        `min_words` words before accepting a sentence end. Also ignores a short list of
+        common abbreviations. Falls back to a soft character/word preview.
+        """
+        if not description:
+            return ""
+
+        text = " ".join(description.strip().split())  # collapse whitespace/newlines
+        if not text:
+            return ""
+
+        # Common abbreviations that frequently appear at the start of a sentence.
+        # This is intentionally small and can be extended if we see more false splits.
+        abbreviations = {
+            "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st",
+            "vs", "etc", "e.g", "i.e",
+        }
+
+        # Scan for the first likely end-of-sentence punctuation, but only accept
+        # it once we've accumulated at least `min_words` words.
+        boundary_idx = None
+        for i, ch in enumerate(text):
+            if ch not in ".!?":
+                continue
+
+            # Require a following space (or end-of-string) to look like a sentence boundary.
+            next_char = text[i + 1] if i + 1 < len(text) else ""
+            if next_char not in ("", " "):
+                continue
+
+            # Get the token immediately before the punctuation (e.g. "Dr" from "Dr.")
+            before = text[:i].rstrip()
+            last_token = before.split(" ")[-1] if before else ""
+            token_key = last_token.lower().strip("()[]{}\"'“”‘’.,:;")
+            if token_key in abbreviations:
+                continue
+
+            # Minimum-words rule: don't allow extremely short "sentences" like "Dr."
+            if len(before.split()) < min_words:
+                continue
+
+            boundary_idx = i + 1
+            break
+
+        if boundary_idx:
+            summary = text[:boundary_idx].strip()
+        else:
+            # Fallback: take a preview that contains at least `min_words` words, while
+            # still preferring a soft character limit.
+            words = text.split()
+            if len(words) <= min_words:
+                summary = text
+            else:
+                preview = ""
+                for w in words:
+                    candidate = (preview + " " + w).strip()
+                    # Always allow growth until we reach min_words
+                    if len(candidate.split()) <= min_words:
+                        preview = candidate
+                        continue
+                    # After min_words, keep growing only if we stay within max_chars
+                    if len(candidate) <= max_chars:
+                        preview = candidate
+                    else:
+                        break
+                summary = preview.strip()
+
+        return summary
+
+    def _emit_description_summary(self):
+        description = (self.video_state.get("description") or "").strip()
+        if not description:
+            return
+
+        summary = self._get_description_summary(description)
+        if summary:
+            # Keep an empty line above the description and force a "..." ending.
+            self.signals.append_output.emit(f"\nDescription: {summary}...")
+
+    def check_sponsorblock(self, url):
+        try:
+            # Get the categories
+            # Get all possible categories to show everything in the visual bar
+            all_categories = [
+                "sponsor", "selfpromo", "interaction", "intro", "outro", 
+                "preview", "music_offtopic", "filler", "poi_highlight", 
+                "exclusive_access", "chapter"
+            ]
+            # video_id already extracted in fetch_video_info
+            video_id = self.video_state["video_id"]
+            site = self.video_state.get("site", DEFAULT_SITE)
+            if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
+                # SponsorBlock is a YouTube-only database; skip cleanly on other sites
+                self.signals.append_output.emit(
+                    "SponsorBlock: Not available for this site (YouTube only) — skipping"
+                )
+                self._emit_description_summary()
+                return
+            if not video_id:
+                self.signals.append_output.emit(
+                    "SponsorBlock: Could not extract video ID from URL"
+                )
+                self._emit_description_summary()
+                return
+
+            # Build the API URL with query parameters
+            api_url = "https://sponsor.ajay.app/api/skipSegments"
+            payload = {"videoID": video_id, "category": all_categories}
+            max_attempts = 3
+            try:
+                response = None
+                for attempt in range(1, max_attempts + 1):
+                    response = requests.get(api_url, params=payload, timeout=15)
+                    # Retry on 5xx server errors
+                    if response.status_code >= 500 and attempt < max_attempts:
+                        self.signals.append_output.emit(
+                            f"👉 SponsorBlock: Server error {response.status_code}, retrying ({attempt}/{max_attempts - 1})..."
+                        )
+                        time.sleep(2)
+                        continue
+                    break
+
+                if response is None:
+                    return
+
+                if response.status_code == 200:
+                    segments = response.json()
+                    if segments and len(segments) > 0:
+                        # Count segments by category for the *returned* segments
+                        category_counts = {}
+                        for segment in segments:
+                            category = segment.get("category", "unknown")
+                            category_counts[category] = (
+                                category_counts.get(category, 0) + 1
+                            )
+                        # Format the output to show the segments found
+                        segments_info = ", ".join(
+                            [
+                                f"{count} {SB_DISPLAY_NAMES.get(cat, cat.capitalize())}"
+                                for cat, count in sorted(category_counts.items())
+                            ]
+                        )
+                        total = len(segments)
+                        self.signals.append_output.emit(
+                            f"📟 SponsorBlock: {total} segment(s) available ({segments_info})"
+                        )
+                        # Update visual bar
+                        duration = self.video_state.get("duration_sec", 0)
+                        self.signals.update_sb_bar.emit(segments, float(duration))
+                    else:
+                        self.signals.append_output.emit(
+                            "📟 SponsorBlock: No segments available"
+                        )
+                        self.signals.update_sb_bar.emit([], 0)
+                elif response.status_code == 404:
+                    self.signals.append_output.emit(
+                        "📟 SponsorBlock: No segments available"
+                    )
+                    self.signals.update_sb_bar.emit([], 0)
+                else:
+                    self.signals.append_output.emit(
+                        f"🚩 SponsorBlock: API returned status {response.status_code}"
+                    )
+            except requests.exceptions.RequestException as e:
+                self.signals.append_output.emit(
+                    f"🚩 SponsorBlock: Request error: {str(e)}"
+                )
+            finally:
+                self._emit_description_summary()
+        except Exception as e:
+            self.signals.append_output.emit(
+                f"🚩 SponsorBlock: Failed to check segments: {str(e)}"
+            )
+            self._emit_description_summary()
+
+    def _load_sponsor_segments(self, info_json_path):
+        try:
+            with open(info_json_path, "r", encoding="utf-8") as f:
+                info = json.load(f)
+
+            # Get SponsorBlock chapters/segments
+            segments = []
+            removed_categories = self.get_selected_sb_categories()
+
+            if "sponsorblock_chapters" in info:
+                print(
+                    f"Found {len(info['sponsorblock_chapters'])} SponsorBlock chapters"
+                )
+
+                for i, chapter in enumerate(info["sponsorblock_chapters"], 1):
+                    start = chapter.get("start_time", 0)
+                    end = chapter.get("end_time", 0)
+                    duration = end - start
+                    categories = chapter.get("_categories", [])
+
+                    # Handle case where categories might be nested lists or contain non-strings
+                    # Categories format: [["sponsor", start, end, "Description"]]
+                    flat_categories = []
+                    category_names = []  # Just the category names for matching
+
+                    if categories:
+                        for cat in categories:
+                            if isinstance(cat, list) and len(cat) > 0:
+                                # First element is the category name
+                                category_name = str(cat[0])
+                                category_names.append(category_name)
+                                flat_categories.extend(str(c) for c in cat)
+                            else:
+                                cat_str = str(cat)
+                                category_names.append(cat_str)
+                                flat_categories.append(cat_str)
+                        category_str = ", ".join(flat_categories)
+                    else:
+                        category_str = "unknown"
+
+                    print(
+                        f"\nChapter {i}:, Category: {category_str}, Time: {start:.2f}s - {end:.2f}s, Duration: {duration:.2f}s"
+                    )
+
+                    # Check if this segment should have been removed
+                    should_remove = any(
+                        cat in removed_categories for cat in category_names
+                    )
+                    if should_remove:
+                        print(f"Chapter removed.")
+                        segments.append(
+                            {
+                                "start": start,
+                                "end": end,
+                                "category": category_names[0]
+                                if category_names
+                                else "unknown",
+                            }
+                        )
+                    else:
+                        print(f"Chapter not removed (category not in filter).")
+            else:
+                print("No sponsorblock_chapters found in info JSON.")
+
+                # Try alternative fields
+                if "chapters" in info:
+                    print(
+                        f"\nFound {len(info['chapters'])} regular chapters (not SponsorBlock)"
+                    )
+                    for i, chapter in enumerate(
+                        info["chapters"][:3], 1
+                    ):  # Show first 3
+                        print(
+                            f"  {i}. {chapter.get('title', 'Untitled')}: {chapter.get('start_time', 0):.2f}s"
+                        )
+
+            # Check video duration
+            if "duration" in info:
+                original_duration = info["duration"]
+                total_removed = sum(seg["end"] - seg["start"] for seg in segments)
+                final_duration = original_duration - total_removed
+
+                print(f"Duration Analysis")
+                print(
+                    f"Original video duration: {original_duration:.2f}s ({original_duration / 60:.2f} min)"
+                )
+                print(
+                    f"Total time removed: {total_removed:.2f}s ({total_removed / 60:.2f} min)"
+                )
+                print(
+                    f"Final video duration: {final_duration:.2f}s ({final_duration / 60:.2f} min)"
+                )
+
+            print(f"Summary")
+            self.signals.append_output.emit(
+                f"Read json file: Total segments to be removed: {len(segments)}"
+            )
+
+            # Sort segments by start time
+            segments.sort(key=lambda x: x["start"])
+            return segments
+
+        except FileNotFoundError:
+            self.signals.append_output.emit(f"🚩 Cannot find the json file.")
+            return []
+        except json.JSONDecodeError:
+            print(f"Error parsing JSON file: {info_json_path}")
+            return []
+
+    def _verify_and_adjust_segments(
+        self, removed_segments, original_duration, actual_duration, video_path
+    ):
+        # Use cached duration from ffprobe
+        if actual_duration is None:
+            actual_duration = self.get_video_duration()
+
+        if actual_duration is None:
+            print("Warning: Could not verify video duration, using segments as-is")
+            return removed_segments
+
+        total_removed = sum(seg["end"] - seg["start"] for seg in removed_segments)
+        expected_duration = original_duration - total_removed
+        duration_diff = abs(expected_duration - actual_duration)
+
+        print(f"Duration Verification")
+        print(f"Original duration: {original_duration:.2f}s")
+        print(f"Total removed (from JSON): {total_removed:.2f}s")
+        print(f"Expected final duration: {expected_duration:.2f}s")
+        print(f"Actual video duration: {actual_duration:.2f}s")
+        print(f"Difference: {duration_diff:.2f}s")
+
+        if duration_diff > 1.0:
+            print(f"Warning: Duration mismatch of {duration_diff:.2f}s detected.")
+            print("The actual cuts may not match the info JSON perfectly.")
+            print("This could cause subtitle sync issues.")
+
+            # Try to detect if segments are offset
+            # Calculate what the offset might be
+            discrepancy = actual_duration - expected_duration
+            print(f"\nDiscrepancy: {discrepancy:+.2f}s")
+
+            if abs(discrepancy) > 0.5:
+                print("Consider checking the SponsorBlock data accuracy.")
+        else:
+            print("Duration verification passed - segments appear accurate")
+
+        # Apply drift correction factor
+        # If there's a small discrepancy, apply a scaling factor to prevent accumulating errors
+        if duration_diff > 0.1 and duration_diff <= 1.0:
+            drift_factor = actual_duration / expected_duration
+            print(f"Applying drift correction factor: {drift_factor:.6f}")
+
+            # Adjust segment durations proportionally
+            adjusted_segments = []
+            for seg in removed_segments:
+                adjusted_segments.append(
+                    {
+                        "start": seg["start"],
+                        "end": seg["end"],
+                        "category": seg.get("category", "unknown"),
+                        "drift_factor": drift_factor,
+                    }
+                )
+            return adjusted_segments
+
+        return removed_segments

@@ -20,4 +20,4 @@ if [ -z "$PYINSTALLER" ]; then
     exit 1
 fi
 
-"$PYINSTALLER" --name "YT-DLP Downloader" --windowed --icon assets/AppIcon.icns --add-data "assets:assets" app.py --clean --noconfirm
+"$PYINSTALLER" --name "YT-DLP Downloader" --windowed --icon assets/AppIcon.icns --add-data "assets:assets" main.py --clean --noconfirm

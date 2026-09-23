@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import app  # noqa: E402
+import main as app  # noqa: E402
 
 raw = "nonsense"
 clean = app.normalize_url(raw)

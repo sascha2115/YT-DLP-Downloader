@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import app  # noqa: E402
+import main as app  # noqa: E402
 from temp.test_rumble_info_parse import Harness, RUMBLE_URL, CAPTURE_PATH  # noqa: E402
 
 h = Harness()

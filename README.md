@@ -31,7 +31,7 @@ pip install -r requirements.txt
 
 ## Running the GUI
 ```bash
-python app.py
+python main.py
 ```
 > No directory change is required – run in the repository root.
 
@@ -41,7 +41,7 @@ python app.py
 ./build-macos.sh
 # The bundle will be in "dist/YT-DLP Downloader.app"
 ```
-Alternative bare binary: `pyinstaller --onefile app.py` → `dist/app`.
+Alternative bare binary: `pyinstaller --onefile main.py` → `dist/main`.
 
 ## Building / Running on Linux
 The app is cross-platform; the macOS-only dock-icon integration is disabled
@@ -49,7 +49,7 @@ automatically on Linux (`pyobjc` is skipped via a requirements marker).
 
 Run from source:
 ```bash
-python3 app.py
+python3 main.py
 ```
 
 Packaging (must run on a Linux machine — PyInstaller cannot cross-compile from macOS):

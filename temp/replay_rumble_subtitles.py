@@ -13,7 +13,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import app  # noqa: E402
+import main as app  # noqa: E402
 from temp.test_subtitle_multisite import SubtitleHarness  # noqa: E402
 from temp.test_rumble_info_parse import RUMBLE_URL  # noqa: E402
 

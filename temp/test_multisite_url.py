@@ -1,13 +1,14 @@
 # Unit tests for multi-site URL support (YouTube + Rumble proof-of-concept).
 # Run from the repo root:  python3 -m unittest temp.test_multisite_url -v
 
+import os
 import threading
 import types
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-import app
+import main as app
 
 
 class TestDetectSite(unittest.TestCase):
@@ -129,11 +130,15 @@ class TestSiteProfiles(unittest.TestCase):
         self.assertEqual(app.SUPPORTED_SITES_LABEL, "YouTube, Rumble")
 
     def test_header_shows_supported_sites(self):
-        # Both header call sites (UI init + post-clear re-append) must show
-        # the supported-sites line, otherwise it vanishes on first info fetch
-        import inspect
-        source = inspect.getsource(app.YTDLPDownloaderGUI)
-        self.assertEqual(source.count('"Supported: "'), 2)
+        # Both header call sites (init_ui in ytdl/ui_build.py + clear_output
+        # in ytdl/app.py) must show the supported-sites line, otherwise it
+        # vanishes on first info fetch
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        count = 0
+        for rel in ("ytdl/app.py", "ytdl/ui_build.py"):
+            with open(os.path.join(root, rel), encoding="utf-8") as fh:
+                count += fh.read().count('"Supported: "')
+        self.assertEqual(count, 2)
 
 
 class TestBuildCommandAudio(unittest.TestCase):
