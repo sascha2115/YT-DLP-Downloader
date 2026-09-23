@@ -13,7 +13,7 @@
 # python3 app.py --simulate-download-error
 # ==================================================================================================================================
 #
-APP_VERSION = "1.1.24"
+APP_VERSION = "1.1.26"
 import gc
 import glob
 import html
@@ -29,6 +29,7 @@ import threading
 import time
 import unicodedata
 from datetime import datetime
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 
 
@@ -82,6 +83,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSizePolicy,
+    QStyle,
     QTextBrowser,
     QTextEdit,
     QVBoxLayout,
@@ -158,6 +160,39 @@ TITLE_FETCH_DELAY_MS = 500
 YOUTUBE_ID_REGEX = re.compile(
     r"(?:v=|\/|embed\/|shorts\/|live\/)([a-zA-Z0-9_-]{11})(?:[?&/ ]|$)"
 )
+
+RUMBLE_ID_REGEX = re.compile(
+    r"rumble\.com/(?:embed/)?(v[a-zA-Z0-9]+)(?:[?&/ -]|$)"
+)
+
+# ----------------------------------------------------------------------------------------------------
+# Supported sites (proof-of-concept: YouTube + Rumble)
+# Each entry defines how the site is detected and which features it supports.
+# ----------------------------------------------------------------------------------------------------
+SUPPORTED_SITES = {
+    "youtube": {
+        "label": "YouTube",
+        "domains": ("youtube.com", "youtu.be", "youtube-nocookie.com"),
+        "sponsorblock": True,
+        "js_runtime": True,  # yt-dlp evaluates YouTube's JS sig/nsig challenges
+        "resync_auto_subs": True,  # YouTube ASR captions arrive as choppy fragments
+        "id_regex": YOUTUBE_ID_REGEX,
+    },
+    "rumble": {
+        "label": "Rumble",
+        "domains": ("rumble.com",),
+        "sponsorblock": False,  # SponsorBlock is YouTube-only
+        "js_runtime": False,  # the Rumble extractor needs no JS runtime
+        "resync_auto_subs": False,  # Rumble's subs are already well-formatted
+        "id_regex": RUMBLE_ID_REGEX,
+    },
+}
+
+# Default site profile for unknown domains (yt-dlp may still support them)
+DEFAULT_SITE = "youtube"
+
+# Human-readable site list for the info panel header, e.g. "YouTube, Rumble"
+SUPPORTED_SITES_LABEL = ", ".join(p["label"] for p in SUPPORTED_SITES.values())
 
 RE_MERGE = re.compile(r'\[Merger\] Merging formats into "?(.*?)"?$')
 RE_AUDIO = re.compile(r'\[ExtractAudio\] Destination: "?(.*?)"?$')
@@ -532,6 +567,7 @@ class YTDLPDownloaderGUI(QMainWindow):
             "is_fetching_info": False,
             "is_download_running": False,
             "episode_code": "",  # Set when a special-case channel overrides the episode number
+            "site": "youtube",  # Site profile key from SUPPORTED_SITES
         }
 
         # Cache for video metadata
@@ -688,27 +724,35 @@ class YTDLPDownloaderGUI(QMainWindow):
         clean_url = normalize_url(raw_url)
         self.video_state["url"] = raw_url
         self.video_state["clean_url"] = clean_url
+        # Remember which site profile this URL belongs to (site support is
+        # decided on the normalized URL, not the raw clipboard text)
+        self.video_state["site"] = detect_site(clean_url)
         return clean_url
 
     # ----------------------------------------------------------------------------------------------------
-    # Extract and cache video ID
+    # Extract and cache video ID (site-aware: YouTube and Rumble for now)
     # ----------------------------------------------------------------------------------------------------
     def extract_video_id(self, url):
         # Check if we already extracted this URL
         if url == self.video_state["url"] and self.video_state["video_id"]:
             return self.video_state["video_id"]
 
-        match = YOUTUBE_ID_REGEX.search(url)
+        site = detect_site(url)
+        id_regex = SUPPORTED_SITES[site]["id_regex"]
+
+        match = id_regex.search(url)
         if match:
             video_id = match.group(1)
             # Update state
             self.video_state["url"] = url
             self.video_state["video_id"] = video_id
+            self.video_state["site"] = site
             return video_id
 
         # Not found - clear cache
         self.video_state["url"] = url
         self.video_state["video_id"] = ""
+        self.video_state["site"] = site
         return None
 
     # ----------------------------------------------------------------------------------------------------
@@ -758,6 +802,10 @@ class YTDLPDownloaderGUI(QMainWindow):
             radio_button.setEnabled(enabled and btn_enabled)
             button_configs.append({"button": radio_button, "enabled": btn_enabled})
 
+            # Optional per-button tooltip (e.g. explaining the M4A container)
+            if btn_config.get("tooltip"):
+                radio_button.setToolTip(btn_config["tooltip"])
+
             # Populate map for the generic change handler
             button_map[radio_button.text().split(" ")[0].strip()] = btn_config["value"]
 
@@ -801,10 +849,19 @@ class YTDLPDownloaderGUI(QMainWindow):
         self.paste_button.clicked.connect(self.on_paste_button_click)
         url_layout.addWidget(self.paste_button)
         self.url_entry = QLineEdit()
-        self.url_entry.setPlaceholderText("Paste YouTube URL here...")
+        self.url_entry.setPlaceholderText("Paste video URL here...")
         self.url_entry.textChanged.connect(self.on_url_text_change)
         self.url_entry.returnPressed.connect(self.fetch_video_info)
         url_layout.addWidget(self.url_entry)
+        # Reload Button (right side): re-fetches video info for the current URL
+        self.reload_button = QPushButton()
+        self.reload_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
+        )
+        self.reload_button.setToolTip("Fetch video info again")
+        self.reload_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reload_button.clicked.connect(self.on_reload_button_click)
+        url_layout.addWidget(self.reload_button)
         main_layout.addLayout(url_layout)
         main_layout.addSpacing(10)
 
@@ -917,7 +974,14 @@ class YTDLPDownloaderGUI(QMainWindow):
                         "is_default": True,
                         "attr": "abest_radio",
                     },
-                    {"text": "M4A", "value": "m4a", "attr": "m4a_radio"},
+                    {
+                        "text": "M4A",
+                        "value": "m4a",
+                        "attr": "m4a_radio",
+                        "tooltip": "AAC audio in an M4A (MP4) container. "
+                        "Sources already in AAC (YouTube, Rumble) are remuxed "
+                        "losslessly without re-encoding.",
+                    },
                     {"text": "MP3", "value": "mp3", "attr": "mp3_radio"},
                     {"text": "Opus", "value": "opus", "attr": "opus_radio"},
                 ],
@@ -968,10 +1032,11 @@ class YTDLPDownloaderGUI(QMainWindow):
         self.subtitle_unavailable = set()
         for label, code in languages:
             cb = QCheckBox(f"{label} ({code})")
+            # Start unchecked — subtitle selection is manual; an info fetch
+            # only updates labels/availability (see _update_subtitle_checkboxes)
+            cb.setChecked(False)
             subtitle_layout.addWidget(cb)
             self.subtitle_checkboxes[code] = cb
-        # Set default state
-        # self.subtitle_checkboxes["en"].setChecked(True)
         subtitle_group_box.setLayout(subtitle_layout)
         group_boxes_hlayout.addWidget(subtitle_group_box)
         group_boxes_hlayout.addStretch(1)
@@ -1163,6 +1228,7 @@ class YTDLPDownloaderGUI(QMainWindow):
         self.output_text = CustomTextEdit(self)
         self.output_text.setReadOnly(True)
         self.output_text.append("YT-DLP Downloader " + APP_VERSION)
+        self.output_text.append("Supported: " + SUPPORTED_SITES_LABEL)
         main_layout.addWidget(self.output_text)
         # End of UI Init
 
@@ -1207,6 +1273,7 @@ class YTDLPDownloaderGUI(QMainWindow):
         controls = [
             self.url_entry,
             self.paste_button,
+            self.reload_button,
             self.title_entry,
             self.clean_button,
             self.output_dir_entry,
@@ -1243,6 +1310,13 @@ class YTDLPDownloaderGUI(QMainWindow):
             cb.setEnabled(sb_categories_enabled)
 
     # ----------------------------------------------------------------------------------------------------
+    # Clicked Reload Button (re-fetch video info for the current URL,
+    # just like when a new URL is entered)
+    # ----------------------------------------------------------------------------------------------------
+    def on_reload_button_click(self):
+        self.fetch_video_info()
+
+    # ----------------------------------------------------------------------------------------------------
     # Clicked Paste Button
     # ----------------------------------------------------------------------------------------------------
     def on_paste_button_click(self):
@@ -1275,6 +1349,7 @@ class YTDLPDownloaderGUI(QMainWindow):
             self.video_state["clean_url"] = ""
             self.video_state["video_id"] = ""
             self.video_state["url"] = ""
+            self.video_state["site"] = detect_site(new_clean) if new_clean else "youtube"
             self.video_state["episode_code"] = ""  # Clear special-case episode override
             # Disable thumbnail button since info is now stale
             self.thumbnail_button.setEnabled(False)
@@ -1334,14 +1409,18 @@ class YTDLPDownloaderGUI(QMainWindow):
                 cb.setChecked(False)
                 self.subtitle_unavailable.add(code)
 
-        # Auto-mark the selection in every mode: languages with "(real)"
-        # subtitles are checked; if none exist, "(auto)" languages are
-        # checked instead (the same priority rule subtitles-only mode
-        # always applied via _auto_select_subtitles()).
-        self._auto_select_subtitles()
+        # Subtitle selection is manual: after a fetch the checkboxes keep
+        # whatever the user checked (only "(none)" languages are force-
+        # unchecked above, since they are disabled). The one exception is
+        # "Subtitles only" mode, which downloads nothing else — there the
+        # selection is auto-filled (same priority rule the mode's radio
+        # button applies via _auto_select_subtitles()).
+        if self.video_state.get("media_type") == "subtitles":
+            self._auto_select_subtitles()
 
     # ----------------------------------------------------------------------------------------------------
     # Auto-select subtitles based on type (real vs auto)
+    # ("Subtitles only" mode only — selection is manual in every other mode)
     # ----------------------------------------------------------------------------------------------------
     def _auto_select_subtitles(self):
         # Identify types
@@ -1397,7 +1476,13 @@ class YTDLPDownloaderGUI(QMainWindow):
     # Check if the URL is a valid YouTube URL
     # ----------------------------------------------------------------------------------------------------
     def is_youtube_url(self, url):
-        return self.extract_video_id(url) is not None
+        return detect_site(url) == "youtube" and self.extract_video_id(url) is not None
+
+    # ----------------------------------------------------------------------------------------------------
+    # Check if the URL belongs to a supported site (YouTube, Rumble, ...)
+    # ----------------------------------------------------------------------------------------------------
+    def is_supported_url(self, url):
+        return detect_site(url) in SUPPORTED_SITES
 
     # ----------------------------------------------------------------------------------------------------
     # Process clipboard content (used by paste and startup)
@@ -1406,7 +1491,7 @@ class YTDLPDownloaderGUI(QMainWindow):
         # Clean up and normalize clipboard content (now handles naked IDs too)
         content = normalize_url(clipboard_content)
 
-        if content and self.is_youtube_url(content):
+        if content and is_plausible_url(content) and self.is_supported_url(content):
             # If valid set text - this will trigger on_url_text_change
             self.url_entry.setText(content)
             return True
@@ -1415,7 +1500,7 @@ class YTDLPDownloaderGUI(QMainWindow):
             # Display error/info only when not in silent mode (i.e., when user clicks Paste)
             if content:
                 self.signals.append_output.emit(
-                    "Clipboard content is not a valid YouTube URL"
+                    "Clipboard content is not a supported video URL"
                 )
             else:
                 self.signals.append_output.emit("Clipboard is empty")
@@ -1428,12 +1513,20 @@ class YTDLPDownloaderGUI(QMainWindow):
     def fetch_video_info(self):
         url = self.get_clean_url()
         if not url:
-            self.title_entry.setText("Please enter a valid YouTube URL")
+            self.title_entry.setText("Please enter a valid video URL")
             return
 
-        video_id = self.extract_video_id(url)
-        if not video_id:
-            self.title_entry.setText("Please enter a valid YouTube URL")
+        # Cheap syntactic pre-check: garbage like "nonsense" must not reach
+        # the yt-dlp subprocess (it would only surface as a generic-extractor
+        # error down there).
+        if not is_plausible_url(url):
+            self.title_entry.setText("Please enter a valid video URL")
+            return
+
+        # yt-dlp only needs the URL; the video ID is only required for
+        # SponsorBlock (YouTube-only). Any supported site may proceed without one.
+        if not self.is_supported_url(url):
+            self.title_entry.setText("Please enter a supported video URL")
             return
 
         self.title_entry.setText("Fetching video info...")
@@ -1462,8 +1555,14 @@ class YTDLPDownloaderGUI(QMainWindow):
         try:
             cmd = [self.yt_dlp_bin]
 
-            # Use JS runtime if available for extraction
-            if self.deno_bin and shutil.which(self.deno_bin):
+            # Use a JS runtime for extraction if available. Only extractors
+            # that evaluate JavaScript need one (YouTube); per-site profiles
+            # opt out (e.g. Rumble).
+            if (
+                self.deno_bin
+                and shutil.which(self.deno_bin)
+                and site_wants_js_runtime(self.video_state.get("site", DEFAULT_SITE))
+            ):
                 cmd.extend(["--js-runtimes", f"deno:{self.deno_bin}"])
 
             cmd.extend(
@@ -1541,9 +1640,13 @@ class YTDLPDownloaderGUI(QMainWindow):
                 self.signals.append_output.emit(f"Duration: {duration}")
 
                 # Resolutions
+                # Exclude audio-only formats: Rumble's "audio-192p" carries a
+                # bogus height (192) and would pollute the list. yt-dlp sets
+                # video_ext="none" on audio-only formats generically.
                 unique_heights = sorted(list(set(
-                    f.get("height") for f in all_formats 
-                    if f.get("height") and isinstance(f.get("height"), int) and f.get("vcodec") != "none"
+                    f.get("height") for f in all_formats
+                    if f.get("height") and isinstance(f.get("height"), int)
+                    and (f.get("vcodec") not in (None, "none") or f.get("video_ext", "none") != "none")
                 )), reverse=True)
                 
                 if unique_heights:
@@ -1592,24 +1695,43 @@ class YTDLPDownloaderGUI(QMainWindow):
                     sorted_codecs = sorted(list(available_codecs), key=lambda x: codec_order.get(x, 99))
                     self.signals.append_output.emit(f"Video Codecs: {' | '.join(sorted_codecs)}")
 
-                # Audio Codecs availability
+                # Audio Codecs availability.
+                # Generic across sites: Rumble reports plain "aac" (not
+                # "mp4a.*") and its muxed HLS formats report no codecs at
+                # all, while YouTube DASH video-only streams explicitly say
+                # acodec="none". Only an explicit "none" everywhere means a
+                # video truly has no audio.
                 available_audio = set()
+                unknown_codec = False
                 for f in all_formats:
-                    ac = (f.get("acodec") or "").lower()
-                    if ac and ac != "none":
-                        if ac.startswith("mp4a"):
-                            available_audio.add("AAC")
-                        elif ac.startswith("opus"):
-                            available_audio.add("Opus")
-                        elif ac.startswith("vorbis"):
-                            available_audio.add("Vorbis")
-                        elif ac.startswith("mp3"):
-                            available_audio.add("MP3")
-                
+                    raw_acodec = f.get("acodec")
+                    ac = (raw_acodec or "").lower()
+                    if not ac or ac == "none":
+                        if raw_acodec is None:
+                            # Codec unknown (e.g. muxed HLS) - may carry audio
+                            unknown_codec = True
+                        continue
+                    if ac.startswith("mp4a") or ac.startswith("aac"):
+                        available_audio.add("AAC")
+                    elif ac.startswith("opus"):
+                        available_audio.add("Opus")
+                    elif ac.startswith("vorbis"):
+                        available_audio.add("Vorbis")
+                    elif ac.startswith("mp3"):
+                        available_audio.add("MP3")
+                    else:
+                        # Unknown codec family - show it as-is (e.g. FLAC, EC-3)
+                        available_audio.add(ac.split(".")[0].upper())
+
+                # A format with an unknown codec may still carry audio
+                audio_capable = bool(available_audio) or unknown_codec
+
                 if available_audio:
                     audio_order = {"AAC": 1, "Opus": 2, "MP3": 3, "Vorbis": 4}
                     sorted_audio = sorted(list(available_audio), key=lambda x: audio_order.get(x, 99))
                     self.signals.append_output.emit(f"Audio Codecs: {' | '.join(sorted_audio)}")
+
+                if audio_capable:
 
                     # Subtitles availability analysis
                     available_subs = {}
@@ -1631,12 +1753,17 @@ class YTDLPDownloaderGUI(QMainWindow):
                                 base = lang_code.split("-")[0].lower()
                                 original_autos[base] = formats
 
-                        # We check for our 3 target languages for the UI checkboxes
+                        # We check for our 3 target languages for the UI checkboxes.
+                        # Some sites (Rumble) report generated subtitles as
+                        # "<code>-auto" inside `subtitles` instead of YouTube's
+                        # `automatic_captions` - classify those as "(auto)".
                         target_langs = [("English", "en"), ("German", "de"), ("Spanish", "es")]
                         for name, code in target_langs:
-                            if any(k.split("-")[0].lower() == code for k in subs_dict.keys()):
+                            keys = [k for k in subs_dict.keys() if k.split("-")[0].lower() == code]
+                            manual = [k for k in keys if "auto" not in k.lower()]
+                            if manual:
                                 available_subs[code] = "real"
-                            elif code in original_autos:
+                            elif keys or code in original_autos:
                                 available_subs[code] = "auto"
 
                         # Build the full report for the output log as requested
@@ -1645,11 +1772,14 @@ class YTDLPDownloaderGUI(QMainWindow):
                         report_tokens = []
                         
                         for lang_code in all_langs:
-                            # Check manual
-                            if any(k.startswith(lang_code) for k in subs_dict.keys()):
+                            lang_keys = [k for k in subs_dict.keys() if k.startswith(lang_code)]
+                            # Check manual (site keys that are not generated "<...>-auto")
+                            if any("auto" not in k.lower() for k in lang_keys):
                                 report_tokens.append(f"{lang_code} (real)")
-                            # Check original auto
-                            if any(k.startswith(lang_code) for k in original_autos.keys()):
+                            # Check auto (site-generated keys or YouTube original auto-captions)
+                            if any("auto" in k.lower() for k in lang_keys) or any(
+                                k.startswith(lang_code) for k in original_autos.keys()
+                            ):
                                 report_tokens.append(f"{lang_code} (auto)")
 
                         if report_tokens:
@@ -1757,9 +1887,9 @@ class YTDLPDownloaderGUI(QMainWindow):
                         self.signals.append_output.emit("🚩 Could not find title")
                         error_status["error"] = True
                 else:
-                    # yt-dlp returned info but no audio codec was present in
-                    # the format list. The legacy message here referenced an
-                    # undefined `parts` variable and crashed with a NameError.
+                    # Every format explicitly says acodec="none" (no unknown-
+                    # codec/muxed formats either), so the video has no audio.
+                    # Kept as a hard error so the Download button stays off.
                     self.signals.append_output.emit(
                         "🚩 yt-dlp returned no audio formats for this video"
                     )
@@ -1968,6 +2098,14 @@ class YTDLPDownloaderGUI(QMainWindow):
             ]
             # video_id already extracted in fetch_video_info
             video_id = self.video_state["video_id"]
+            site = self.video_state.get("site", DEFAULT_SITE)
+            if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
+                # SponsorBlock is a YouTube-only database; skip cleanly on other sites
+                self.signals.append_output.emit(
+                    "SponsorBlock: Not available for this site (YouTube only) — skipping"
+                )
+                self._emit_description_summary()
+                return
             if not video_id:
                 self.signals.append_output.emit(
                     "SponsorBlock: Could not extract video ID from URL"
@@ -2323,6 +2461,7 @@ class YTDLPDownloaderGUI(QMainWindow):
         self.output_text.clear()
         # Keep the header line visible even while we are fetching video info
         self.output_text.append("YT-DLP Downloader " + APP_VERSION)
+        self.output_text.append("Supported: " + SUPPORTED_SITES_LABEL)
         self._reset_download_progress_bars()
 
     # ----------------------------------------------------------------------------------------------------
@@ -2713,7 +2852,7 @@ class YTDLPDownloaderGUI(QMainWindow):
         selected_langs = self.get_selected_subtitle_codes()
         cmd = self.build_command(selected_langs)
         if not cmd:
-            self.signals.append_output.emit("👉 Please enter a valid YouTube URL")
+            self.signals.append_output.emit("👉 Please enter a valid video URL")
             self.video_state["is_download_running"] = False
             self.url_entry.setFocus()
             return
@@ -2767,7 +2906,11 @@ class YTDLPDownloaderGUI(QMainWindow):
             ffmpeg_dir = os.path.dirname(self.ffmpeg_bin)
             cmd.extend(["--ffmpeg-location", ffmpeg_dir])
 
-        if self.deno_bin and shutil.which(self.deno_bin):
+        if (
+            self.deno_bin
+            and shutil.which(self.deno_bin)
+            and site_wants_js_runtime(self.video_state.get("site", DEFAULT_SITE))
+        ):
             cmd.extend(["--js-runtimes", f"deno:{self.deno_bin}"])
 
         # Media Type and Format Logic
@@ -2781,12 +2924,19 @@ class YTDLPDownloaderGUI(QMainWindow):
             if audio_fmt == "best":
                 cmd.extend(["-f", "bestaudio/best"])
             else:
-                postprocessor_format = "aac" if audio_fmt == "m4a" else audio_fmt
+                # NOTE: this used to map the GUI's "M4A" option to yt-dlp's
+                # "aac" postprocessor format. Per yt-dlp's FFmpegExtractAudioPP,
+                # "aac" forces a raw ADTS stream (-f adts) while the output file
+                # is still named ".m4a" - a mislabeled file. "m4a" instead writes
+                # a real MP4/M4A container and stream-copies AAC sources
+                # losslessly (YouTube AAC, Rumble's ADTS "audio-192p") via the
+                # aac_adtstoasc bitstream filter; only non-AAC sources
+                # (Opus/Vorbis) get re-encoded.
                 cmd.extend(
                     [
                         "-x",
                         "--audio-format",
-                        postprocessor_format,
+                        audio_fmt,
                         "--audio-quality",
                         "0",
                     ]
@@ -2800,7 +2950,14 @@ class YTDLPDownloaderGUI(QMainWindow):
             video_format_filter = "".join(p for p in format_parts if p)
 
             if media_type == "video":
-                format_string = f"bestvideo{video_format_filter}+bestaudio/best"
+                # "bestvideo*" rather than strict "bestvideo": muxed HLS
+                # formats (Rumble) report unknown codecs, which strict
+                # bestvideo skips - leaving only Rumble's tiny video-only
+                # timeline strip (180p) as the "best" video stream. bv*
+                # allows video+audio combinations, so the site's real
+                # streams are eligible (the merge still uses the separate
+                # bestaudio track when one exists).
+                format_string = f"bestvideo*{video_format_filter}+bestaudio/best"
                 cmd.extend(["-f", format_string])
                 if video_fmt != "best":
                     cmd.extend(["--merge-output-format", video_fmt])
@@ -2825,8 +2982,23 @@ class YTDLPDownloaderGUI(QMainWindow):
                 if checkbox.isChecked()
             ]
 
-        if sb_categories:
+        if sb_categories and SUPPORTED_SITES.get(
+            self.video_state.get("site", DEFAULT_SITE), {}
+        ).get("sponsorblock", False):
+            # SponsorBlock chapters only exist on YouTube
             cmd.extend(["--sponsorblock-mark", "all"])
+
+        # Strip embedded broadcast captions (EIA-608 carried in H.264 SEI
+        # "User Data Registered ITU-T T.35" NALs) from video downloads.
+        # Sites like Rumble pass US broadcast feeds through, so the MP4
+        # carries a hidden CC track that some players (IINA) surface as a
+        # second subtitle track; the app's own SRT files are the intended
+        # subtitles. Removing SEI NAL type 6 is lossless (-c copy semantics
+        # via the ffmpeg bitstream filter). Only relevant for formats that
+        # contain video; audio-only downloads are unaffected anyway.
+        cc_strip_args = "-bsf:v filter_units=remove_types=6"
+        cmd.extend(["--postprocessor-args", f"Merger:{cc_strip_args}"])
+        cmd.extend(["--postprocessor-args", f"FixupM3u8:{cc_strip_args}"])
 
         # Final parameters - use helper method
         cmd.extend(["--add-metadata"])
@@ -2835,7 +3007,7 @@ class YTDLPDownloaderGUI(QMainWindow):
         cmd.extend(["--write-info-json"])
         # Subtitles Integration
         if selected_langs:
-            lang_arg = ",".join([f"{lg},a.{lg}" for lg in selected_langs])
+            lang_arg = self._subtitle_lang_patterns(selected_langs)
             cmd.extend(
                 [
                     "--write-subs",
@@ -2852,6 +3024,119 @@ class YTDLPDownloaderGUI(QMainWindow):
         # cmd.extend(["--extractor-args", "youtube:player_client=default,ios"])
         cmd.append(url)
         return cmd
+
+    # ----------------------------------------------------------------------------------------------------
+    # Subtitle helpers (site-aware: YouTube "en"/"a.en", Rumble "en-auto", ...)
+    # ----------------------------------------------------------------------------------------------------
+    def _subtitle_lang_patterns(self, selected_langs):
+        """
+        Build the --sub-langs argument covering every known subtitle-key shape.
+
+        yt-dlp matches --sub-langs entries as regexes (fullmatch) against the
+        site's subtitle keys. YouTube uses "en" / "a.en" keys, but other sites
+        use different shapes (Rumble: "en-auto", with generated subs in
+        `subtitles`, not `automatic_captions`). Requesting each language in
+        every known key shape makes the site's actual key match; unavailable
+        shapes are simply ignored by yt-dlp.
+        """
+        variants = []
+        for lang in selected_langs:
+            variants.extend([lang, f"a.{lang}", f"{lang}-auto", f"a.{lang}-auto"])
+        return ",".join(variants)
+
+    def _find_downloaded_subtitles(self, selected_langs):
+        """
+        Locate downloaded subtitle files for the requested languages.
+
+        Sites name subtitle files differently: YouTube "en.srt"/"a.en.srt",
+        Rumble "en-auto.srt" (its generated subs live in `subtitles` under
+        "<code>-auto"). The full output filename is "<base>.<lang>.<ext>",
+        so scan the output directory once and map every subtitle suffix back
+        to the requested base language.
+
+        Returns a list of (lang, path, sub_type) with sub_type
+        "real" or "auto", preferring real/manual and canonical names.
+        """
+        out_dir = self.get_output_dir()
+        found_sub_files = {}  # filepath -> (base_lang, sub_type, ext)
+        try:
+            for fname in os.listdir(out_dir):
+                # Suffix match: the base filename (video title) is arbitrary;
+                # only the trailing "<lang>[-auto].srt/vtt" part identifies a
+                # subtitle file. "a." prefix marks YouTube auto-subs.
+                m = re.search(
+                    r"(?P<prefix>a\.)?(?P<lang>[A-Za-z0-9]+)(?P<auto>-auto)?\.(?P<ext>srt|vtt)$",
+                    fname,
+                )
+                if not m:
+                    continue
+                lang = m.group("lang").lower()
+                sub_type = "auto" if (m.group("prefix") or m.group("auto")) else "real"
+                found_sub_files[os.path.join(out_dir, fname)] = (lang, sub_type, m.group("ext"))
+        except OSError:
+            pass
+
+        downloaded_subs = []
+        for lang in selected_langs:
+            base = lang.split("-")[0].lower()
+            candidates = [
+                path
+                for path, (flang, _ftype, _ext) in found_sub_files.items()
+                if flang == base
+            ]
+            if not candidates:
+                continue
+            # Prefer: manual "real" over "auto", canonical names over
+            # "-auto", converted .srt over raw .vtt, then a stable tiebreak.
+            candidates.sort(
+                key=lambda p: (
+                    found_sub_files[p][1] != "real",
+                    "-auto" in p,
+                    found_sub_files[p][2] != "srt",
+                    p,
+                )
+            )
+            chosen = candidates[0]
+            downloaded_subs.append((lang, chosen, found_sub_files[chosen][1]))
+        return downloaded_subs
+
+    def _subtitle_needs_resync(self, sub_type):
+        """
+        Whether a downloaded subtitle file needs the 2-line merge/resync.
+
+        Manual ("real") subs never do. Auto subs do on sites whose generated
+        captions arrive as choppy fragments (YouTube), but not on sites that
+        deliver them pre-formatted (Rumble) - decided per site profile.
+        """
+        if sub_type == "real":
+            return False
+        site = self.video_state.get("site", DEFAULT_SITE)
+        return site_resyncs_auto_subs(site)
+
+    def _normalize_subtitle_names(self, downloaded_subs):
+        """
+        Rename site-specific subtitle files to the canonical "<base>.<lang>.srt"
+        name (YouTube-style), returning an updated (lang, path, sub_type) list.
+
+        yt-dlp names subtitle files after the site's subtitle key, e.g. Rumble
+        writes "<base>.en-auto.srt". Post-processing (_resync_subtitle_for_language)
+        always writes the canonical "<base>.en.srt" - without this rename, both
+        the site-named original and the processed canonical file end up on disk.
+        After renaming, resync overwrites the single file in place.
+        """
+        normalized = []
+        for lang, srt_path, sub_type in downloaded_subs:
+            canonical = self.get_full_path(f".{lang}.srt")
+            if srt_path != canonical and srt_path and os.path.exists(srt_path):
+                try:
+                    os.replace(srt_path, canonical)
+                    srt_path = canonical
+                except OSError as e:
+                    # Non-fatal: resync then writes the canonical file and the
+                    # site-named original stays (old, pre-fix behavior).
+                    print(f"Could not rename subtitle file {srt_path}: {e}")
+            normalized.append((lang, srt_path, sub_type))
+        return normalized
 
     # ----------------------------------------------------------------------------------------------------
     # Run download process
@@ -2924,22 +3209,9 @@ class YTDLPDownloaderGUI(QMainWindow):
                 # Process subtitles (now downloaded together with video)
                 if selected_langs:
                     self.signals.append_output.emit("\nProcessing subtitles...")
-                    # Identify which languages were actually downloaded (checking both manual and auto-subs)
-                    downloaded_subs = []
-                    available_info = self.video_state.get("available_subtitles", {})
-                    
-                    for lang in selected_langs:
-                        p1 = self.get_full_path(extension=f".{lang}.srt")
-                        p2 = self.get_full_path(extension=f".a.{lang}.srt")
-
-                        if os.path.exists(p1):
-                            # Use metadata to distinguish, but default to "real" if standard suffix exists
-                            # unless we explicitly know it's an "auto" type video.
-                            sub_type = available_info.get(lang, "real")
-                            downloaded_subs.append((lang, p1, sub_type))
-                        elif os.path.exists(p2):
-                            # Files with .a. suffix are always auto
-                            downloaded_subs.append((lang, p2, "auto"))
+                    downloaded_subs = self._normalize_subtitle_names(
+                        self._find_downloaded_subtitles(selected_langs)
+                    )
 
                     if downloaded_subs:
                         report_langs = [f"{item[0]} ({item[2]})" for item in downloaded_subs]
@@ -2949,11 +3221,13 @@ class YTDLPDownloaderGUI(QMainWindow):
                             f"💬 Subtitles identified: {', '.join(report_langs)}"
                         )
 
-                        # Process subtitles: merge auto-generated ones for 2-line display,
-                        # but leave manual (real) subtitles untouched as they are already optimized.
+                        # Process subtitles: merge auto-generated ones for 2-line
+                        # display where the site needs it (YouTube), but leave
+                        # subs untouched that are already well-formatted (real
+                        # subs anywhere, auto subs on e.g. Rumble).
                         for lang, srt_path, sub_type in downloaded_subs:
-                            if sub_type == "real":
-                                self.signals.append_output.emit(f"  → {lang} (real): keeping original format")
+                            if not self._subtitle_needs_resync(sub_type):
+                                self.signals.append_output.emit(f"  → {lang} ({sub_type}): keeping original format")
                             else:
                                 self.signals.append_output.emit(f"  → {lang} (auto): merging into 2-line format")
                                 self._resync_subtitle_for_language(lang, srt_path, [])
@@ -4368,11 +4642,101 @@ def find_binary(name):
     # Return name as-is, let it fail with helpful error
 
 
+def detect_site(url):
+    """
+    Detect which supported site profile a URL belongs to.
+
+    Returns a key into SUPPORTED_SITES ("youtube", "rumble", ...).
+    Unknown domains fall back to DEFAULT_SITE (YouTube), preserving the
+    historical behavior where any non-matching input was treated as YouTube.
+    """
+    if not url:
+        return DEFAULT_SITE
+    # urlparse only yields a hostname for scheme URLs; prepend one for
+    # schemeless input like "rumble.com/vXXXXXX" or "RUMBLE.COM/..."
+    candidate = url.strip()
+    if "://" not in candidate:
+        candidate = "https://" + candidate
+    try:
+        host = urlparse(candidate).hostname or ""
+    except ValueError:
+        return DEFAULT_SITE
+    host = host.lower().removeprefix("www.")
+    for site_key, profile in SUPPORTED_SITES.items():
+        for domain in profile["domains"]:
+            if host == domain or host.endswith("." + domain):
+                return site_key
+    return DEFAULT_SITE
+
+
+def site_resyncs_auto_subs(site):
+    """
+    Whether auto-generated subtitles of a site need the 2-line merge.
+
+    YouTube's ASR captions arrive as choppy fragments that the resync/merge
+    step reformats; sites like Rumble deliver them already well-formatted.
+    Site profiles opt out via the "resync_auto_subs" key. Defaults to True
+    so unknown/future sites keep the previous always-merge behavior.
+    """
+    return SUPPORTED_SITES.get(site, {}).get("resync_auto_subs", True)
+
+
+def site_wants_js_runtime(site):
+    """
+    Whether yt-dlp benefits from an external JS runtime (deno) for a site.
+
+    Only extractors that evaluate JavaScript need one (YouTube's signature
+    challenges); site profiles opt out via the "js_runtime" key. Defaults to
+    True so unknown/future sites keep the previous always-pass behavior.
+    """
+    return SUPPORTED_SITES.get(site, {}).get("js_runtime", True)
+
+
+def is_plausible_url(url):
+    """
+    Cheap syntactic pre-check so obvious non-URLs never reach yt-dlp.
+
+    yt-dlp's generic extractor turns anything it cannot classify into an
+    ugly "[generic] 'nonsense' is not a valid URL" subprocess error; this
+    keeps typos and garbage out of the yt-dlp call entirely. Deliberately
+    permissive: any well-formed dotted hostname (or localhost) passes -
+    yt-dlp itself decides whether the site is actually supported.
+    """
+    if not url:
+        return False
+    url = str(url).strip()
+    # Naked 11-char YouTube ID (normalize_url canonicalizes these too)
+    if re.match(r"^[a-zA-Z0-9_-]{11}$", url):
+        return True
+    if "://" not in url:
+        url = "https://" + url
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    # The hostname must be well-formed: dot-separated labels of letters,
+    # digits and hyphens. urlparse is lenient and happily returns hostnames
+    # with spaces (e.g. clipboard text like "YT-DLP Downloader 1.1.25"
+    # parses as host "yt-dlp downloader 1.1.25"), so an explicit shape
+    # check is needed on top of the dot requirement.
+    if not re.fullmatch(
+        r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*",
+        host,
+    ):
+        return False
+    # Single-label hosts ("nonsense") are not URLs; a dot is required.
+    return "." in host
+
+
 # ----------------------------------------------------------------------------------------------------
 # Normalize (clean) a YouTube URL
 # ----------------------------------------------------------------------------------------------------
 def normalize_url(url):
-    # Normalize (and if needed, extract) a YouTube URL from user input.
+    # Normalize (and if needed, extract) a video URL from user input.
     #
     # The URL field may contain extra surrounding text (e.g. copied from chat):
     #   mytext `https://www.youtube.com/watch?v=xxxxxxxxxxx`
@@ -4388,9 +4752,10 @@ def normalize_url(url):
     if m:
         url = m.group(1)
     else:
-        # 2) Extract a youtube-domain token without scheme, e.g. "www.youtube.com/..."
+        # 2) Extract a known-site domain token without scheme, e.g.
+        #    "www.youtube.com/..." or "rumble.com/vXXXXXX-title.html"
         m = re.search(
-            r"((?:www\.)?(?:youtube\.com|youtu\.be)/[^\s]+)",
+            r"((?:www\.)?(?:youtube\.com|youtu\.be|rumble\.com)/[^\s]+)",
             url,
             flags=re.IGNORECASE,
         )
@@ -4399,6 +4764,11 @@ def normalize_url(url):
 
     # Strip common wrappers / trailing punctuation from copied text
     url = url.strip("`\"'<>[](){}.,;")
+
+    # Rumble URLs: strip trailing punctuation but keep query params intact.
+    # Nothing below this point is YouTube-specific, so we're done.
+    if detect_site(url) == "rumble":
+        return url
 
     # If it's a naked 11-char YouTube ID, make it a full URL
     if re.match(r"^[a-zA-Z0-9_-]{11}$", url):

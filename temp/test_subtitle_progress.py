@@ -441,6 +441,7 @@ class UiHarness:
         # Primary controls (only setEnabled/isChecked is used)
         self.url_entry = FakeCheckbox()
         self.paste_button = FakeCheckbox()
+        self.reload_button = FakeCheckbox()
         self.title_entry = FakeCheckbox()
         self.clean_button = FakeCheckbox()
         self.output_dir_entry = FakeCheckbox()
@@ -514,31 +515,34 @@ class TestSubtitleCheckboxDisable(unittest.TestCase):
         self.assertFalse(gui.subtitle_checkboxes["de"].checked)
         self.assertFalse(gui.subtitle_checkboxes["es"].checked)
 
-    def test_real_subtitles_checked_with_priority_over_auto(self):
-        # If any language has "(real)" subtitles, only those are checked —
-        # even when another language only offers "(auto)" captions.
+    def test_fetch_leaves_checkboxes_unchecked(self):
+        # Subtitle selection is manual: an info fetch in video/audio modes
+        # never checks any box — it only updates labels and availability.
         self.gui.video_state["available_subtitles"] = {"en": "real", "de": "auto"}
         self.gui._update_subtitle_checkboxes("en")
-        self.assertTrue(self.gui.subtitle_checkboxes["en"].checked)
-        self.assertFalse(self.gui.subtitle_checkboxes["de"].checked)
+        for code, cb in self.gui.subtitle_checkboxes.items():
+            self.assertFalse(cb.checked, code)
+        self.assertTrue(self.gui.subtitle_checkboxes["en"].text().endswith("(real)"))
         self.assertTrue(self.gui.subtitle_checkboxes["de"].text().endswith("(auto)"))
 
-    def test_auto_fallback_checked_when_no_real_exists(self):
-        # Without "(real)" subtitles, "(auto)" languages are checked instead.
-        self.gui.video_state["available_subtitles"] = {"de": "auto"}
-        self.gui._update_subtitle_checkboxes("de")
-        self.assertTrue(self.gui.subtitle_checkboxes["de"].checked)
-        self.assertFalse(self.gui.subtitle_checkboxes["en"].checked)
-        self.assertFalse(self.gui.subtitle_checkboxes["es"].checked)
-
-    def test_stale_auto_unchecked_when_real_appears(self):
-        # A checkbox left checked from a previous video's "(auto)" fallback
-        # is unchecked when a newer fetch reports "(real)" elsewhere.
+    def test_manual_selection_survives_fetch(self):
+        # A language the user checked stays checked across a fetch as long
+        # as it is still available (only "(none)" languages are reset).
         self.gui.subtitle_checkboxes["de"].setChecked(True)
         self.gui.video_state["available_subtitles"] = {"en": "real", "de": "auto"}
         self.gui._update_subtitle_checkboxes("en")
-        self.assertTrue(self.gui.subtitle_checkboxes["en"].checked)
-        self.assertFalse(self.gui.subtitle_checkboxes["de"].checked)
+        self.assertTrue(self.gui.subtitle_checkboxes["de"].checked)
+        self.assertFalse(self.gui.subtitle_checkboxes["en"].checked)
+
+    def test_auto_fallback_in_subtitles_only_mode(self):
+        # In "Subtitles only" mode a fetch auto-fills the selection;
+        # without "(real)" subtitles the "(auto)" languages are used.
+        gui = UiHarness("subtitles")
+        gui.video_state["available_subtitles"] = {"de": "auto"}
+        gui._update_subtitle_checkboxes("de")
+        self.assertTrue(gui.subtitle_checkboxes["de"].checked)
+        self.assertFalse(gui.subtitle_checkboxes["en"].checked)
+        self.assertFalse(gui.subtitle_checkboxes["es"].checked)
 
 
 # ====================================================================================================

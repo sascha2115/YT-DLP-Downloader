@@ -1,6 +1,9 @@
 # YT‑DLP Downloader
 
-A lightweight PyQt6 GUI for downloading YouTube videos via `yt‑dlp`.  It supports advanced options such as quality selection, subtitle handling, and SponsorBlock integration.
+A lightweight PyQt6 GUI for downloading videos via `yt‑dlp`.  It supports advanced options such as quality selection, subtitle handling, and SponsorBlock integration.
+
+Supported sites (via yt-dlp's extractors): **YouTube** and — as a proof of concept — **Rumble**.
+SponsorBlock is YouTube-only and is skipped automatically for other sites.
 
 ## Features
 - **Video / Audio / Subtitles** selection

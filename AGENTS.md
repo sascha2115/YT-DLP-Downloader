@@ -1,5 +1,8 @@
 # Project Instructions
 
+## Conventions
+- `APP_VERSION` in `app.py` is bumped **only at an explicit git commit** – not per working-tree change. Between commits, leave the version at the value it had at the last commit (or the pre-existing uncommitted value).
+
 ## How to Investigate
 - `app.py` – the single main entrypoint (PyQt6 GUI); it lives at the **repo root**, not in an `app/` directory.
 - `requirements.txt` – Python dependencies (PyQt6, requests, pyobjc-framework-Cocoa). The external binaries (`yt-dlp`, `ffmpeg`, `deno`) are only listed as comments – install them via Homebrew or pip, not via this file.
@@ -26,8 +29,15 @@
 
 ## Execution flow
 - GUI triggers `fetch_video_info` → `start_download`.
+- `fetch_video_info()` pre-checks the URL syntactically (`is_plausible_url()`, also used by the clipboard paste/startup handler) so garbage like "nonsense" never reaches the yt-dlp subprocess; naked 11-char YouTube IDs and schemeless known-site tokens still pass because `normalize_url()` canonicalizes them first. The hostname must be well-formed (dot-separated labels of letters/digits/hyphens) — Python's `urlparse` is lenient and would otherwise accept clipboard text like "YT-DLP Downloader 1.1.25" as a "URL".
 - Info-fetch failures are surfaced in the output panel: `get_video_info()` dumps yt-dlp's captured stdout/stderr via `_dump_ytdlp_error_output()` (headline includes the exit code; a timeout dumps the partial output captured before the kill). Previously stderr was swallowed, so 403/sign-in errors made the app look like it silently stopped.
 - Progress reported via `DownloadProgressManager` and `SignalEmitter` signals.
+
+## Multi-site support (YouTube + Rumble proof-of-concept)
+- `SUPPORTED_SITES` (top of `app.py`) holds per-site profiles: `domains`, `id_regex`, `sponsorblock`, `js_runtime`, `resync_auto_subs`. `detect_site()` matches the hostname; unknown domains fall back to `DEFAULT_SITE` (YouTube). New profile flags must default to the historical behavior for unknown sites.
+- Site-gated behaviors: SponsorBlock API query + `--sponsorblock-mark` (YouTube-only), `--js-runtimes deno` (needed by YouTube's JS sig/nsig challenges, skipped for Rumble), auto-subtitle resync/2-line merge (needed for YouTube's choppy ASR cues; Rumble subs arrive pre-formatted and are kept as-is), video format selector uses `bestvideo*` (not strict `bestvideo`) so muxed HLS formats with unknown codecs (Rumble) are eligible – strict `bestvideo` would degrade Rumble downloads to the tiny video-only timeline strip.
+- Embedded broadcast captions (EIA-608 in H.264 SEI T.35 NALs, carried by Rumble's HLS streams; IINA surfaces them as a hidden "eia_608" subtitle track) are always stripped losslessly via `--postprocessor-args Merger/FixupM3u8:-bsf:v filter_units=remove_types=6` in `build_command()`. The app's own SRT files are the intended subtitles.
+- Subtitle key shapes differ per site: yt-dlp matches `--sub-langs` entries as regexes with `fullmatch` against the site's subtitle keys (YouTube `en`/`a.en`, Rumble `en-auto` with generated subs in `subtitles`, not `automatic_captions`). `_subtitle_lang_patterns()` therefore requests every known key shape, and `_find_downloaded_subtitles()` + `_normalize_subtitle_names()` map site-named files (`<base>.en-auto.srt`) back to the canonical `<base>.en.srt` **before** post-processing, so resync overwrites in place instead of leaving duplicates.
 
 ## SponsorBlock handling
 - Visual bar defined in `SponsorBlockBar`.
@@ -44,7 +54,7 @@
 - yt-dlp downloads subtitles BEFORE the media streams; their `[download] Destination:` and percent lines must not affect the video/audio progress bars or the captured media filename.
 - Detection lives in `SUBTITLE_EXTENSIONS` + `YTDLPDownloaderGUI._is_subtitle_path()`; exclusion logic in `_parse_download_output()` / `_update_download_progress()` (state key `downloading_subtitles`).
 - Retry re-prints: after a mid-download error ("Got error ... Retrying (n/10)...") yt-dlp RE-PRINTS the `[download] Destination:` of the SAME file. `DownloadProgressManager.on_download_destination(dest)` therefore dedupes by normalized destination path (`last_destination`, strips quotes/`.part`/`.ytdl`/`.temp`) so a retry does not advance the stream accounting video → audio. A captured example lives in `temp/retry-timeout-capture.log` (replay: `python3 temp/replay_ytdlp_output.py temp/retry-timeout-capture.log video`).
-- Languages whose info fetch reports "(none)" availability get their checkbox disabled and unchecked in `_update_subtitle_checkboxes()`; the set `subtitle_unavailable` makes `_set_ui_enabled_state()` keep them disabled across UI re-enables (fetch/download start/end). After an info fetch, `_update_subtitle_checkboxes()` auto-marks the selection in every mode via `_auto_select_subtitles()`: languages with "(real)" subtitles are checked; if none exist, "(auto)" languages are checked instead. Re-running a fetch re-applies this rule (manual unchecked states do not survive a fetch).
+- Languages whose info fetch reports "(none)" availability get their checkbox disabled and unchecked in `_update_subtitle_checkboxes()`; the set `subtitle_unavailable` makes `_set_ui_enabled_state()` keep them disabled across UI re-enables (fetch/download start/end). After an info fetch the language checkboxes stay unchecked — selection is manual; `_update_subtitle_checkboxes()` only refreshes labels/availability, and a language the user checked survives a fetch unless it became "(none)". The single exception is "Subtitles only" mode (which downloads nothing else): there the selection is auto-filled via `_auto_select_subtitles()` — "(real)" languages are checked, "(auto)" as fallback — both when the mode's radio button is selected and after a fetch in that mode.
 
 ## Common gotchas
 - GUI updates must use signals, not direct widget modifications.

@@ -1,0 +1,398 @@
+# Unit tests for multi-site URL support (YouTube + Rumble proof-of-concept).
+# Run from the repo root:  python3 -m unittest temp.test_multisite_url -v
+
+import threading
+import types
+import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+import app
+
+
+class TestDetectSite(unittest.TestCase):
+    def test_rumble_domains(self):
+        self.assertEqual(app.detect_site("https://rumble.com/v6abcde-title.html"), "rumble")
+        self.assertEqual(app.detect_site("https://www.rumble.com/v6abcde"), "rumble")
+        self.assertEqual(app.detect_site("https://rumble.com/embed/v6abcde/"), "rumble")
+        self.assertEqual(app.detect_site("RUMBLE.COM/V6ABCDE"), "rumble")
+
+    def test_youtube_domains(self):
+        self.assertEqual(app.detect_site("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "youtube")
+        self.assertEqual(app.detect_site("https://youtu.be/dQw4w9WgXcQ"), "youtube")
+        self.assertEqual(app.detect_site("https://m.youtube.com/watch?v=x"), "youtube")
+
+    def test_unknown_domain_defaults_to_youtube(self):
+        # Historical behavior: unknown domains are treated as YouTube
+        self.assertEqual(app.detect_site("https://example.com/video"), app.DEFAULT_SITE)
+        self.assertEqual(app.detect_site(""), app.DEFAULT_SITE)
+        self.assertEqual(app.detect_site("not a url"), app.DEFAULT_SITE)
+
+
+class TestRumbleIdRegex(unittest.TestCase):
+    def test_slug_url(self):
+        m = app.RUMBLE_ID_REGEX.search("https://rumble.com/v6abcde-some-video-title.html")
+        self.assertEqual(m.group(1), "v6abcde")
+
+    def test_short_url(self):
+        m = app.RUMBLE_ID_REGEX.search("https://rumble.com/v6abcde")
+        self.assertEqual(m.group(1), "v6abcde")
+
+    def test_embed_url(self):
+        m = app.RUMBLE_ID_REGEX.search("https://rumble.com/embed/v6abcde/")
+        self.assertEqual(m.group(1), "v6abcde")
+
+    def test_with_query_and_trailing_punct(self):
+        m = app.RUMBLE_ID_REGEX.search("https://rumble.com/v6abcde-x.html?utm=x")
+        self.assertEqual(m.group(1), "v6abcde")
+        m = app.RUMBLE_ID_REGEX.search("https://rumble.com/v6abcde-x.html.")
+        self.assertEqual(m.group(1), "v6abcde")
+
+
+class TestNormalizeUrlRumble(unittest.TestCase):
+    def test_plain_url_unchanged(self):
+        self.assertEqual(
+            app.normalize_url("https://rumble.com/v6abcde-some-video.html"),
+            "https://rumble.com/v6abcde-some-video.html",
+        )
+
+    def test_extract_from_surrounding_text(self):
+        self.assertEqual(
+            app.normalize_url("check this out https://rumble.com/v6abcde-title.html great"),
+            "https://rumble.com/v6abcde-title.html",
+        )
+
+    def test_schemeless_token_gets_https(self):
+        self.assertEqual(
+            app.normalize_url("www.rumble.com/v6abcde.html"),
+            "https://www.rumble.com/v6abcde.html",
+        )
+        self.assertEqual(app.normalize_url("rumble.com/v6abcde"), "https://rumble.com/v6abcde")
+
+    def test_trailing_punctuation_stripped(self):
+        self.assertEqual(
+            app.normalize_url("https://rumble.com/v6abcde-title.html."),
+            "https://rumble.com/v6abcde-title.html",
+        )
+
+
+class TestNormalizeUrlYoutubeRegressions(unittest.TestCase):
+    """Ensure existing YouTube behavior is unchanged."""
+
+    def test_watch_url_strips_extra_params(self):
+        self.assertEqual(
+            app.normalize_url("https://www.youtube.com/watch?v=abc12345678&list=xyz"),
+            "https://www.youtube.com/watch?v=abc12345678",
+        )
+
+    def test_youtu_be_canonicalized(self):
+        self.assertEqual(
+            app.normalize_url("https://youtu.be/abc12345678"),
+            "https://www.youtube.com/watch?v=abc12345678",
+        )
+
+    def test_naked_id(self):
+        self.assertEqual(
+            app.normalize_url("abc12345678"),
+            "https://www.youtube.com/watch?v=abc12345678",
+        )
+
+    def test_empty(self):
+        self.assertEqual(app.normalize_url(""), "")
+
+
+class TestSiteProfiles(unittest.TestCase):
+    def test_sponsorblock_flags(self):
+        self.assertTrue(app.SUPPORTED_SITES["youtube"]["sponsorblock"])
+        self.assertFalse(app.SUPPORTED_SITES["rumble"]["sponsorblock"])
+
+    def test_id_regexes_wired(self):
+        self.assertIs(app.SUPPORTED_SITES["youtube"]["id_regex"], app.YOUTUBE_ID_REGEX)
+        self.assertIs(app.SUPPORTED_SITES["rumble"]["id_regex"], app.RUMBLE_ID_REGEX)
+
+    def test_js_runtime_flags(self):
+        self.assertTrue(app.SUPPORTED_SITES["youtube"]["js_runtime"])
+        self.assertFalse(app.SUPPORTED_SITES["rumble"]["js_runtime"])
+        # Unknown/future sites keep the historical always-pass behavior
+        self.assertTrue(app.site_wants_js_runtime("some-future-site"))
+        self.assertTrue(app.site_wants_js_runtime(""))
+
+    def test_resync_auto_subs_flags(self):
+        self.assertTrue(app.SUPPORTED_SITES["youtube"]["resync_auto_subs"])
+        self.assertFalse(app.SUPPORTED_SITES["rumble"]["resync_auto_subs"])
+        # Unknown/future sites keep the historical always-merge behavior
+        self.assertTrue(app.site_resyncs_auto_subs("some-future-site"))
+        self.assertTrue(app.site_resyncs_auto_subs(""))
+
+    def test_supported_sites_label(self):
+        # Info-panel header line: "Supported: YouTube, Rumble"
+        self.assertEqual(app.SUPPORTED_SITES_LABEL, "YouTube, Rumble")
+
+    def test_header_shows_supported_sites(self):
+        # Both header call sites (UI init + post-clear re-append) must show
+        # the supported-sites line, otherwise it vanishes on first info fetch
+        import inspect
+        source = inspect.getsource(app.YTDLPDownloaderGUI)
+        self.assertEqual(source.count('"Supported: "'), 2)
+
+
+class TestBuildCommandAudio(unittest.TestCase):
+    """Pin the audio postprocessor flags produced by build_command()."""
+
+    class Harness:
+        HARNESS_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+        def __init__(self, media_type="audio", audio_fmt="best"):
+            self.video_state = {
+                "media_type": media_type,
+                "quality": "best",
+                "video_format": "best",
+                "audio_format": audio_fmt,
+                "video_codec": "best",
+                "base_filename": "test_video",
+                "site": "youtube",
+            }
+            self.yt_dlp_bin = "yt-dlp"
+            self.ffmpeg_bin = None   # disables --ffmpeg-location branch
+            self.deno_bin = None     # disables --js-runtimes branch
+            self.title_entry = SimpleNamespace(text=lambda: "Test Title")
+            self.sb_all_checkbox = SimpleNamespace(isChecked=lambda: False)
+            self.sb_checkbox_map = {}
+
+        get_clean_url = lambda self: self.HARNESS_URL  # noqa: E731
+        get_output_dir = lambda self: "/tmp/dl"   # noqa: E731
+        update_video_state = app.YTDLPDownloaderGUI.update_video_state
+        get_filename_template = app.YTDLPDownloaderGUI.get_filename_template
+        _subtitle_lang_patterns = app.YTDLPDownloaderGUI._subtitle_lang_patterns
+        build_command = app.YTDLPDownloaderGUI.build_command
+
+    def _cmd(self, **kwargs):
+        return self.Harness(**kwargs).build_command(selected_langs=None)
+
+    def test_m4a_option_passes_m4a_not_aac(self):
+        cmd = self._cmd(audio_fmt="m4a")
+        # The GUI "M4A" option must request yt-dlp's real M4A container
+        # (lossless stream-copy for AAC sources), not the ADTS "aac" target
+        # that used to produce ADTS bytes inside a ".m4a"-named file.
+        self.assertIn("-x", cmd)
+        idx = cmd.index("--audio-format")
+        self.assertEqual(cmd[idx + 1], "m4a")
+        self.assertNotIn("aac", cmd)
+
+    def test_mp3_option_passthrough(self):
+        cmd = self._cmd(audio_fmt="mp3")
+        idx = cmd.index("--audio-format")
+        self.assertEqual(cmd[idx + 1], "mp3")
+
+    def test_best_audio_option_uses_selector(self):
+        cmd = self._cmd(audio_fmt="best")
+        self.assertIn("-f", cmd)
+        self.assertEqual(cmd[cmd.index("-f") + 1], "bestaudio/best")
+        self.assertNotIn("-x", cmd)
+
+    def test_video_mode_uses_multiplexed_selector(self):
+        # Strict "bestvideo" skips muxed HLS formats (Rumble reports unknown
+        # codecs), which degraded downloads to the 180p timeline strip. The
+        # video mode must use "bestvideo*" so those streams are eligible.
+        cmd = self._cmd(media_type="video")
+        idx = cmd.index("-f")
+        self.assertEqual(cmd[idx + 1], "bestvideo*+bestaudio/best")
+
+    def test_video_mode_quality_filter_applies(self):
+        h = self.Harness(media_type="video")
+        h.video_state["quality"] = "480"
+        cmd = h.build_command(selected_langs=None)
+        idx = cmd.index("-f")
+        self.assertEqual(cmd[idx + 1], "bestvideo*[height<=480]+bestaudio/best")
+
+    def test_deno_passed_for_youtube(self):
+        h = self.Harness(audio_fmt="m4a")
+        h.deno_bin = "deno"
+        with mock.patch.object(app.shutil, "which", return_value="/usr/bin/deno"):
+            cmd = h.build_command(selected_langs=None)
+        self.assertIn("--js-runtimes", cmd)
+
+    def test_deno_skipped_for_rumble(self):
+        h = self.Harness(audio_fmt="m4a")
+        h.deno_bin = "deno"
+        h.video_state["site"] = "rumble"
+        with mock.patch.object(app.shutil, "which", return_value="/usr/bin/deno"):
+            cmd = h.build_command(selected_langs=None)
+        self.assertNotIn("--js-runtimes", cmd)
+
+    def test_sub_langs_cover_rumble_keys(self):
+        h = self.Harness(audio_fmt="best")
+        cmd = h.build_command(selected_langs=["en"])
+        idx = cmd.index("--sub-langs")
+        self.assertEqual(cmd[idx + 1], "en,a.en,en-auto,a.en-auto")
+
+    def test_embedded_cc_strip_args_present_for_video(self):
+        cmd = self._cmd(media_type="video")
+        pp_args = [
+            cmd[i + 1] for i, flag in enumerate(cmd) if flag == "--postprocessor-args"
+        ]
+        joined = "|".join(pp_args)
+        self.assertIn("Merger:-bsf:v filter_units=remove_types=6", joined)
+        self.assertIn("FixupM3u8:-bsf:v filter_units=remove_types=6", joined)
+
+    def test_embedded_cc_strip_args_present_for_audio_too(self):
+        # Audio mode (-x --audio-format ...) goes through ffmpeg post-
+        # processors as well; harmless there since the bsf targets video.
+        cmd = self._cmd(audio_fmt="m4a")
+        self.assertIn("--postprocessor-args", cmd)
+
+
+class TestPlausibleUrl(unittest.TestCase):
+    """is_plausible_url keeps garbage out of the yt-dlp subprocess."""
+
+    def test_garbage_rejected(self):
+        self.assertFalse(app.is_plausible_url("nonsense"))
+        self.assertFalse(app.is_plausible_url(""))
+        self.assertFalse(app.is_plausible_url("   "))
+        self.assertFalse(app.is_plausible_url("https://nonsense/watch"))
+        # The reported bug: clipboard text copied from the info panel must
+        # not pass (urlparse leniently parses its host as
+        # "yt-dlp downloader 1.1.25", and the dots in the version made the
+        # old dot-only check accept it).
+        self.assertFalse(app.is_plausible_url("YT-DLP Downloader 1.1.25"))
+        self.assertFalse(app.is_plausible_url("hello world"))
+        self.assertFalse(app.is_plausible_url("foo bar.com"))
+
+    def test_real_urls_accepted(self):
+        self.assertTrue(app.is_plausible_url("https://rumble.com/v6abcde-x.html"))
+        self.assertTrue(app.is_plausible_url("rumble.com/v6abcde"))
+        self.assertTrue(app.is_plausible_url("https://www.youtube.com/watch?v=abc12345678"))
+        self.assertTrue(app.is_plausible_url("https://example.com/video"))
+        self.assertTrue(app.is_plausible_url("http://localhost:8080/video"))
+
+    def test_wellformed_hostnames_accepted(self):
+        # Hyphenated labels, multi-level subdomains and IP hosts are valid
+        self.assertTrue(app.is_plausible_url("https://my-site.example.co.uk/v/1"))
+        self.assertTrue(app.is_plausible_url("192.168.1.10/video"))
+
+    def test_naked_youtube_id_accepted(self):
+        self.assertTrue(app.is_plausible_url("abc12345678"))
+
+
+class TestProcessAndSetUrl(unittest.TestCase):
+    """The URL field must only ever receive valid URLs (paste + startup)."""
+
+    class Harness:
+        def __init__(self):
+            self.url_texts = []
+            self.url_entry = SimpleNamespace(setText=self.url_texts.append)
+            self.signals = app.SignalEmitter()
+
+        _process_and_set_url = app.YTDLPDownloaderGUI._process_and_set_url
+        is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
+
+    def test_garbage_clipboard_never_reaches_url_field(self):
+        h = self.Harness()
+        self.assertFalse(h._process_and_set_url("YT-DLP Downloader 1.1.25", silent_mode=True))
+        self.assertEqual(h.url_texts, [])
+        # Loud mode (paste button) reports instead of filling the field
+        self.assertFalse(h._process_and_set_url("YT-DLP Downloader 1.1.25", silent_mode=False))
+        self.assertEqual(h.url_texts, [])
+
+    def test_valid_clipboard_fills_url_field(self):
+        h = self.Harness()
+        url = "https://rumble.com/v6abcde-some-title.html"
+        self.assertTrue(h._process_and_set_url(url, silent_mode=True))
+        self.assertEqual(h.url_texts, [url])
+
+
+class TestReloadButton(unittest.TestCase):
+    """Reload button next to the URL field re-triggers the info fetch."""
+
+    def test_button_wired_in_ui(self):
+        import inspect
+        src = inspect.getsource(app.YTDLPDownloaderGUI.init_ui)
+        self.assertIn("reload_button", src)
+        self.assertIn("SP_BrowserReload", src)
+        self.assertIn("on_reload_button_click", src)
+
+    def test_reload_button_in_enable_list(self):
+        # The button must be disabled together with the other primary
+        # controls while a fetch/download is running (no double-spawn).
+        import inspect
+        src = inspect.getsource(app.YTDLPDownloaderGUI._set_ui_enabled_state)
+        self.assertIn("self.reload_button", src)
+
+    def test_click_triggers_fetch(self):
+        calls = []
+
+        class Harness:
+            fetch_video_info = lambda self: calls.append("fetch")  # noqa: E731
+
+        harness = Harness()
+        harness.on_reload_button_click = types.MethodType(
+            app.YTDLPDownloaderGUI.on_reload_button_click, harness
+        )
+        harness.on_reload_button_click()
+        self.assertEqual(calls, ["fetch"])
+
+    def test_click_with_empty_url_delegates_to_fetch_gate(self):
+        # With an empty URL the click must NOT spawn a worker; the gate in
+        # fetch_video_info handles it (title message, early return).
+        import inspect
+        # on_reload_button_click must do nothing except call fetch_video_info
+        src = inspect.getsource(app.YTDLPDownloaderGUI.on_reload_button_click)
+        body = [line for line in src.splitlines() if line.strip() and "def " not in line]
+        self.assertEqual(len(body), 1, "handler should only delegate")
+        self.assertIn("self.fetch_video_info()", body[0])
+
+
+class TestFetchVideoInfoPrecheck(unittest.TestCase):
+    """fetch_video_info must reject garbage before spawning yt-dlp."""
+
+    class Harness:
+        def __init__(self):
+            self.title_texts = []
+            self.title_entry = SimpleNamespace(setText=self.title_texts.append)
+
+        fetch_video_info = app.YTDLPDownloaderGUI.fetch_video_info
+        is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
+
+    def test_nonsense_rejected_before_ytdlp(self):
+        h = self.Harness()
+        h.get_clean_url = lambda: "nonsense"
+        h.fetch_video_info()
+        self.assertEqual(
+            h.title_texts,
+            ["Please enter a valid video URL"],
+            "garbage must be rejected by the plausibility gate, not sent to yt-dlp",
+        )
+
+    def test_plausible_url_passes_the_gate(self):
+        h = self.Harness()
+        rumble_url = "https://rumble.com/v6abcde-some-title.html"
+        h.get_clean_url = lambda: rumble_url
+        # Stub the GUI helpers used after the gate passes
+        h.set_download_button_status = lambda status: None
+        h.download_button = SimpleNamespace(
+            setText=lambda text: None, setEnabled=lambda enabled: None
+        )
+        h.video_state = {}
+        h._set_ui_enabled_state = lambda enabled: None
+        h._reset_download_progress_bars = lambda: None
+        h._set_download_busy = lambda busy: None
+        h.signals = app.SignalEmitter()
+        h.clearDockProgress = lambda: None
+        h.clear_output = lambda: None
+        # Replace the worker with a recorder so no subprocess is spawned
+        h.fetched = []
+        done = threading.Event()
+
+        def fake_get_video_info(url):
+            h.fetched.append(url)
+            done.set()
+
+        h.get_video_info = fake_get_video_info
+
+        h.fetch_video_info()
+        self.assertTrue(done.wait(timeout=5), "worker thread did not run")
+        self.assertEqual(h.fetched, [rumble_url])
+
+
+if __name__ == "__main__":
+    unittest.main()
