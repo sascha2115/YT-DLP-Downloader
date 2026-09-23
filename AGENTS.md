@@ -20,7 +20,7 @@
 - `ytdl/subtitles.py` – `SubtitleMixin`: subtitle selection/file mapping and the resync/2-line-merge pipeline.
 - `ytdl/ui_build.py` – `UiBuildMixin`: `init_ui` widget construction, styling, menus, dialogs, UI enable state.
 - `ytdl/preferences_dialog.py` – `PreferencesDialogMixin`: the preferences editor dialog.
-- `ytdl/sites.py` – site profiles (`SUPPORTED_SITES`, `DEFAULT_SITE`, `SUPPORTED_SITES_LABEL`), ID regexes, `detect_site()`, `site_*()` profile helpers, `is_plausible_url()`, `normalize_url()`.
+- `ytdl/sites.py` – site profiles (`SUPPORTED_SITES`, `DEFAULT_SITE`, `SUPPORTED_SITES_LABEL`), ID regexes, `detect_site()`, `is_known_site()` (strict domain gate), `is_channel_url()` (channel/playlist gate), `site_*()` profile helpers, `is_plausible_url()`, `normalize_url()`.
 - `ytdl/progress.py` – yt-dlp output parsing tables (`RE_*`, `SUBTITLE_EXTENSIONS`) and `DownloadProgressManager`.
 - `ytdl/widgets.py` – small Qt support classes (`SignalEmitter`, `SponsorBlockBar`, `BusySpinner`, `CustomTextEdit`) and the `SB_*` category constants.
 - `ytdl/description.py` – description/plot cleaning heuristics (`clean_youtube_description` and friends).
@@ -44,12 +44,17 @@
 ## Execution flow
 - GUI triggers `fetch_video_info` → `start_download`.
 - `fetch_video_info()` pre-checks the URL syntactically (`is_plausible_url()`, also used by the clipboard paste/startup handler) so garbage like "nonsense" never reaches the yt-dlp subprocess; naked 11-char YouTube IDs and schemeless known-site tokens still pass because `normalize_url()` canonicalizes them first. The hostname must be well-formed (dot-separated labels of letters/digits/hyphens) — Python's `urlparse` is lenient and would otherwise accept clipboard text like "YT-DLP Downloader 1.1.25" as a "URL".
+- The domain gate is strict: `is_supported_url()` = `is_known_site()` requires the hostname to match a `SUPPORTED_SITES` profile, so unsupported sites (e.g. google.com, vimeo.com) are rejected with "Unsupported site — supported: …" instead of being handed to yt-dlp's generic extractor. `detect_site()` keeps its YouTube fallback for behavior flags; to accept another site, add a profile.
 - Info-fetch failures are surfaced in the output panel: `get_video_info()` dumps yt-dlp's captured stdout/stderr via `_dump_ytdlp_error_output()` (headline includes the exit code; a timeout dumps the partial output captured before the kill). Previously stderr was swallowed, so 403/sign-in errors made the app look like it silently stopped.
 - Progress reported via `DownloadProgressManager` and `SignalEmitter` signals.
 
-## Multi-site support (YouTube + Rumble proof-of-concept)
-- `SUPPORTED_SITES` (top of `main.py`) holds per-site profiles: `domains`, `id_regex`, `sponsorblock`, `js_runtime`, `resync_auto_subs`. `detect_site()` matches the hostname; unknown domains fall back to `DEFAULT_SITE` (YouTube). New profile flags must default to the historical behavior for unknown sites.
-- Site-gated behaviors: SponsorBlock API query + `--sponsorblock-mark` (YouTube-only), `--js-runtimes deno` (needed by YouTube's JS sig/nsig challenges, skipped for Rumble), auto-subtitle resync/2-line merge (needed for YouTube's choppy ASR cues; Rumble subs arrive pre-formatted and are kept as-is), video format selector uses `bestvideo*` (not strict `bestvideo`) so muxed HLS formats with unknown codecs (Rumble) are eligible – strict `bestvideo` would degrade Rumble downloads to the tiny video-only timeline strip.
+## Multi-site support (YouTube + Rumble + Odysee)
+- `SUPPORTED_SITES` (top of `ytdl/sites.py`) holds per-site profiles: `domains`, `id_regex`, `sponsorblock`, `js_runtime`, `resync_auto_subs`, `supports_subtitles`, `always_extract_audio`, `channel_url_regex`, `info_timeout`. `detect_site()` matches the hostname; unknown domains fall back to `DEFAULT_SITE` (YouTube) for behavior flags, while `is_known_site()` is the strict domain gate (unknown domains are rejected before yt-dlp runs) and `is_channel_url()` rejects channel/playlist pages per site. New profile flags must default to the historical behavior for unknown sites.
+- Input gating lives in one place: `YTDLPDownloaderGUI.url_rejection_reason()` (plausible URL → known site → not a channel URL); `fetch_video_info()` and the clipboard paste path both use it.
+- Info-fetch budget is per site: `site_info_timeout()` returns the profile's `info_timeout` or `config.INFO_FETCH_TIMEOUT_SECONDS` (15s). Odysee sets 90s because the LBRY API `resolve` call routinely takes ~40s (measured; short claim ids like `:d` are slow) and the old hardcoded 15s killed it mid-resolve.
+- Long info fetches report progress: `get_video_info()` runs through `_run_info_command()`, which starts a daemon monitor (`_info_wait_monitor`) that emits "⏳ Still fetching video info (Ns) — <hint>…" after `config.INFO_FETCH_HINT_AFTER_SECONDS` (10s) and every `INFO_FETCH_HINT_EVERY_SECONDS` (20s) while yt-dlp is still resolving. The hint text is per site (`slow_hint`, e.g. Odysee's LBRY API); sites without one get "the site is responding slowly".
+- Site-gated behaviors: SponsorBlock API query + `--sponsorblock-mark` (YouTube-only), `--js-runtimes deno` (needed by YouTube's JS sig/nsig challenges, skipped for Rumble/Odysee), auto-subtitle resync/2-line merge (needed for YouTube's choppy ASR cues; Rumble subs arrive pre-formatted and are kept as-is; Odysee has no subs at all), video format selector uses `bestvideo*` (not strict `bestvideo`) so muxed HLS formats with unknown codecs (Rumble, Odysee) are eligible – strict `bestvideo` would degrade Rumble downloads to the tiny video-only timeline strip. `always_extract_audio` forces `-x` for sites without audio-only streams (Odysee), otherwise "Best" audio would save the muxed source video file.
+- Sites without subtitle support (`supports_subtitles: False`, e.g. Odysee — the LBRY extractor exposes no tracks) print "Subtitles: Not available on <label>" instead of the generic "(none)" line during info fetch.
 - Embedded broadcast captions (EIA-608 in H.264 SEI T.35 NALs, carried by Rumble's HLS streams; IINA surfaces them as a hidden "eia_608" subtitle track) are always stripped losslessly via `--postprocessor-args Merger/FixupM3u8:-bsf:v filter_units=remove_types=6` in `build_command()`. The app's own SRT files are the intended subtitles.
 - Subtitle key shapes differ per site: yt-dlp matches `--sub-langs` entries as regexes with `fullmatch` against the site's subtitle keys (YouTube `en`/`a.en`, Rumble `en-auto` with generated subs in `subtitles`, not `automatic_captions`). `_subtitle_lang_patterns()` therefore requests every known key shape, and `_find_downloaded_subtitles()` + `_normalize_subtitle_names()` map site-named files (`<base>.en-auto.srt`) back to the canonical `<base>.en.srt` **before** post-processing, so resync overwrites in place instead of leaving duplicates.
 
@@ -60,7 +65,11 @@
 
 ## Testing notes
 - Unit tests (no Qt event loop needed): `python3 -m unittest temp.test_subtitle_progress -v` from the repo root (also works from `temp/`). They replay real captured yt-dlp output through the real parser methods (`_parse_download_output`, `_update_download_progress`, `_is_subtitle_path`) bound to a lightweight harness.
+- Suite overview: `temp/test_subtitle_progress.py` (progress parser + UI enable state), `temp/test_multisite_url.py` (site profiles, URL gate, command construction), `temp/test_subtitle_multisite.py` (subtitle key shapes/normalization), `temp/test_rumble_info_parse.py` and `temp/test_odysee_info_parse.py` (info parsing from captured `yt-dlp -J` fixtures: `temp/rumble-info-capture.json`, `temp/odysee-info-capture.json`).
 - `temp/replay_ytdlp_output.py <captured.log> <media_type>` – debug helper: replays a captured yt-dlp log through the parser and prints video/audio bar + dock state per line.
+- `temp/replay_rumble_info.py` / `temp/replay_rumble_subtitles.py` / `temp/replay_url_gate.py` / `temp/replay_odysee_info.py` – replay helpers for the info panel, the subtitle post-processing chain, the URL gate and a real (unmocked) Odysee info fetch.
+- `temp/smoke_gui.py` – headless full-window construction smoke test (run after structural refactors).
+- `temp/analyze_app_split.py` / `temp/analyze_odysee.py` – analysis helpers (method inventory; summarize a captured info JSON).
 - `temp/test_dock_progress.py` is NOT a unittest – it is a manual AppKit dock-tile demo script.
 - No global test suite, no coverage tooling, no CI.
 
@@ -72,6 +81,7 @@
 
 ## Common gotchas
 - GUI updates must use signals, not direct widget modifications.
+- Signals emitted from **worker threads** are queued to the main thread and only delivered while the Qt event loop is running. Headless test harnesses (and replay scripts) have no event loop, so cross-thread emissions are silently dropped: call the emitting code from the main thread, or drive the helper directly (see `TestOdyseeInfoParse.test_wait_hints_emitted_while_waiting`, which runs `_info_wait_monitor()` while a timer thread sets its stop event).
 - Never bind the same key sequence to both a `QShortcut` and a menu `QAction` — Qt treats the duplicate as ambiguous and fires **neither** (silent failure). One binding per key; menu `QAction`s already work window-globally. Observed with `Ctrl+,`/Preferences (fixed).
 - Avoid relative paths when invoking external binaries; rely on `find_binary()` (wraps `shutil.which()` and adds macOS/pip fallbacks).
 - Do not modify `archive/` files – they are frozen snapshots.

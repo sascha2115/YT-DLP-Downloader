@@ -2,8 +2,8 @@
 
 A lightweight PyQt6 GUI for downloading videos via `yt‑dlp`.  It supports advanced options such as quality selection, subtitle handling, and SponsorBlock integration.
 
-Supported sites (via yt-dlp's extractors): **YouTube** and — as a proof of concept — **Rumble**.
-SponsorBlock is YouTube-only and is skipped automatically for other sites.
+Supported sites (via yt-dlp's extractors): **YouTube**, **Rumble** and **Odysee** (odysee.com / lbry.tv).
+SponsorBlock is YouTube-only and is skipped automatically for other sites; Odysee has no subtitle tracks (the app says so instead of offering empty language checkboxes). Channel/playlist URLs are rejected — paste a link to a single video.
 
 ## Features
 - **Video / Audio / Subtitles** selection

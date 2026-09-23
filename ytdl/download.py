@@ -200,7 +200,17 @@ class DownloadMixin:
         video_codec = self.video_state["video_codec"]
 
         if media_type == "audio":
-            if audio_fmt == "best":
+            # Sites without audio-only streams (Odysee: every format is muxed,
+            # video claims only offer the source MP4) would otherwise save a
+            # VIDEO file for an audio request - "bestaudio/best" falls back to
+            # a muxed format. Such sites set "always_extract_audio", which
+            # forces -x so the audio is extracted from whatever is downloaded.
+            site_profile = SUPPORTED_SITES.get(
+                self.video_state.get("site", DEFAULT_SITE), {}
+            )
+            force_extract = site_profile.get("always_extract_audio", False)
+
+            if audio_fmt == "best" and not force_extract:
                 cmd.extend(["-f", "bestaudio/best"])
             else:
                 # NOTE: this used to map the GUI's "M4A" option to yt-dlp's

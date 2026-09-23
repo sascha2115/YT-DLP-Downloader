@@ -11,17 +11,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import main as app
 
 
-class SubtitleHarness:
+class SubtitleHarness(app.SubtitleMixin, app.DownloadMixin):
+    """Inherits the real mixins; only output-dir/video-state come from here."""
+
     def __init__(self, out_dir):
         self._out_dir = out_dir
         self.video_state = {"base_filename": "Title"}
 
     get_output_dir = lambda self: self._out_dir  # noqa: E731
-    get_full_path = app.YTDLPDownloaderGUI.get_full_path
-    _subtitle_lang_patterns = app.YTDLPDownloaderGUI._subtitle_lang_patterns
-    _find_downloaded_subtitles = app.YTDLPDownloaderGUI._find_downloaded_subtitles
-    _normalize_subtitle_names = app.YTDLPDownloaderGUI._normalize_subtitle_names
-    _subtitle_needs_resync = app.YTDLPDownloaderGUI._subtitle_needs_resync
 
 
 class TestSubtitleLangPatterns(unittest.TestCase):

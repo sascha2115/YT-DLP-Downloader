@@ -3,6 +3,8 @@
 import re
 from urllib.parse import urlparse
 
+from ytdl.config import INFO_FETCH_TIMEOUT_SECONDS
+
 
 YOUTUBE_ID_REGEX = re.compile(
     r"(?:v=|\/|embed\/|shorts\/|live\/)([a-zA-Z0-9_-]{11})(?:[?&/ ]|$)"
@@ -12,8 +14,13 @@ RUMBLE_ID_REGEX = re.compile(
     r"rumble\.com/(?:embed/)?(v[a-zA-Z0-9]+)(?:[?&/ -]|$)"
 )
 
+# LBRY/Odysee claim ids are 1-40 hex chars, appended to a slug/intent with
+# ":" (web URLs) or "#" (lbry:// URIs, not accepted as input here). Anchored
+# to the end of the URL so the video claim wins over a channel's "…@Name:1".
+ODYSEE_ID_REGEX = re.compile(r"[:#]([0-9a-f]{1,40})/?(?:[?#].*)?$")
+
 # ----------------------------------------------------------------------------------------------------
-# Supported sites (proof-of-concept: YouTube + Rumble)
+# Supported sites (YouTube + Rumble + Odysee)
 # Each entry defines how the site is detected and which features it supports.
 # ----------------------------------------------------------------------------------------------------
 SUPPORTED_SITES = {
@@ -23,6 +30,12 @@ SUPPORTED_SITES = {
         "sponsorblock": True,
         "js_runtime": True,  # yt-dlp evaluates YouTube's JS sig/nsig challenges
         "resync_auto_subs": True,  # YouTube ASR captions arrive as choppy fragments
+        "supports_subtitles": True,
+        "always_extract_audio": False,  # YouTube offers audio-only streams
+        # Channel / playlist / non-video pages (rejected by the input gate)
+        "channel_url_regex": re.compile(
+            r"^/?$|^/(?:@|c/|user/|channel/|playlist|results|feed)"
+        ),
         "id_regex": YOUTUBE_ID_REGEX,
     },
     "rumble": {
@@ -31,7 +44,29 @@ SUPPORTED_SITES = {
         "sponsorblock": False,  # SponsorBlock is YouTube-only
         "js_runtime": False,  # the Rumble extractor needs no JS runtime
         "resync_auto_subs": False,  # Rumble's subs are already well-formatted
+        "supports_subtitles": True,
+        "always_extract_audio": False,  # audio-only stream ("audio-192p") exists
+        "channel_url_regex": re.compile(r"^/?$|^/(?:c/|user/)"),
         "id_regex": RUMBLE_ID_REGEX,
+    },
+    "odysee": {
+        "label": "Odysee",
+        "domains": ("odysee.com", "lbry.tv"),
+        "sponsorblock": False,  # SponsorBlock is YouTube-only
+        "js_runtime": False,  # the LBRY extractor needs no JS runtime
+        "resync_auto_subs": False,  # no subtitle tracks at all (see below)
+        "supports_subtitles": False,  # extractor exposes no subtitles
+        "always_extract_audio": True,  # no audio-only streams -> -x needed
+        # The LBRY API "resolve" call can take ~40s (measured; short claim ids
+        # like ":d" are slow), far beyond the 15s default budget
+        "info_timeout": 90,
+        # Shown as a progress hint while the info fetch is still running
+        "slow_hint": "Odysee's LBRY API is slow; a claim can take ~70s to resolve",
+        # Channel page without a video claim (optionally under $/embed/)
+        "channel_url_regex": re.compile(
+            r"^/?$|^/(?:\$/(?:embed|download)/)?@[^/]+/?$"
+        ),
+        "id_regex": ODYSEE_ID_REGEX,
     },
 }
 
@@ -41,6 +76,33 @@ DEFAULT_SITE = "youtube"
 # Human-readable site list for the info panel header, e.g. "YouTube, Rumble"
 SUPPORTED_SITES_LABEL = ", ".join(p["label"] for p in SUPPORTED_SITES.values())
 
+def _hostname(url):
+    """Lowercase hostname of a URL (scheme optional); "" when unparseable.
+
+    urlparse only yields a hostname for scheme URLs, so a scheme is prepended
+    for schemeless input like "rumble.com/vXXXXXX" or "RUMBLE.COM/...".
+    """
+    if not url:
+        return ""
+    candidate = str(url).strip()
+    if "://" not in candidate:
+        candidate = "https://" + candidate
+    try:
+        host = urlparse(candidate).hostname or ""
+    except ValueError:
+        return ""
+    return host.lower().removeprefix("www.")
+
+
+def _match_site_key(host):
+    """SUPPORTED_SITES key whose domains contain `host`, or None."""
+    for site_key, profile in SUPPORTED_SITES.items():
+        for domain in profile["domains"]:
+            if host == domain or host.endswith("." + domain):
+                return site_key
+    return None
+
+
 def detect_site(url):
     """
     Detect which supported site profile a URL belongs to.
@@ -48,24 +110,69 @@ def detect_site(url):
     Returns a key into SUPPORTED_SITES ("youtube", "rumble", ...).
     Unknown domains fall back to DEFAULT_SITE (YouTube), preserving the
     historical behavior where any non-matching input was treated as YouTube.
+    For gating user input use `is_known_site()` instead.
     """
+    return _match_site_key(_hostname(url)) or DEFAULT_SITE
+
+
+def _path(url):
+    """Path component of a URL (scheme optional); "/" when unparseable."""
     if not url:
-        return DEFAULT_SITE
-    # urlparse only yields a hostname for scheme URLs; prepend one for
-    # schemeless input like "rumble.com/vXXXXXX" or "RUMBLE.COM/..."
-    candidate = url.strip()
+        return "/"
+    candidate = str(url).strip()
     if "://" not in candidate:
         candidate = "https://" + candidate
     try:
-        host = urlparse(candidate).hostname or ""
+        return urlparse(candidate).path or "/"
     except ValueError:
-        return DEFAULT_SITE
-    host = host.lower().removeprefix("www.")
-    for site_key, profile in SUPPORTED_SITES.items():
-        for domain in profile["domains"]:
-            if host == domain or host.endswith("." + domain):
-                return site_key
-    return DEFAULT_SITE
+        return "/"
+
+
+def is_known_site(url):
+    """
+    Whether the URL's hostname belongs to a SUPPORTED_SITES profile.
+
+    This is the info-fetch/paste gate: unknown domains are rejected with a
+    message instead of being handed to yt-dlp's generic extractor (which
+    would only fail with an "[generic] ..." error). To accept another site,
+    add a profile to SUPPORTED_SITES.
+    """
+    return _match_site_key(_hostname(url)) is not None
+
+
+def is_channel_url(url):
+    """
+    Whether the URL points at a channel/playlist/profile page instead of a
+    single video (e.g. youtube.com/@handle, rumble.com/c/Name,
+    odysee.com/@Channel:1). Those resolve to playlists in yt-dlp and are
+    rejected by the input gate; each site profile defines its patterns via
+    "channel_url_regex" (matched against the URL path).
+    """
+    site_key = _match_site_key(_hostname(url))
+    if not site_key:
+        return False
+    pattern = SUPPORTED_SITES[site_key].get("channel_url_regex")
+    if pattern is None:
+        return False
+    return pattern.search(_path(url)) is not None
+
+
+def site_info_timeout(site):
+    """
+    Seconds budget for the yt-dlp info fetch on a site.
+
+    Sites whose extractor/API is slow override the default via their profile's
+    "info_timeout" key (e.g. Odysee, whose LBRY API resolve call can take ~40s).
+    """
+    return SUPPORTED_SITES.get(site, {}).get("info_timeout", INFO_FETCH_TIMEOUT_SECONDS)
+
+
+def site_slow_hint(site):
+    """
+    Optional per-site hint shown while a long info fetch is still running
+    (e.g. Odysee's slow LBRY resolve). Empty string when the profile has none.
+    """
+    return SUPPORTED_SITES.get(site, {}).get("slow_hint", "")
 
 
 def site_resyncs_auto_subs(site):
@@ -107,12 +214,7 @@ def is_plausible_url(url):
     # Naked 11-char YouTube ID (normalize_url canonicalizes these too)
     if re.match(r"^[a-zA-Z0-9_-]{11}$", url):
         return True
-    if "://" not in url:
-        url = "https://" + url
-    try:
-        host = urlparse(url).hostname or ""
-    except ValueError:
-        return False
+    host = _hostname(url)
     if not host:
         return False
     if host == "localhost":
@@ -153,8 +255,9 @@ def normalize_url(url):
     else:
         # 2) Extract a known-site domain token without scheme, e.g.
         #    "www.youtube.com/..." or "rumble.com/vXXXXXX-title.html"
+        #    or "odysee.com/@Channel:1/Slug:claimid"
         m = re.search(
-            r"((?:www\.)?(?:youtube\.com|youtu\.be|rumble\.com)/[^\s]+)",
+            r"((?:www\.)?(?:youtube\.com|youtu\.be|rumble\.com|odysee\.com|lbry\.tv)/[^\s]+)",
             url,
             flags=re.IGNORECASE,
         )
@@ -164,9 +267,11 @@ def normalize_url(url):
     # Strip common wrappers / trailing punctuation from copied text
     url = url.strip("`\"'<>[](){}.,;")
 
-    # Rumble URLs: strip trailing punctuation but keep query params intact.
-    # Nothing below this point is YouTube-specific, so we're done.
-    if detect_site(url) == "rumble":
+    # Non-YouTube sites keep their URL as-is (after wrapper stripping): the
+    # canonicalization below (naked YouTube IDs, "&list=" truncation) is
+    # YouTube-specific and would mangle URLs that legitimately contain
+    # ":", "#" or "$" (e.g. Odysee claim ids, Rumble's "?pri=" param).
+    if detect_site(url) != "youtube":
         return url
 
     # If it's a naked 11-char YouTube ID, make it a full URL

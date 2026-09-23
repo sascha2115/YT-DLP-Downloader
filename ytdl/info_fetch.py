@@ -12,30 +12,75 @@ import time
 from datetime import datetime
 import requests
 from ytdl import preferences as prefs
+from ytdl.config import (
+    INFO_FETCH_HINT_AFTER_SECONDS,
+    INFO_FETCH_HINT_EVERY_SECONDS,
+)
 from ytdl.description import clean_youtube_description
-from ytdl.sites import DEFAULT_SITE, SUPPORTED_SITES, is_plausible_url, site_wants_js_runtime
+from ytdl.sites import (
+    DEFAULT_SITE,
+    SUPPORTED_SITES,
+    SUPPORTED_SITES_LABEL,
+    is_plausible_url,
+    site_info_timeout,
+    site_slow_hint,
+    site_wants_js_runtime,
+)
 from ytdl.utils import sanitize_title
 from ytdl.widgets import SB_DISPLAY_NAMES
 
 
 class InfoFetchMixin:
+    def _info_wait_hint_text(self, elapsed):
+        """Hint shown in the output panel while the info fetch is still running."""
+        site = self.video_state.get("site", DEFAULT_SITE)
+        hint = site_slow_hint(site) or "the site is responding slowly"
+        return f"⏳ Still fetching video info ({int(elapsed)}s) — {hint}…"
+
+    def _info_wait_monitor(self, stop_event):
+        """
+        Emit progress hints while the yt-dlp info fetch is running, so long
+        upstream waits (e.g. Odysee's LBRY resolve, ~40-70s) do not look like
+        the app froze. Runs in a daemon thread; stops via `stop_event`.
+        """
+        if stop_event.wait(INFO_FETCH_HINT_AFTER_SECONDS):
+            return
+        elapsed = INFO_FETCH_HINT_AFTER_SECONDS
+        while True:
+            self.signals.append_output.emit(self._info_wait_hint_text(elapsed))
+            if stop_event.wait(INFO_FETCH_HINT_EVERY_SECONDS):
+                return
+            elapsed += INFO_FETCH_HINT_EVERY_SECONDS
+
+    def _run_info_command(self, cmd, timeout):
+        """Run the yt-dlp info command, with wait hints + the site's timeout."""
+        stop_event = threading.Event()
+        monitor = threading.Thread(
+            target=self._info_wait_monitor, args=(stop_event,), daemon=True
+        )
+        monitor.start()
+        try:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        finally:
+            stop_event.set()
+
     def fetch_video_info(self):
         url = self.get_clean_url()
         if not url:
             self.title_entry.setText("Please enter a valid video URL")
             return
 
-        # Cheap syntactic pre-check: garbage like "nonsense" must not reach
-        # the yt-dlp subprocess (it would only surface as a generic-extractor
-        # error down there).
-        if not is_plausible_url(url):
-            self.title_entry.setText("Please enter a valid video URL")
-            return
-
-        # yt-dlp only needs the URL; the video ID is only required for
-        # SponsorBlock (YouTube-only). Any supported site may proceed without one.
-        if not self.is_supported_url(url):
-            self.title_entry.setText("Please enter a supported video URL")
+        # Single gate for both paths: rejects garbage ("nonsense"), domains
+        # without a site profile (google.com) and channel/playlist URLs
+        # before any yt-dlp subprocess is spawned.
+        reason = self.url_rejection_reason(url)
+        if reason:
+            self.title_entry.setText(reason)
             return
 
         self.title_entry.setText("Fetching video info...")
@@ -58,6 +103,9 @@ class InfoFetchMixin:
 
     def get_video_info(self, url):
         error_status = {"error": False}
+        # Per-site budget: slow extractors (Odysee/LBRY resolves for ~40s)
+        # would otherwise be killed by the default 15s timeout.
+        info_timeout = site_info_timeout(self.video_state.get("site", DEFAULT_SITE))
         try:
             cmd = [self.yt_dlp_bin]
 
@@ -79,12 +127,7 @@ class InfoFetchMixin:
                     url,
                 ]
             )
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
+            result = self._run_info_command(cmd, info_timeout)
             if result.returncode == 0 and result.stdout.strip():
                 json_data = json.loads(result.stdout.strip())
 
@@ -109,9 +152,9 @@ class InfoFetchMixin:
                 vcodec = _s("vcodec")
                 fps = str(json_data.get("fps", ""))
                 
-                subs_dict = json_data.get("subtitles", {})
-                autos_dict = json_data.get("automatic_captions", {})
-                all_formats = json_data.get("formats", [])
+                subs_dict = json_data.get("subtitles") or {}
+                autos_dict = json_data.get("automatic_captions") or {}
+                all_formats = json_data.get("formats") or []
 
                 # Update consolidated state
                 self.update_video_state(
@@ -291,7 +334,18 @@ class InfoFetchMixin:
                         if report_tokens:
                             self.signals.append_output.emit(f"Subtitles: {', '.join(report_tokens)}")
                         else:
-                            self.signals.append_output.emit("Subtitles: None available")
+                            site_key = self.video_state.get("site", DEFAULT_SITE)
+                            profile = SUPPORTED_SITES.get(site_key, {})
+                            if profile.get("supports_subtitles", True):
+                                self.signals.append_output.emit("Subtitles: None available")
+                            else:
+                                # e.g. Odysee: the extractor exposes no
+                                # subtitle tracks at all - say so instead of
+                                # the generic "(none)" wording.
+                                label = profile.get("label", site_key)
+                                self.signals.append_output.emit(
+                                    f"Subtitles: Not available on {label}"
+                                )
 
                         # Cache availability BEFORE emitting, so the
                         # main-thread slot always reads the fresh data
@@ -414,7 +468,7 @@ class InfoFetchMixin:
 
         except subprocess.TimeoutExpired as timeout_error:
             self.signals.append_output.emit(
-                "👉 Timeout fetching video info (yt-dlp killed after 15s)"
+                f"👉 Timeout fetching video info (yt-dlp killed after {info_timeout}s)"
             )
             # subprocess.run() attaches whatever it captured before the kill.
             partial_stdout = getattr(timeout_error, "stdout", None)

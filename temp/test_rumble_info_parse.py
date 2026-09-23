@@ -22,8 +22,12 @@ RUMBLE_URL = (
 CAPTURE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rumble-info-capture.json")
 
 
-class Harness:
-    """Minimal stand-in for YTDLPDownloaderGUI around get_video_info."""
+class Harness(app.InfoFetchMixin):
+    """Minimal stand-in for YTDLPDownloaderGUI around get_video_info.
+
+    Inherits the real InfoFetchMixin so new helper methods are picked up
+    automatically; only shared GUI state/overrides are provided here.
+    """
 
     def __init__(self):
         self.video_state = {
@@ -39,8 +43,6 @@ class Harness:
         self.description_summaries = []
 
     update_video_state = app.YTDLPDownloaderGUI.update_video_state
-    get_video_info = app.YTDLPDownloaderGUI.get_video_info
-    check_sponsorblock = app.YTDLPDownloaderGUI.check_sponsorblock
 
     def _emit_description_summary(self):
         self.description_summaries.append(True)

@@ -1,6 +1,7 @@
 # ==================================================================================================================================
 # YT-DLP Downloader
-# a GUI (PyQt6) application for downloading YouTube videos
+# a GUI (PyQt6) application for downloading videos from YouTube, Rumble and
+# Odysee (see SUPPORTED_SITES in ytdl/sites.py; more sites can be added there)
 # with advanced options for format, quality, codec, subtitles, and SponsorBlock removal
 # also optional subtitles resyncing to removed chapters
 # Requirements: yt-dlp, ffmpeg
@@ -86,17 +87,26 @@ from PyQt6.QtWidgets import (
 # ----------------------------------------------------------------------------------------------------
 from ytdl import APP_VERSION  # noqa: F401
 from ytdl import preferences as prefs  # noqa: F401  (read live values via prefs.X)
-from ytdl.config import DEFAULT_OUTPUT_DIR, TITLE_FETCH_DELAY_MS  # noqa: F401
+from ytdl.config import (  # noqa: F401
+    DEFAULT_OUTPUT_DIR,
+    INFO_FETCH_TIMEOUT_SECONDS,
+    TITLE_FETCH_DELAY_MS,
+)
 from ytdl.sites import (  # noqa: F401
     DEFAULT_SITE,
+    ODYSEE_ID_REGEX,
     RUMBLE_ID_REGEX,
     SUPPORTED_SITES,
     SUPPORTED_SITES_LABEL,
     YOUTUBE_ID_REGEX,
     detect_site,
+    is_channel_url,
+    is_known_site,
     is_plausible_url,
     normalize_url,
+    site_info_timeout,
     site_resyncs_auto_subs,
+    site_slow_hint,
     site_wants_js_runtime,
 )
 from ytdl.description import clean_youtube_description  # noqa: F401
@@ -449,7 +459,27 @@ class YTDLPDownloaderGUI(
     # Check if the URL belongs to a supported site (YouTube, Rumble, ...)
     # ----------------------------------------------------------------------------------------------------
     def is_supported_url(self, url):
-        return detect_site(url) in SUPPORTED_SITES
+        # Strict domain gate: only hostnames with a SUPPORTED_SITES profile
+        # are accepted (unknown domains would only fail inside yt-dlp's
+        # generic extractor).
+        return is_known_site(url)
+
+    def url_rejection_reason(self, url):
+        """
+        None when the URL may be handed to yt-dlp, otherwise a user-facing
+        reason why it was rejected (single place so the fetch and paste
+        paths stay in sync).
+        """
+        if not is_plausible_url(url):
+            return "Please enter a valid video URL"
+        if not is_known_site(url):
+            return f"Unsupported site — supported: {SUPPORTED_SITES_LABEL}"
+        if is_channel_url(url):
+            return (
+                "Channel/playlist URLs are not supported — "
+                "please paste a link to a single video"
+            )
+        return None
 
     # ----------------------------------------------------------------------------------------------------
     # Process clipboard content (used by paste and startup)
@@ -458,17 +488,16 @@ class YTDLPDownloaderGUI(
         # Clean up and normalize clipboard content (now handles naked IDs too)
         content = normalize_url(clipboard_content)
 
-        if content and is_plausible_url(content) and self.is_supported_url(content):
+        if content and self.url_rejection_reason(content) is None:
             # If valid set text - this will trigger on_url_text_change
             self.url_entry.setText(content)
             return True
 
         if not silent_mode:
             # Display error/info only when not in silent mode (i.e., when user clicks Paste)
-            if content:
-                self.signals.append_output.emit(
-                    "Clipboard content is not a supported video URL"
-                )
+            reason = self.url_rejection_reason(content) if content else None
+            if reason:
+                self.signals.append_output.emit(f"Clipboard: {reason}")
             else:
                 self.signals.append_output.emit("Clipboard is empty")
 

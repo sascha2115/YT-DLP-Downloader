@@ -23,6 +23,14 @@ class TestDetectSite(unittest.TestCase):
         self.assertEqual(app.detect_site("https://youtu.be/dQw4w9WgXcQ"), "youtube")
         self.assertEqual(app.detect_site("https://m.youtube.com/watch?v=x"), "youtube")
 
+    def test_odysee_domains(self):
+        self.assertEqual(app.detect_site("https://odysee.com/@Mantega:1/First-day-LBRY:1"), "odysee")
+        self.assertEqual(app.detect_site("https://www.odysee.com/@Mantega:1/First-day-LBRY:1"), "odysee")
+        self.assertEqual(app.detect_site("https://lbry.tv/@Mantega:1/First-day-LBRY:1"), "odysee")
+        self.assertEqual(
+            app.detect_site("https://odysee.com/$/embed/@Mantega:1/First-day-LBRY:1"), "odysee"
+        )
+
     def test_unknown_domain_defaults_to_youtube(self):
         # Historical behavior: unknown domains are treated as YouTube
         self.assertEqual(app.detect_site("https://example.com/video"), app.DEFAULT_SITE)
@@ -102,6 +110,45 @@ class TestNormalizeUrlYoutubeRegressions(unittest.TestCase):
         self.assertEqual(app.normalize_url(""), "")
 
 
+class TestNormalizeUrlOdysee(unittest.TestCase):
+    """Odysee URLs keep their ':'/'$'/'#' syntax untouched."""
+
+    def test_full_url_unchanged(self):
+        url = "https://odysee.com/@Mantega:1/First-day-LBRY:1"
+        self.assertEqual(app.normalize_url(url), url)
+
+    def test_embed_url_unchanged(self):
+        url = "https://odysee.com/$/embed/@Mantega:1/First-day-LBRY:1"
+        self.assertEqual(app.normalize_url(url), url)
+
+    def test_schemeless_token_gets_https(self):
+        self.assertEqual(
+            app.normalize_url("odysee.com/@Mantega:1/First-day-LBRY:1"),
+            "https://odysee.com/@Mantega:1/First-day-LBRY:1",
+        )
+        self.assertEqual(
+            app.normalize_url("lbry.tv/@Mantega:1/First-day-LBRY:1"),
+            "https://lbry.tv/@Mantega:1/First-day-LBRY:1",
+        )
+
+    def test_extracted_from_surrounding_text(self):
+        self.assertEqual(
+            app.normalize_url("watch this https://odysee.com/@Mantega:1/First-day-LBRY:1 nice"),
+            "https://odysee.com/@Mantega:1/First-day-LBRY:1",
+        )
+
+    def test_trailing_punctuation_stripped(self):
+        self.assertEqual(
+            app.normalize_url("https://odysee.com/@Mantega:1/First-day-LBRY:1."),
+            "https://odysee.com/@Mantega:1/First-day-LBRY:1",
+        )
+
+    def test_query_params_kept(self):
+        # Unlike YouTube ("&list=" stripping), non-YouTube URLs keep params
+        url = "https://odysee.com/@Mantega:1/First-day-LBRY:1?src=home"
+        self.assertEqual(app.normalize_url(url), url)
+
+
 class TestSiteProfiles(unittest.TestCase):
     def test_sponsorblock_flags(self):
         self.assertTrue(app.SUPPORTED_SITES["youtube"]["sponsorblock"])
@@ -118,6 +165,115 @@ class TestSiteProfiles(unittest.TestCase):
         self.assertTrue(app.site_wants_js_runtime("some-future-site"))
         self.assertTrue(app.site_wants_js_runtime(""))
 
+    def test_info_timeouts(self):
+        # YouTube/Rumble keep the 15s default; Odysee's LBRY API resolve can
+        # take ~40s, so it overrides the budget (reported timeout bug)
+        self.assertEqual(app.site_info_timeout("youtube"), app.INFO_FETCH_TIMEOUT_SECONDS)
+        self.assertEqual(app.site_info_timeout("rumble"), app.INFO_FETCH_TIMEOUT_SECONDS)
+        self.assertEqual(app.site_info_timeout("odysee"), 90)
+        self.assertGreater(app.site_info_timeout("odysee"), app.INFO_FETCH_TIMEOUT_SECONDS)
+        self.assertEqual(app.site_info_timeout("some-future-site"), app.INFO_FETCH_TIMEOUT_SECONDS)
+
+    def test_slow_hints(self):
+        # Only Odysee explains its slow resolve; other sites fall back to the
+        # generic "responding slowly" wording (see _info_wait_hint_text)
+        hint = app.site_slow_hint("odysee")
+        self.assertIn("LBRY", hint)
+        self.assertIn("70s", hint)
+        self.assertEqual(app.site_slow_hint("youtube"), "")
+        self.assertEqual(app.site_slow_hint("rumble"), "")
+        self.assertEqual(app.site_slow_hint("some-future-site"), "")
+
+    def test_is_known_site_gate(self):
+        # Only hostnames with a SUPPORTED_SITES profile pass the gate
+        self.assertTrue(app.is_known_site("https://www.youtube.com/watch?v=x"))
+        self.assertTrue(app.is_known_site("https://youtu.be/dQw4w9WgXcQ"))
+        self.assertTrue(app.is_known_site("https://m.youtube.com/watch?v=x"))
+        self.assertTrue(app.is_known_site("https://rumble.com/v6abcde-x.html"))
+        self.assertTrue(app.is_known_site("www.rumble.com/v6abcde"))
+        self.assertTrue(app.is_known_site("https://odysee.com/@Mantega:1/First-day-LBRY:1"))
+        self.assertTrue(app.is_known_site("https://lbry.tv/@Mantega:1/First-day-LBRY:1"))
+        # Unknown / look-alike domains must NOT pass
+        self.assertFalse(app.is_known_site("https://www.google.com/"))
+        self.assertFalse(app.is_known_site("https://vimeo.com/12345"))
+        self.assertFalse(app.is_known_site("https://notrumble.com/v1.html"))
+        self.assertFalse(app.is_known_site("https://odysee.com.evil.example/v1"))
+        self.assertFalse(app.is_known_site("https://example.com/video"))
+        self.assertFalse(app.is_known_site(""))
+        self.assertFalse(app.is_known_site("nonsense"))
+
+    def test_detect_site_still_falls_back(self):
+        # Profile lookup keeps the historical fallback (used for behavior
+        # flags); only the input gate is strict
+        self.assertEqual(app.detect_site("https://example.com/video"), app.DEFAULT_SITE)
+
+
+class TestChannelUrlGate(unittest.TestCase):
+    """Channel/playlist URLs must be rejected for every site."""
+
+    def test_youtube_channel_and_playlist_urls_rejected(self):
+        for url in (
+            "https://www.youtube.com/@SomeHandle",
+            "https://www.youtube.com/@SomeHandle/videos",
+            "https://www.youtube.com/c/SomeChannel",
+            "https://www.youtube.com/user/SomeUser",
+            "https://www.youtube.com/channel/UCabc123",
+            "https://www.youtube.com/playlist?list=PL123",
+            "https://www.youtube.com/feed/subscriptions",
+            "https://www.youtube.com/",
+        ):
+            self.assertTrue(app.is_channel_url(url), url)
+
+    def test_youtube_video_urls_pass(self):
+        for url in (
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123",
+            "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+            "https://www.youtube.com/live/dQw4w9WgXcQ",
+            "https://youtu.be/dQw4w9WgXcQ",
+        ):
+            self.assertFalse(app.is_channel_url(url), url)
+
+    def test_rumble_channel_urls_rejected(self):
+        for url in (
+            "https://rumble.com/c/SomeChannel",
+            "https://rumble.com/user/SomeUser",
+            "https://rumble.com/",
+        ):
+            self.assertTrue(app.is_channel_url(url), url)
+        self.assertFalse(app.is_channel_url("https://rumble.com/v6abcde-title.html"))
+
+    def test_odysee_channel_urls_rejected(self):
+        for url in (
+            "https://odysee.com/@Mantega:1",
+            "https://odysee.com/@Mantega:1/",
+            "https://odysee.com/$/embed/@Mantega:1",
+            "https://odysee.com/",
+        ):
+            self.assertTrue(app.is_channel_url(url), url)
+
+    def test_odysee_video_urls_pass(self):
+        for url in (
+            "https://odysee.com/@Mantega:1/First-day-LBRY:1",
+            "https://odysee.com/First-day-LBRY:17f983b61f53091fb8ea58a9c56804e4ff8cff4d",
+            "https://odysee.com/$/embed/@Mantega:1/First-day-LBRY:1",
+            "https://lbry.tv/@Mantega:1/First-day-LBRY:1",
+        ):
+            self.assertFalse(app.is_channel_url(url), url)
+
+    def test_unknown_domain_is_not_a_channel_url(self):
+        # Domain gating happens before the channel check; unrelated URLs
+        # report False here and are rejected by is_known_site instead
+        self.assertFalse(app.is_channel_url("https://www.google.com/@handle"))
+
+
+class TestOdyseeIdRegex(unittest.TestCase):
+    def test_claim_ids(self):
+        m = app.ODYSEE_ID_REGEX.search("https://odysee.com/@Mantega:1/First-day-LBRY:17f983b61f53091fb8ea58a9c56804e4ff8cff4d")
+        self.assertEqual(m.group(1), "17f983b61f53091fb8ea58a9c56804e4ff8cff4d")
+        m = app.ODYSEE_ID_REGEX.search("https://lbry.tv/@LBRYFoundation:0/Episode-1:e")
+        self.assertEqual(m.group(1), "e")
+
     def test_resync_auto_subs_flags(self):
         self.assertTrue(app.SUPPORTED_SITES["youtube"]["resync_auto_subs"])
         self.assertFalse(app.SUPPORTED_SITES["rumble"]["resync_auto_subs"])
@@ -126,8 +282,8 @@ class TestSiteProfiles(unittest.TestCase):
         self.assertTrue(app.site_resyncs_auto_subs(""))
 
     def test_supported_sites_label(self):
-        # Info-panel header line: "Supported: YouTube, Rumble"
-        self.assertEqual(app.SUPPORTED_SITES_LABEL, "YouTube, Rumble")
+        # Info-panel header line: "Supported: YouTube, Rumble, Odysee"
+        self.assertEqual(app.SUPPORTED_SITES_LABEL, "YouTube, Rumble, Odysee")
 
     def test_header_shows_supported_sites(self):
         # Both header call sites (init_ui in ytdl/ui_build.py + clear_output
@@ -144,7 +300,9 @@ class TestSiteProfiles(unittest.TestCase):
 class TestBuildCommandAudio(unittest.TestCase):
     """Pin the audio postprocessor flags produced by build_command()."""
 
-    class Harness:
+    class Harness(app.DownloadMixin, app.SubtitleMixin):
+        # Inherits the real mixins (so new helper methods come along);
+        # only GUI state/overrides are provided here.
         HARNESS_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
         def __init__(self, media_type="audio", audio_fmt="best"):
@@ -167,9 +325,6 @@ class TestBuildCommandAudio(unittest.TestCase):
         get_clean_url = lambda self: self.HARNESS_URL  # noqa: E731
         get_output_dir = lambda self: "/tmp/dl"   # noqa: E731
         update_video_state = app.YTDLPDownloaderGUI.update_video_state
-        get_filename_template = app.YTDLPDownloaderGUI.get_filename_template
-        _subtitle_lang_patterns = app.YTDLPDownloaderGUI._subtitle_lang_patterns
-        build_command = app.YTDLPDownloaderGUI.build_command
 
     def _cmd(self, **kwargs):
         return self.Harness(**kwargs).build_command(selected_langs=None)
@@ -193,6 +348,23 @@ class TestBuildCommandAudio(unittest.TestCase):
         cmd = self._cmd(audio_fmt="best")
         self.assertIn("-f", cmd)
         self.assertEqual(cmd[cmd.index("-f") + 1], "bestaudio/best")
+        self.assertNotIn("-x", cmd)
+
+    def test_audio_best_extracts_on_sites_without_audio_only_streams(self):
+        # Odysee has no audio-only formats: "Best" audio must still extract
+        # (-x), otherwise the muxed source MP4 would be saved as-is
+        h = self.Harness(audio_fmt="best")
+        h.video_state["site"] = "odysee"
+        cmd = h.build_command(selected_langs=None)
+        self.assertIn("-x", cmd)
+        idx = cmd.index("--audio-format")
+        self.assertEqual(cmd[idx + 1], "best")
+        self.assertNotIn("-f", cmd)
+
+    def test_audio_best_selector_kept_for_youtube(self):
+        h = self.Harness(audio_fmt="best")
+        cmd = h.build_command(selected_langs=None)
+        self.assertIn("-f", cmd)
         self.assertNotIn("-x", cmd)
 
     def test_video_mode_uses_multiplexed_selector(self):
@@ -290,6 +462,7 @@ class TestProcessAndSetUrl(unittest.TestCase):
 
         _process_and_set_url = app.YTDLPDownloaderGUI._process_and_set_url
         is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
+        url_rejection_reason = app.YTDLPDownloaderGUI.url_rejection_reason
 
     def test_garbage_clipboard_never_reaches_url_field(self):
         h = self.Harness()
@@ -297,6 +470,14 @@ class TestProcessAndSetUrl(unittest.TestCase):
         self.assertEqual(h.url_texts, [])
         # Loud mode (paste button) reports instead of filling the field
         self.assertFalse(h._process_and_set_url("YT-DLP Downloader 1.1.25", silent_mode=False))
+        self.assertEqual(h.url_texts, [])
+
+    def test_unsupported_domain_never_reaches_url_field(self):
+        # Valid URL syntax, but no SUPPORTED_SITES profile -> rejected
+        h = self.Harness()
+        self.assertFalse(h._process_and_set_url("https://www.google.com/", silent_mode=True))
+        self.assertEqual(h.url_texts, [])
+        self.assertFalse(h._process_and_set_url("https://www.google.com/", silent_mode=False))
         self.assertEqual(h.url_texts, [])
 
     def test_valid_clipboard_fills_url_field(self):
@@ -357,6 +538,7 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
 
         fetch_video_info = app.YTDLPDownloaderGUI.fetch_video_info
         is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
+        url_rejection_reason = app.YTDLPDownloaderGUI.url_rejection_reason
 
     def test_nonsense_rejected_before_ytdlp(self):
         h = self.Harness()
@@ -367,6 +549,35 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
             ["Please enter a valid video URL"],
             "garbage must be rejected by the plausibility gate, not sent to yt-dlp",
         )
+
+    def test_unsupported_domain_rejected_before_ytdlp(self):
+        # A syntactically valid URL from a domain without a SUPPORTED_SITES
+        # profile must be rejected up front (reported google.com reaching
+        # yt-dlp and failing with an "[generic]" error)
+        h = self.Harness()
+        h.get_clean_url = lambda: "https://www.google.com/"
+        h.fetch_video_info()
+        self.assertEqual(
+            h.title_texts,
+            [f"Unsupported site — supported: {app.SUPPORTED_SITES_LABEL}"],
+        )
+
+    def test_channel_url_rejected_before_ytdlp(self):
+        h = self.Harness()
+        h.get_clean_url = lambda: "https://www.youtube.com/@SomeHandle"
+        h.fetch_video_info()
+        self.assertEqual(
+            h.title_texts,
+            [
+                "Channel/playlist URLs are not supported — "
+                "please paste a link to a single video"
+            ],
+        )
+
+    def test_odysee_video_url_passes_gate(self):
+        h = self.Harness()
+        h.get_clean_url = lambda: "https://odysee.com/@Mantega:1/First-day-LBRY:1"
+        self.assertIsNone(h.url_rejection_reason("https://odysee.com/@Mantega:1/First-day-LBRY:1"))
 
     def test_plausible_url_passes_the_gate(self):
         h = self.Harness()

@@ -549,17 +549,15 @@ class TestSubtitleCheckboxDisable(unittest.TestCase):
 # Info-fetch error visibility: yt-dlp failures must reach the output/debug panel
 # ====================================================================================================
 
-class InfoFetchHarness(ParserHarness):
+class InfoFetchHarness(ParserHarness, app.InfoFetchMixin):
     """
-    Harness binding the REAL get_video_info() + the debug-dump helper.
+    Harness binding the REAL get_video_info() + the debug-dump helper
+    (inherited from InfoFetchMixin, so new helper methods come along).
 
     The failure paths of get_video_info() only touch `yt_dlp_bin`, `deno_bin`,
     `signals.append_output`, `_dump_ytdlp_error_output()` and
     `signals.title_fetch_complete` — all provided here. No Qt event loop.
     """
-
-    get_video_info = app.YTDLPDownloaderGUI.get_video_info
-    _dump_ytdlp_error_output = app.YTDLPDownloaderGUI._dump_ytdlp_error_output
 
     def __init__(self):
         super().__init__(media_type="video")
