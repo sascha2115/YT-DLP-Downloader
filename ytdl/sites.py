@@ -19,8 +19,17 @@ RUMBLE_ID_REGEX = re.compile(
 # to the end of the URL so the video claim wins over a channel's "…@Name:1".
 ODYSEE_ID_REGEX = re.compile(r"[:#]([0-9a-f]{1,40})/?(?:[?#].*)?$")
 
+# ARD Mediathek video pages: trailing CRID id after /video/ (also /player/,
+# /live/), optionally under a sender prefix - mirrors ARDBetaMediathekIE.
+ARD_ID_REGEX = re.compile(r"/(?:player|live|video)/(?:[^?#]+/)?([^/?#]+)/?(?:[?#].*)?$")
+
+# ZDF video pages: last path segment of a /video/ or /play/ URL (legacy
+# "<slug>.html" pages carry no stable segment we need - extract_video_id is
+# only wired for YouTube today).
+ZDF_ID_REGEX = re.compile(r"/(?:video|play)/(?:[^?#]+/)?([^/?#]+)/?(?:[?#].*)?$")
+
 # ----------------------------------------------------------------------------------------------------
-# Supported sites (YouTube + Rumble + Odysee)
+# Supported sites (YouTube + Rumble + Odysee + ARD Mediathek + ZDF Mediathek)
 # Each entry defines how the site is detected and which features it supports.
 # ----------------------------------------------------------------------------------------------------
 SUPPORTED_SITES = {
@@ -68,13 +77,56 @@ SUPPORTED_SITES = {
         ),
         "id_regex": ODYSEE_ID_REGEX,
     },
+    "ard": {
+        "label": "ARD Mediathek",
+        "domains": ("ardmediathek.de",),
+        "sponsorblock": False,  # SponsorBlock is YouTube-only
+        "js_runtime": False,  # the ARD extractor needs no JS runtime
+        "resync_auto_subs": False,  # ARD captions are real (ebutt/webvtt), not ASR
+        "supports_subtitles": True,
+        "always_extract_audio": False,  # audio-only HLS track exists
+        # Collection pages (sendung/serie/sammlung, optionally under a sender
+        # prefix) resolve as playlists via ARDMediathekCollectionIE; the
+        # homepage is rejected as well
+        "channel_url_regex": re.compile(
+            r"^/?$|^/(?:[^/?#]+/)?(?:sendung|serie|sammlung)/"
+        ),
+        "id_regex": ARD_ID_REGEX,
+    },
+    "zdf": {
+        "label": "ZDF Mediathek",
+        "domains": ("zdf.de", "zdfheute.de", "logo.de"),
+        "sponsorblock": False,  # SponsorBlock is YouTube-only
+        "js_runtime": False,  # the ZDF extractor needs no JS runtime
+        "resync_auto_subs": False,  # ZDF captions are real (xml/vtt), not ASR
+        "supports_subtitles": True,
+        # All ZDF formats are muxed (no audio-only stream) -> "Best" audio
+        # must -x like Odysee, otherwise the source video file would be saved
+        "always_extract_audio": True,
+        # Inverse heuristic: ZDFChannelIE is a catch-all playlist for every
+        # zdf.de path that is not a video page - /video/, /play/ and legacy
+        # "<slug>.html" single videos (incl. the sister sites) pass,
+        # everything else (shows, magazines, the homepage) is rejected.
+        "channel_url_regex": re.compile(r"^(?!(?:/video/|/play/))(?!.*\.html$)"),
+        "id_regex": ZDF_ID_REGEX,
+    },
 }
 
 # Default site profile for unknown domains (yt-dlp may still support them)
 DEFAULT_SITE = "youtube"
 
-# Human-readable site list for the info panel header, e.g. "YouTube, Rumble"
+# Human-readable site list for the info panel header, e.g.
+# "YouTube, Rumble, Odysee, ARD Mediathek, ZDF Mediathek"
 SUPPORTED_SITES_LABEL = ", ".join(p["label"] for p in SUPPORTED_SITES.values())
+
+# Alternation of every known site domain - used by normalize_url() to spot
+# schemeless tokens like "zdf.de/video/...". Built from the profiles so a
+# new site works without touching the pattern.
+KNOWN_SITE_DOMAINS = "|".join(
+    re.escape(domain)
+    for profile in SUPPORTED_SITES.values()
+    for domain in profile["domains"]
+)
 
 def _hostname(url):
     """Lowercase hostname of a URL (scheme optional); "" when unparseable.
@@ -255,9 +307,9 @@ def normalize_url(url):
     else:
         # 2) Extract a known-site domain token without scheme, e.g.
         #    "www.youtube.com/..." or "rumble.com/vXXXXXX-title.html"
-        #    or "odysee.com/@Channel:1/Slug:claimid"
+        #    or "zdf.de/video/..." (domains taken from SUPPORTED_SITES)
         m = re.search(
-            r"((?:www\.)?(?:youtube\.com|youtu\.be|rumble\.com|odysee\.com|lbry\.tv)/[^\s]+)",
+            rf"((?:www\.)?(?:{KNOWN_SITE_DOMAINS})/[^\s]+)",
             url,
             flags=re.IGNORECASE,
         )

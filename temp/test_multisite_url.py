@@ -153,23 +153,31 @@ class TestSiteProfiles(unittest.TestCase):
     def test_sponsorblock_flags(self):
         self.assertTrue(app.SUPPORTED_SITES["youtube"]["sponsorblock"])
         self.assertFalse(app.SUPPORTED_SITES["rumble"]["sponsorblock"])
+        self.assertFalse(app.SUPPORTED_SITES["ard"]["sponsorblock"])
+        self.assertFalse(app.SUPPORTED_SITES["zdf"]["sponsorblock"])
 
     def test_id_regexes_wired(self):
         self.assertIs(app.SUPPORTED_SITES["youtube"]["id_regex"], app.YOUTUBE_ID_REGEX)
         self.assertIs(app.SUPPORTED_SITES["rumble"]["id_regex"], app.RUMBLE_ID_REGEX)
+        self.assertIs(app.SUPPORTED_SITES["ard"]["id_regex"], app.ARD_ID_REGEX)
+        self.assertIs(app.SUPPORTED_SITES["zdf"]["id_regex"], app.ZDF_ID_REGEX)
 
     def test_js_runtime_flags(self):
         self.assertTrue(app.SUPPORTED_SITES["youtube"]["js_runtime"])
         self.assertFalse(app.SUPPORTED_SITES["rumble"]["js_runtime"])
+        self.assertFalse(app.SUPPORTED_SITES["ard"]["js_runtime"])
+        self.assertFalse(app.SUPPORTED_SITES["zdf"]["js_runtime"])
         # Unknown/future sites keep the historical always-pass behavior
         self.assertTrue(app.site_wants_js_runtime("some-future-site"))
         self.assertTrue(app.site_wants_js_runtime(""))
 
     def test_info_timeouts(self):
-        # YouTube/Rumble keep the 15s default; Odysee's LBRY API resolve can
-        # take ~40s, so it overrides the budget (reported timeout bug)
+        # YouTube/Rumble/ARD/ZDF keep the 15s default; Odysee's LBRY API
+        # resolve can take ~40s, so it overrides the budget (reported bug)
         self.assertEqual(app.site_info_timeout("youtube"), app.INFO_FETCH_TIMEOUT_SECONDS)
         self.assertEqual(app.site_info_timeout("rumble"), app.INFO_FETCH_TIMEOUT_SECONDS)
+        self.assertEqual(app.site_info_timeout("ard"), app.INFO_FETCH_TIMEOUT_SECONDS)
+        self.assertEqual(app.site_info_timeout("zdf"), app.INFO_FETCH_TIMEOUT_SECONDS)
         self.assertEqual(app.site_info_timeout("odysee"), 90)
         self.assertGreater(app.site_info_timeout("odysee"), app.INFO_FETCH_TIMEOUT_SECONDS)
         self.assertEqual(app.site_info_timeout("some-future-site"), app.INFO_FETCH_TIMEOUT_SECONDS)
@@ -193,6 +201,9 @@ class TestSiteProfiles(unittest.TestCase):
         self.assertTrue(app.is_known_site("www.rumble.com/v6abcde"))
         self.assertTrue(app.is_known_site("https://odysee.com/@Mantega:1/First-day-LBRY:1"))
         self.assertTrue(app.is_known_site("https://lbry.tv/@Mantega:1/First-day-LBRY:1"))
+        self.assertTrue(app.is_known_site("https://www.ardmediathek.de/video/some/Y3JpZDox"))
+        self.assertTrue(app.is_known_site("https://www.zdf.de/video/talk/x-100"))
+        self.assertTrue(app.is_known_site("https://www.zdfheute.de/news/x.html"))
         # Unknown / look-alike domains must NOT pass
         self.assertFalse(app.is_known_site("https://www.google.com/"))
         self.assertFalse(app.is_known_site("https://vimeo.com/12345"))
@@ -261,6 +272,42 @@ class TestChannelUrlGate(unittest.TestCase):
         ):
             self.assertFalse(app.is_channel_url(url), url)
 
+    def test_ard_channel_urls_rejected(self):
+        for url in (
+            "https://www.ardmediathek.de/sendung/tagesthemen/Y3JpZDovdGVzdA",
+            "https://www.ardmediathek.de/serie/babylon-berlin/staffel-4/Y3JpZDovdGVzdA",
+            "https://www.ardmediathek.de/sammlung/dokus/Y3JpZDovdGVzdA",
+            "https://www.ardmediathek.de/",
+        ):
+            self.assertTrue(app.is_channel_url(url), url)
+
+    def test_ard_video_urls_pass(self):
+        for url in (
+            "https://www.ardmediathek.de/video/tagesschau-15-00-uhr-22-09-2026/das-erste/Y3JpZDox",
+            "https://www.ardmediathek.de/live/tagesschau/das-erste/Y3JpZDox",
+            "https://beta.ardmediathek.de/video/some-episode/Y3JpZDox",
+        ):
+            self.assertFalse(app.is_channel_url(url), url)
+
+    def test_zdf_show_urls_rejected(self):
+        # ZDFChannelIE is a catch-all playlist for every zdf.de path that is
+        # not a video page - the observed show page resolves to 30 entries
+        for url in (
+            "https://www.zdf.de/magazine/heute-journal-104",
+            "https://www.zdf.de/",
+        ):
+            self.assertTrue(app.is_channel_url(url), url)
+
+    def test_zdf_video_urls_pass(self):
+        for url in (
+            "https://www.zdf.de/video/talk/markus-lanz-114/markus-lanz-vom-22-september-2026-100",
+            "https://www.zdf.de/play/series/some-show-100",
+            # Legacy single-video pages end in .html (incl. sister sites)
+            "https://www.zdf.de/dokumentation/terra-x/terra-x-history-100.html",
+            "https://www.zdfheute.de/nachrichten/jahresrueckblick-2025.html",
+        ):
+            self.assertFalse(app.is_channel_url(url), url)
+
     def test_unknown_domain_is_not_a_channel_url(self):
         # Domain gating happens before the channel check; unrelated URLs
         # report False here and are rejected by is_known_site instead
@@ -277,13 +324,18 @@ class TestOdyseeIdRegex(unittest.TestCase):
     def test_resync_auto_subs_flags(self):
         self.assertTrue(app.SUPPORTED_SITES["youtube"]["resync_auto_subs"])
         self.assertFalse(app.SUPPORTED_SITES["rumble"]["resync_auto_subs"])
+        self.assertFalse(app.SUPPORTED_SITES["ard"]["resync_auto_subs"])
+        self.assertFalse(app.SUPPORTED_SITES["zdf"]["resync_auto_subs"])
         # Unknown/future sites keep the historical always-merge behavior
         self.assertTrue(app.site_resyncs_auto_subs("some-future-site"))
         self.assertTrue(app.site_resyncs_auto_subs(""))
 
     def test_supported_sites_label(self):
-        # Info-panel header line: "Supported: YouTube, Rumble, Odysee"
-        self.assertEqual(app.SUPPORTED_SITES_LABEL, "YouTube, Rumble, Odysee")
+        # Info-panel header line: "Supported: <labels...>"
+        self.assertEqual(
+            app.SUPPORTED_SITES_LABEL,
+            "YouTube, Rumble, Odysee, ARD Mediathek, ZDF Mediathek",
+        )
 
     def test_header_shows_supported_sites(self):
         # Both header call sites (init_ui in ytdl/ui_build.py + clear_output
@@ -361,6 +413,17 @@ class TestBuildCommandAudio(unittest.TestCase):
         self.assertEqual(cmd[idx + 1], "best")
         self.assertNotIn("-f", cmd)
 
+    def test_audio_best_extracts_on_zdf(self):
+        # ZDF formats are all muxed (no audio-only stream): "Best" audio must
+        # -x like Odysee, otherwise the source video file would be saved
+        h = self.Harness(audio_fmt="best")
+        h.video_state["site"] = "zdf"
+        cmd = h.build_command(selected_langs=None)
+        self.assertIn("-x", cmd)
+        idx = cmd.index("--audio-format")
+        self.assertEqual(cmd[idx + 1], "best")
+        self.assertNotIn("-f", cmd)
+
     def test_audio_best_selector_kept_for_youtube(self):
         h = self.Harness(audio_fmt="best")
         cmd = h.build_command(selected_langs=None)
@@ -397,11 +460,32 @@ class TestBuildCommandAudio(unittest.TestCase):
             cmd = h.build_command(selected_langs=None)
         self.assertNotIn("--js-runtimes", cmd)
 
+    def test_deno_skipped_for_ard_and_zdf(self):
+        for site in ("ard", "zdf"):
+            h = self.Harness(audio_fmt="m4a")
+            h.deno_bin = "deno"
+            h.video_state["site"] = site
+            with mock.patch.object(app.shutil, "which", return_value="/usr/bin/deno"):
+                cmd = h.build_command(selected_langs=None)
+            self.assertNotIn("--js-runtimes", cmd, site)
+
     def test_sub_langs_cover_rumble_keys(self):
         h = self.Harness(audio_fmt="best")
         cmd = h.build_command(selected_langs=["en"])
         idx = cmd.index("--sub-langs")
         self.assertEqual(cmd[idx + 1], "en,a.en,en-auto,a.en-auto")
+
+    def test_sub_langs_cover_german_mediathek_deu_keys(self):
+        # ARD/ZDF key German subtitles "deu" (ISO 639-2); --sub-langs must
+        # include that shape, "de" alone would fullmatch nothing there.
+        h = self.Harness(audio_fmt="best")
+        cmd = h.build_command(selected_langs=["de"])
+        idx = cmd.index("--sub-langs")
+        self.assertEqual(
+            cmd[idx + 1],
+            "de,a.de,de-auto,a.de-auto,deu,a.deu,deu-auto,a.deu-auto,"
+            "ger,a.ger,ger-auto,a.ger-auto",
+        )
 
     def test_embedded_cc_strip_args_present_for_video(self):
         cmd = self._cmd(media_type="video")
@@ -608,6 +692,171 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
         h.fetch_video_info()
         self.assertTrue(done.wait(timeout=5), "worker thread did not run")
         self.assertEqual(h.fetched, [rumble_url])
+
+
+class TestGermanMediathekProfiles(unittest.TestCase):
+    """ARD Mediathek and ZDF Mediathek profile wiring."""
+
+    def test_detect_site(self):
+        self.assertEqual(app.detect_site("https://www.ardmediathek.de/video/some/Y3JpZDox"), "ard")
+        self.assertEqual(app.detect_site("https://www.zdf.de/video/talk/x-100"), "zdf")
+        self.assertEqual(app.detect_site("https://www.zdfheute.de/news/x.html"), "zdf")
+        self.assertEqual(app.detect_site("https://www.logo.de/kinder/x.html"), "zdf")
+
+    def test_labels(self):
+        self.assertEqual(app.SUPPORTED_SITES["ard"]["label"], "ARD Mediathek")
+        self.assertEqual(app.SUPPORTED_SITES["zdf"]["label"], "ZDF Mediathek")
+
+    def test_domains(self):
+        self.assertIn("ardmediathek.de", app.SUPPORTED_SITES["ard"]["domains"])
+        self.assertEqual(
+            set(app.SUPPORTED_SITES["zdf"]["domains"]), {"zdf.de", "zdfheute.de", "logo.de"}
+        )
+
+    def test_behavior_flags(self):
+        ard = app.SUPPORTED_SITES["ard"]
+        zdf = app.SUPPORTED_SITES["zdf"]
+        for profile in (ard, zdf):
+            self.assertTrue(profile["supports_subtitles"])
+            self.assertFalse(profile["sponsorblock"])
+            self.assertFalse(profile["js_runtime"])
+            self.assertFalse(profile["resync_auto_subs"])
+        # ARD offers an audio-only HLS track, ZDF is muxed-only -> -x needed
+        self.assertFalse(ard["always_extract_audio"])
+        self.assertTrue(zdf["always_extract_audio"])
+
+
+class TestGermanMediathekUrlGate(unittest.TestCase):
+    """url_rejection_reason() end-to-end for the ARD and ZDF profiles."""
+
+    class Harness:
+        url_rejection_reason = app.YTDLPDownloaderGUI.url_rejection_reason
+        is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
+
+    CHANNEL_MSG = (
+        "Channel/playlist URLs are not supported — "
+        "please paste a link to a single video"
+    )
+
+    def test_ard_video_passes(self):
+        h = self.Harness()
+        self.assertIsNone(
+            h.url_rejection_reason(
+                "https://www.ardmediathek.de/video/tagesschau-15-00-uhr-22-09-2026/"
+                "das-erste/Y3JpZDox"
+            )
+        )
+        self.assertIsNone(
+            h.url_rejection_reason(
+                "https://www.ardmediathek.de/live/tagesschau/das-erste/Y3JpZDox"
+            )
+        )
+
+    def test_ard_collection_rejected(self):
+        h = self.Harness()
+        self.assertEqual(
+            h.url_rejection_reason(
+                "https://www.ardmediathek.de/sendung/tagesthemen/Y3JpZDovdGVzdA"
+            ),
+            self.CHANNEL_MSG,
+        )
+        self.assertEqual(
+            h.url_rejection_reason("https://www.ardmediathek.de/"), self.CHANNEL_MSG
+        )
+
+    def test_zdf_video_passes(self):
+        h = self.Harness()
+        self.assertIsNone(
+            h.url_rejection_reason(
+                "https://www.zdf.de/video/talk/markus-lanz-114/"
+                "markus-lanz-vom-22-september-2026-100"
+            )
+        )
+        self.assertIsNone(
+            h.url_rejection_reason(
+                "https://www.zdf.de/dokumentation/terra-x/terra-x-history-100.html"
+            )
+        )
+
+    def test_zdf_show_page_rejected(self):
+        h = self.Harness()
+        self.assertEqual(
+            h.url_rejection_reason("https://www.zdf.de/magazine/heute-journal-104"),
+            self.CHANNEL_MSG,
+        )
+
+    def test_garbage_still_rejected(self):
+        h = self.Harness()
+        self.assertEqual(
+            h.url_rejection_reason("nonsense"), "Please enter a valid video URL"
+        )
+
+    def test_unknown_site_still_rejected(self):
+        h = self.Harness()
+        self.assertEqual(
+            h.url_rejection_reason("https://www.google.com/"),
+            f"Unsupported site — supported: {app.SUPPORTED_SITES_LABEL}",
+        )
+
+
+class TestGermanMediathekIdRegex(unittest.TestCase):
+    def test_ard_trailing_crid(self):
+        crid = (
+            "Y3JpZDovL3RhZ2Vzc2NoYXUuZGUvNmNlNTNhNjAtN2YyNi00Njc5LWIzZjIt"
+            "ZGQ5MzAyYzEwZjJlLVNFTkRVTkdTVklERU8"
+        )
+        m = app.ARD_ID_REGEX.search(
+            "https://www.ardmediathek.de/video/tagesschau-15-00-uhr-22-09-2026/"
+            f"das-erste/{crid}"
+        )
+        self.assertEqual(m.group(1), crid)
+
+    def test_ard_single_segment_player_and_query(self):
+        m = app.ARD_ID_REGEX.search("https://www.ardmediathek.de/video/some-episode/Y3JpZDox")
+        self.assertEqual(m.group(1), "Y3JpZDox")
+        m = app.ARD_ID_REGEX.search("https://beta.ardmediathek.de/player/some/Y3JpZDox?foo=1")
+        self.assertEqual(m.group(1), "Y3JpZDox")
+
+    def test_ard_collection_url_has_no_video_match(self):
+        # sendung/serie/sammlung pages are gated before id extraction
+        m = app.ARD_ID_REGEX.search(
+            "https://www.ardmediathek.de/sendung/tagesthemen/Y3JpZDovdGVzdA"
+        )
+        self.assertIsNone(m)
+
+    def test_zdf_last_segment(self):
+        m = app.ZDF_ID_REGEX.search(
+            "https://www.zdf.de/video/talk/markus-lanz-114/"
+            "markus-lanz-vom-22-september-2026-100?bcid=xyz"
+        )
+        self.assertEqual(m.group(1), "markus-lanz-vom-22-september-2026-100")
+        m = app.ZDF_ID_REGEX.search("https://www.zdf.de/video/some-episode-100/")
+        self.assertEqual(m.group(1), "some-episode-100")
+
+
+class TestNormalizeUrlGermanMediathek(unittest.TestCase):
+    def test_schemeless_tokens_get_https(self):
+        self.assertEqual(
+            app.normalize_url(
+                "zdf.de/video/talk/markus-lanz-114/markus-lanz-vom-22-september-2026-100"
+            ),
+            "https://zdf.de/video/talk/markus-lanz-114/markus-lanz-vom-22-september-2026-100",
+        )
+        self.assertEqual(
+            app.normalize_url("ardmediathek.de/video/some-episode/Y3JpZDox"),
+            "https://ardmediathek.de/video/some-episode/Y3JpZDox",
+        )
+        self.assertEqual(
+            app.normalize_url("www.zdfheute.de/nachrichten/jahresrueckblick-2025.html"),
+            "https://www.zdfheute.de/nachrichten/jahresrueckblick-2025.html",
+        )
+
+    def test_full_urls_unchanged(self):
+        for url in (
+            "https://www.zdf.de/video/talk/markus-lanz-114/markus-lanz-vom-22-september-2026-100",
+            "https://www.ardmediathek.de/video/some-episode/Y3JpZDox",
+        ):
+            self.assertEqual(app.normalize_url(url), url)
 
 
 if __name__ == "__main__":

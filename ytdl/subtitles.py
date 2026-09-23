@@ -6,7 +6,7 @@ methods access shared state via self."""
 import os
 import re
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
-from ytdl.utils import format_srt_time, parse_srt_time
+from ytdl.utils import SUBTITLE_LANG_ALIASES, canonical_subtitle_lang, format_srt_time, parse_srt_time
 
 
 class SubtitleMixin:
@@ -81,7 +81,14 @@ class SubtitleMixin:
         """
         variants = []
         for lang in selected_langs:
-            variants.extend([lang, f"a.{lang}", f"{lang}-auto", f"a.{lang}-auto"])
+            # ISO 639-2 site keys (ARD/ZDF report German as "deu") need their
+            # own pattern: yt-dlp fullmatches each entry against the site's
+            # actual keys, so "de" alone would not match "deu".
+            keys = [lang] + [
+                alias for alias, base in SUBTITLE_LANG_ALIASES.items() if base == lang
+            ]
+            for key in keys:
+                variants.extend([key, f"a.{key}", f"{key}-auto", f"a.{key}-auto"])
         return ",".join(variants)
 
     def _find_downloaded_subtitles(self, selected_langs):
@@ -118,11 +125,13 @@ class SubtitleMixin:
 
         downloaded_subs = []
         for lang in selected_langs:
-            base = lang.split("-")[0].lower()
+            # canonical_subtitle_lang maps the site's file key (ARD/ZDF write
+            # "<base>.deu.srt") onto the requested UI code ("de").
+            base = canonical_subtitle_lang(lang)
             candidates = [
                 path
                 for path, (flang, _ftype, _ext) in found_sub_files.items()
-                if flang == base
+                if canonical_subtitle_lang(flang) == base
             ]
             if not candidates:
                 continue

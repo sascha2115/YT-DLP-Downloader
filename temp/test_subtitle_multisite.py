@@ -43,6 +43,16 @@ class TestSubtitleLangPatterns(unittest.TestCase):
             except re.error:  # pragma: no cover - failure path
                 self.fail(f"invalid regex in sub-langs: {variant}")
 
+    def test_deu_variants_for_german(self):
+        # ARD/ZDF key German subs "deu" (ISO 639-2); the --sub-langs argument
+        # must include that shape, "de" alone fullmatches nothing there.
+        h = SubtitleHarness(tempfile.mkdtemp())
+        self.assertEqual(
+            h._subtitle_lang_patterns(["de"]),
+            "de,a.de,de-auto,a.de-auto,deu,a.deu,deu-auto,a.deu-auto,"
+            "ger,a.ger,ger-auto,a.ger-auto",
+        )
+
 
 class TestFindDownloadedSubtitles(unittest.TestCase):
     def _harness(self, files):
@@ -87,6 +97,16 @@ class TestFindDownloadedSubtitles(unittest.TestCase):
         # Historical behavior: region keys like "en-US" were never detected
         h, _ = self._harness(["Title.en-US.srt"])
         self.assertEqual(h._find_downloaded_subtitles(["en"]), [])
+
+    def test_iso639_2_file_found_for_requested_de(self):
+        # ARD/ZDF write "<base>.deu.srt"; the German checkbox's "de" request
+        # must still locate it (mapped via canonical_subtitle_lang)
+        h, d = self._harness(["Title.deu.srt"])
+        subs = h._find_downloaded_subtitles(["de"])
+        self.assertEqual(len(subs), 1)
+        lang, path, sub_type = subs[0]
+        self.assertEqual((lang, sub_type), ("de", "real"))
+        self.assertEqual(path, os.path.join(d, "Title.deu.srt"))
 
 
 class TestNormalizeSubtitleNames(unittest.TestCase):
@@ -142,6 +162,15 @@ class TestNormalizeSubtitleNames(unittest.TestCase):
         )
         self.assertEqual(sorted(os.listdir(d)), ["Title.en.srt"])
 
+    def test_deu_file_renamed_to_canonical(self):
+        # The .deu.srt the site produced becomes the canonical .de.srt before
+        # post-processing, so resync overwrites the single file in place
+        h, d = self._harness(["Title.deu.srt"])
+        normalized = h._normalize_subtitle_names(h._find_downloaded_subtitles(["de"]))
+        self.assertEqual(normalized[0][1], os.path.join(d, "Title.de.srt"))
+        self.assertTrue(os.path.exists(os.path.join(d, "Title.de.srt")))
+        self.assertFalse(os.path.exists(os.path.join(d, "Title.deu.srt")))
+
 
 class TestSubtitleNeedsResync(unittest.TestCase):
     """Resync/merge is site-aware: YouTube ASR needs it, Rumble doesn't."""
@@ -150,6 +179,12 @@ class TestSubtitleNeedsResync(unittest.TestCase):
         h = SubtitleHarness(tempfile.mkdtemp())
         h.video_state["site"] = site
         return h
+
+    def test_german_mediathek_auto_keeps_original(self):
+        # ARD/ZDF captions are real (not ASR); even an auto-shaped file on
+        # those sites must never go through the YouTube-style merge
+        for site in ("ard", "zdf"):
+            self.assertFalse(self._harness(site)._subtitle_needs_resync("auto"))
 
     def test_youtube_auto_needs_merge(self):
         self.assertTrue(self._harness("youtube")._subtitle_needs_resync("auto"))

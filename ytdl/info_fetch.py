@@ -26,7 +26,7 @@ from ytdl.sites import (
     site_slow_hint,
     site_wants_js_runtime,
 )
-from ytdl.utils import sanitize_title
+from ytdl.utils import canonical_subtitle_lang, sanitize_title
 from ytdl.widgets import SB_DISPLAY_NAMES
 
 
@@ -299,7 +299,7 @@ class InfoFetchMixin:
                             # Also check for lang matches if possible
                             if "tlang=" not in url:
                                 # Standardize the key - sometimes YouTube provides 'en-orig' or 'en'
-                                base = lang_code.split("-")[0].lower()
+                                base = canonical_subtitle_lang(lang_code)
                                 original_autos[base] = formats
 
                         # We check for our 3 target languages for the UI checkboxes.
@@ -308,7 +308,9 @@ class InfoFetchMixin:
                         # `automatic_captions` - classify those as "(auto)".
                         target_langs = [("English", "en"), ("German", "de"), ("Spanish", "es")]
                         for name, code in target_langs:
-                            keys = [k for k in subs_dict.keys() if k.split("-")[0].lower() == code]
+                            # canonical_subtitle_lang maps ISO 639-2 site keys
+                            # ("deu" on ARD/ZDF) onto the UI codes ("de").
+                            keys = [k for k in subs_dict.keys() if canonical_subtitle_lang(k) == code]
                             manual = [k for k in keys if "auto" not in k.lower()]
                             if manual:
                                 available_subs[code] = "real"
@@ -317,17 +319,17 @@ class InfoFetchMixin:
 
                         # Build the full report for the output log as requested
                         # Use sorted union of manual keys and original auto keys
-                        all_langs = sorted(list(set([k.split("-")[0] for k in list(subs_dict.keys()) + list(original_autos.keys())])))
+                        all_langs = sorted({canonical_subtitle_lang(k) for k in list(subs_dict.keys()) + list(original_autos.keys())})
                         report_tokens = []
                         
                         for lang_code in all_langs:
-                            lang_keys = [k for k in subs_dict.keys() if k.startswith(lang_code)]
+                            lang_keys = [k for k in subs_dict.keys() if canonical_subtitle_lang(k) == lang_code]
                             # Check manual (site keys that are not generated "<...>-auto")
                             if any("auto" not in k.lower() for k in lang_keys):
                                 report_tokens.append(f"{lang_code} (real)")
                             # Check auto (site-generated keys or YouTube original auto-captions)
                             if any("auto" in k.lower() for k in lang_keys) or any(
-                                k.startswith(lang_code) for k in original_autos.keys()
+                                canonical_subtitle_lang(k) == lang_code for k in original_autos.keys()
                             ):
                                 report_tokens.append(f"{lang_code} (auto)")
 

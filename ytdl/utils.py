@@ -9,6 +9,24 @@ import sysconfig
 import unicodedata
 
 
+# ------------------------------------------------------------------------------------------
+# Subtitle language keys
+# -----------------------------------------------------------------------------
+# Site subtitle keys may use ISO 639-2 while the UI checkboxes use 639-1
+# (ARD Mediathek and ZDF Mediathek report "deu" for German). Map a site key
+# back to the base UI code; add entries when a site reports another variant.
+SUBTITLE_LANG_ALIASES = {
+    "deu": "de",
+    "ger": "de",
+}
+
+
+def canonical_subtitle_lang(code):
+    """UI language code (e.g. "de") for a site's subtitle key ("deu", "de-auto")."""
+    base = str(code).split("-")[0].lower()
+    return SUBTITLE_LANG_ALIASES.get(base, base)
+
+
 def resource_path(relative_path):
     # In dev runs, assets live at the repo root - one level ABOVE this
     # package directory. In PyInstaller builds, sys._MEIPASS points at the

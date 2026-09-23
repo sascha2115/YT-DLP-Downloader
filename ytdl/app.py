@@ -93,12 +93,14 @@ from ytdl.config import (  # noqa: F401
     TITLE_FETCH_DELAY_MS,
 )
 from ytdl.sites import (  # noqa: F401
+    ARD_ID_REGEX,
     DEFAULT_SITE,
     ODYSEE_ID_REGEX,
     RUMBLE_ID_REGEX,
     SUPPORTED_SITES,
     SUPPORTED_SITES_LABEL,
     YOUTUBE_ID_REGEX,
+    ZDF_ID_REGEX,
     detect_site,
     is_channel_url,
     is_known_site,
