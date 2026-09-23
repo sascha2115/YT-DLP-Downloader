@@ -17,12 +17,6 @@ Future site additions, grouped by category:
 - [ ] TikTok
 - [ ] Reddit
 
-### German public broadcasters (share the ARD/ZDF machinery)
-- [ ] ARD Audiothek (ardaudiothek.de — yt-dlp ships ARDAudiothekIE)
-- [ ] 3sat
-- [ ] Phoenix
-- [ ] arte
-
 ## How to add a site
 
 Each site becomes a profile in `SUPPORTED_SITES` (`ytdl/sites.py`): `domains`,
