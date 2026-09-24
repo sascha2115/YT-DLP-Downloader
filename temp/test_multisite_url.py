@@ -487,8 +487,34 @@ class TestBuildCommandAudio(unittest.TestCase):
             "ger,a.ger,ger-auto,a.ger-auto",
         )
 
-    def test_embedded_cc_strip_args_present_for_video(self):
+    def test_embedded_cc_strip_flag_per_site(self):
+        # The H.264 SEI (unit type 6) strip must only be enabled where the
+        # streams are H.264 broadcast feeds: in AV1 an OBU of type 6 is a
+        # Frame OBU, so the previous unconditional filter corrupted AV1
+        # downloads (picture data silently deleted during stream copy).
+        flags = {
+            site: profile.get("strip_embedded_cc", False)
+            for site, profile in app.SUPPORTED_SITES.items()
+        }
+        self.assertEqual(
+            flags,
+            {
+                "youtube": False,
+                "rumble": True,
+                "odysee": False,
+                "ard": False,
+                "zdf": False,
+            },
+        )
+
+    def test_embedded_cc_strip_args_gated_by_site_video(self):
+        # YouTube (the default harness site): no bitstream filter at all
         cmd = self._cmd(media_type="video")
+        self.assertNotIn("--postprocessor-args", cmd)
+        # Rumble: the EIA-608 strip must stay for its broadcast feeds
+        h = self.Harness(media_type="video")
+        h.video_state["site"] = "rumble"
+        cmd = h.build_command(selected_langs=None)
         pp_args = [
             cmd[i + 1] for i, flag in enumerate(cmd) if flag == "--postprocessor-args"
         ]
@@ -496,10 +522,15 @@ class TestBuildCommandAudio(unittest.TestCase):
         self.assertIn("Merger:-bsf:v filter_units=remove_types=6", joined)
         self.assertIn("FixupM3u8:-bsf:v filter_units=remove_types=6", joined)
 
-    def test_embedded_cc_strip_args_present_for_audio_too(self):
-        # Audio mode (-x --audio-format ...) goes through ffmpeg post-
-        # processors as well; harmless there since the bsf targets video.
+    def test_embedded_cc_strip_args_gated_by_site_audio_too(self):
+        # Audio mode (-x --audio-format ...) goes through the same command
+        # builder; its postprocessor-args must follow the site gate too
+        # (they used to be unconditional there as well).
         cmd = self._cmd(audio_fmt="m4a")
+        self.assertNotIn("--postprocessor-args", cmd)
+        h = self.Harness(audio_fmt="m4a")
+        h.video_state["site"] = "rumble"
+        cmd = h.build_command(selected_langs=None)
         self.assertIn("--postprocessor-args", cmd)
 
 
@@ -623,6 +654,7 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
         fetch_video_info = app.YTDLPDownloaderGUI.fetch_video_info
         is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
         url_rejection_reason = app.YTDLPDownloaderGUI.url_rejection_reason
+        extract_video_id = app.YTDLPDownloaderGUI.extract_video_id
 
     def test_nonsense_rejected_before_ytdlp(self):
         h = self.Harness()
@@ -672,7 +704,7 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
         h.download_button = SimpleNamespace(
             setText=lambda text: None, setEnabled=lambda enabled: None
         )
-        h.video_state = {}
+        h.video_state = {"url": "", "video_id": "", "site": ""}
         h._set_ui_enabled_state = lambda enabled: None
         h._reset_download_progress_bars = lambda: None
         h._set_download_busy = lambda busy: None
@@ -685,6 +717,9 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
 
         def fake_get_video_info(url):
             h.fetched.append(url)
+            # The ID must already be there when the worker runs — that is
+            # what check_sponsorblock() reads later in the same thread.
+            h.video_id_in_worker = h.video_state.get("video_id")
             done.set()
 
         h.get_video_info = fake_get_video_info
@@ -692,6 +727,10 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
         h.fetch_video_info()
         self.assertTrue(done.wait(timeout=5), "worker thread did not run")
         self.assertEqual(h.fetched, [rumble_url])
+        # Regression: extract_video_id() was never called during an info
+        # fetch, so SponsorBlock always reported "Could not extract video ID".
+        self.assertEqual(h.video_state.get("video_id"), "v6abcde")
+        self.assertEqual(h.video_id_in_worker, "v6abcde")
 
 
 class TestGermanMediathekProfiles(unittest.TestCase):

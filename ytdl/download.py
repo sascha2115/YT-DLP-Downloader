@@ -279,15 +279,22 @@ class DownloadMixin:
 
         # Strip embedded broadcast captions (EIA-608 carried in H.264 SEI
         # "User Data Registered ITU-T T.35" NALs) from video downloads.
-        # Sites like Rumble pass US broadcast feeds through, so the MP4
-        # carries a hidden CC track that some players (IINA) surface as a
-        # second subtitle track; the app's own SRT files are the intended
+        # Rumble passes US broadcast feeds through, so the MP4 carries a
+        # hidden CC track that some players (IINA) surface as a second
+        # subtitle track; the app's own SRT files are the intended
         # subtitles. Removing SEI NAL type 6 is lossless (-c copy semantics
-        # via the ffmpeg bitstream filter). Only relevant for formats that
-        # contain video; audio-only downloads are unaffected anyway.
-        cc_strip_args = "-bsf:v filter_units=remove_types=6"
-        cmd.extend(["--postprocessor-args", f"Merger:{cc_strip_args}"])
-        cmd.extend(["--postprocessor-args", f"FixupM3u8:{cc_strip_args}"])
+        # via the ffmpeg bitstream filter) for H.264 - but the numbering is
+        # codec-specific: in AV1 an OBU of type 6 is a Frame OBU, so
+        # applying this unconditionally deleted actual picture data and
+        # corrupted AV1 downloads. Hence the per-site "strip_embedded_cc"
+        # profile flag (True only for Rumble). Only relevant for formats
+        # that contain video; audio-only downloads are unaffected anyway.
+        if SUPPORTED_SITES.get(
+            self.video_state.get("site", DEFAULT_SITE), {}
+        ).get("strip_embedded_cc", False):
+            cc_strip_args = "-bsf:v filter_units=remove_types=6"
+            cmd.extend(["--postprocessor-args", f"Merger:{cc_strip_args}"])
+            cmd.extend(["--postprocessor-args", f"FixupM3u8:{cc_strip_args}"])
 
         # Final parameters - use helper method
         cmd.extend(["--add-metadata"])

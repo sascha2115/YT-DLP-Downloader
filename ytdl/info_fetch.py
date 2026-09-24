@@ -83,6 +83,15 @@ class InfoFetchMixin:
             self.title_entry.setText(reason)
             return
 
+        # Populate video_state["video_id"]: check_sponsorblock() (worker
+        # thread) reads it and extract_video_id() had no other call site,
+        # so every info fetch used to end in "Could not extract video ID
+        # from URL". Clear first — get_clean_url() refreshes "url" but not
+        # "video_id", so the cache would otherwise return the previous
+        # video's ID when the raw and cleaned URL are identical.
+        self.video_state["video_id"] = ""
+        self.extract_video_id(url)
+
         self.title_entry.setText("Fetching video info...")
         # Reset any prior error styling as soon as we start fetching info again
         self.set_download_button_status("")

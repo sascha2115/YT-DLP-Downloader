@@ -41,6 +41,9 @@ SUPPORTED_SITES = {
         "resync_auto_subs": True,  # YouTube ASR captions arrive as choppy fragments
         "supports_subtitles": True,
         "always_extract_audio": False,  # YouTube offers audio-only streams
+        # Never strip: YouTube has no embedded EIA-608 CCs, and unit type 6
+        # is a Frame OBU in AV1 - the filter corrupted AV1 downloads
+        "strip_embedded_cc": False,
         # Channel / playlist / non-video pages (rejected by the input gate)
         "channel_url_regex": re.compile(
             r"^/?$|^/(?:@|c/|user/|channel/|playlist|results|feed)"
@@ -55,6 +58,8 @@ SUPPORTED_SITES = {
         "resync_auto_subs": False,  # Rumble's subs are already well-formatted
         "supports_subtitles": True,
         "always_extract_audio": False,  # audio-only stream ("audio-192p") exists
+        # US broadcast feeds: EIA-608 captions live in H.264 SEI type 6 NALs
+        "strip_embedded_cc": True,
         "channel_url_regex": re.compile(r"^/?$|^/(?:c/|user/)"),
         "id_regex": RUMBLE_ID_REGEX,
     },
@@ -66,6 +71,7 @@ SUPPORTED_SITES = {
         "resync_auto_subs": False,  # no subtitle tracks at all (see below)
         "supports_subtitles": False,  # extractor exposes no subtitles
         "always_extract_audio": True,  # no audio-only streams -> -x needed
+        "strip_embedded_cc": False,  # web uploads, no broadcast CCs
         # The LBRY API "resolve" call can take ~40s (measured; short claim ids
         # like ":d" are slow), far beyond the 15s default budget
         "info_timeout": 90,
@@ -85,6 +91,7 @@ SUPPORTED_SITES = {
         "resync_auto_subs": False,  # ARD captions are real (ebutt/webvtt), not ASR
         "supports_subtitles": True,
         "always_extract_audio": False,  # audio-only HLS track exists
+        "strip_embedded_cc": False,  # real ebutt/webvtt tracks, no EIA-608
         # Collection pages (sendung/serie/sammlung, optionally under a sender
         # prefix) resolve as playlists via ARDMediathekCollectionIE; the
         # homepage is rejected as well
@@ -103,6 +110,7 @@ SUPPORTED_SITES = {
         # All ZDF formats are muxed (no audio-only stream) -> "Best" audio
         # must -x like Odysee, otherwise the source video file would be saved
         "always_extract_audio": True,
+        "strip_embedded_cc": False,  # real xml/vtt tracks, no EIA-608
         # Inverse heuristic: ZDFChannelIE is a catch-all playlist for every
         # zdf.de path that is not a video page - /video/, /play/ and legacy
         # "<slug>.html" single videos (incl. the sister sites) pass,
