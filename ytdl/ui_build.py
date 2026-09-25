@@ -420,6 +420,13 @@ class UiBuildMixin:
         self.download_button.setObjectName("downloadButton")
         self.download_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.download_button.clicked.connect(self.start_download)
+        # Cancel is deliberately NOT part of _set_ui_enabled_state()'s control
+        # list, so it stays clickable while the rest of the UI is disabled.
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setToolTip("Cancel the active download (Esc)")
+        self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_button.clicked.connect(self.cancel_download)
+        self.cancel_button.hide()
         download_hlayout = QHBoxLayout()
         download_hlayout.setSpacing(8)
         self.download_busy_indicator = BusySpinner(size=24)
@@ -428,6 +435,7 @@ class UiBuildMixin:
         self.download_busy_indicator.setSizePolicy(sp)
         self.download_busy_indicator.hide()
         download_hlayout.addWidget(self.download_button, 1)
+        download_hlayout.addWidget(self.cancel_button, 0)
         download_hlayout.addWidget(
             self.download_busy_indicator, 0, Qt.AlignmentFlag.AlignVCenter
         )
@@ -870,8 +878,25 @@ class UiBuildMixin:
             with open(log_path, "w", encoding="utf-8"):
                 pass
 
+    def closeEvent(self, event):
+        # Closing the window cancels an active download, so yt-dlp (and any
+        # ffmpeg child) is not left running as an orphan. A no-op otherwise.
+        # The flag tells the download worker to stop emitting UI signals: the
+        # SignalEmitter they belong to is destroyed along with this window, and
+        # emitting into it mid-teardown can raise or crash the process.
+        self._shutting_down = True
+        self.cancel_download()
+        super().closeEvent(event)
+
     def keyPressEvent(self, a0):
         if not isinstance(a0, QKeyEvent):
+            return
+
+        # Cancel an active download with Escape. A no-op when nothing is
+        # running, so it is safe to bind globally.
+        if a0.key() == Qt.Key.Key_Escape and self.video_state.get("is_download_running"):
+            self.cancel_download()
+            a0.accept()
             return
 
         # Handle keyboard shortcuts

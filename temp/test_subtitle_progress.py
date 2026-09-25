@@ -56,17 +56,21 @@ class ParserHarness:
     """
     Minimal stand-in that reuses the REAL parser methods from
     YTDLPDownloaderGUI without constructing any Qt widget. The methods only
-    rely on `self.video_state`, `self.signals` and each other, all provided
-    here.
+    rely on `self.video_state`, `self.signals`, `self._emit` and each other,
+    all provided here.
     """
 
     _is_subtitle_path = app.YTDLPDownloaderGUI._is_subtitle_path
     _parse_download_output = app.YTDLPDownloaderGUI._parse_download_output
     _update_download_progress = app.YTDLPDownloaderGUI._update_download_progress
+    # The parser emits through DownloadMixin._emit() so the worker can go quiet
+    # when the window closes; borrow it rather than constructing a window.
+    _emit = app.DownloadMixin._emit
 
     def __init__(self, media_type="video"):
         self.video_state = {"media_type": media_type}
         self.signals = FakeSignals()
+        self._shutting_down = False
 
 
 def make_gui(media_type="video"):

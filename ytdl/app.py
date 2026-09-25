@@ -216,12 +216,25 @@ class YTDLPDownloaderGUI(
         self.signals.update_sb_bar.connect(self._set_sb_bar_segments)
         self.signals.set_download_button_label.connect(self.set_download_button_label)
         self.signals.set_download_button_status.connect(self.set_download_button_status)
+        self.signals.set_cancel_button_visible.connect(self.set_cancel_button_visible)
         self.signals.thumbnail_ready.connect(self._show_thumbnail_dialog)
 
         # Guard: prevent concurrent thumbnail fetches from double-clicking Info
         self._fetching_thumbnail = False
         # Last (video, audio) progress values, kept so the bars can be restored
         self._last_progress_values = (0, 0)
+
+        # Cancellation: _proc is the running yt-dlp Popen (set by the download
+        # worker, read/terminated by the main thread); _cancelled records that
+        # the user asked to stop, so the result is reported as "Cancelled"
+        # rather than "Error". Both are plain attributes: a single assignment is
+        # atomic and a stale read is harmless here.
+        self._proc = None
+        self._cancelled = False
+        # Set by closeEvent(): once the window is closing, the download worker
+        # must not emit UI signals, because the SignalEmitter they belong to is
+        # being destroyed with it.
+        self._shutting_down = False
 
         # Preferences shortcut: owned by the "Preferences..." QAction in
         # setup_menu_bar() ("Ctrl+,"/"Cmd+,"). Do NOT also bind a QShortcut
@@ -749,6 +762,10 @@ class YTDLPDownloaderGUI(
 
     def set_download_button_label(self, text: str):
         self.download_button.setText(text)
+
+    def set_cancel_button_visible(self, visible: bool):
+        """Show the cancel control only while a download is actually running."""
+        self.cancel_button.setVisible(bool(visible))
 
     def _set_sb_bar_segments(self, segments, duration):
         """Slot for signals.update_sb_bar (sb_bar exists only after init_ui)."""

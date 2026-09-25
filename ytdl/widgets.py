@@ -59,6 +59,7 @@ class SignalEmitter(QObject):
     update_sb_bar = pyqtSignal(list, float)
     set_download_button_label = pyqtSignal(str)
     set_download_button_status = pyqtSignal(str)
+    set_cancel_button_visible = pyqtSignal(bool)
     thumbnail_ready = pyqtSignal(bytes)
 
 

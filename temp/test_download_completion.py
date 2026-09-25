@@ -34,6 +34,7 @@ class _Signals:
             "clear_dock_progress",
             "set_download_button_label",
             "set_download_button_status",
+            "set_cancel_button_visible",
             "enable_button",
             "update_dock_tile",
         ):
@@ -44,6 +45,13 @@ class _Process:
     def __init__(self, lines, returncode):
         self.stdout = iter(lines)
         self.returncode = returncode
+        self.pid = 4321
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.returncode = -15
 
     def wait(self):
         return self.returncode
@@ -61,6 +69,11 @@ class _DownloadHarness(app.DownloadMixin):
         self.base_path = base_path
         self.fail_metadata = fail_metadata
         self.direct_clear_dock_calls = 0
+        # Cancellation state: run_download() sets _proc and clears both of
+        # these in its finally block.
+        self._proc = None
+        self._cancelled = False
+        self._shutting_down = False
 
     def get_full_path(self):
         return self.base_path
@@ -95,6 +108,8 @@ class TestDownloadCompletion(unittest.TestCase):
         include_destination=True,
         media_type="video",
         fallback_extension=None,
+        cancelled=False,
+        shutting_down=False,
     ):
         with tempfile.TemporaryDirectory() as temp_dir:
             base_path = os.path.join(temp_dir, "Title")
@@ -116,7 +131,15 @@ class TestDownloadCompletion(unittest.TestCase):
                 media_type=media_type,
                 fail_metadata=fail_metadata,
             )
-            process = _Process(lines, returncode)
+            if cancelled:
+                # Simulates the user pressing Cancel mid-download: the flag is
+                # set, then the (fake) process dies with a SIGTERM code.
+                harness._cancelled = True
+            if shutting_down:
+                # Simulates the window closing while the worker is still
+                # running: closeEvent() set this before cancelling.
+                harness._shutting_down = True
+            process = _Process(lines, -15 if cancelled else returncode)
             with mock.patch.object(app.subprocess, "Popen", return_value=process):
                 harness.run_download(["yt-dlp"], [])
             return harness
@@ -175,6 +198,91 @@ class TestDownloadCompletion(unittest.TestCase):
             self._output_lines(harness),
         )
         self.assertEqual(harness.signals.set_download_button_status.emitted[-1], ("error",))
+
+    def test_cancelled_download_is_not_reported_as_an_error(self):
+        """A user-requested stop reads as "Cancelled", not "Error"."""
+        harness = self._run(returncode=0, cancelled=True)
+        self.assertEqual(
+            harness.signals.set_download_button_label.emitted[-1],
+            ("Download Cancelled",),
+        )
+        # Neutral styling: a cancel is not a failure.
+        self.assertEqual(
+            harness.signals.set_download_button_status.emitted[-1], ("",)
+        )
+        self.assertIn("Download cancelled.", self._output_lines(harness))
+        self.assertNotIn(
+            "🚩 yt-dlp process failed with exit code -15", self._output_lines(harness)
+        )
+
+    def test_cancelled_download_resets_progress(self):
+        harness = self._run(returncode=0, cancelled=True)
+        progress = harness.signals.update_download_progress.emitted
+        self.assertEqual(progress[-1], (0, 0))
+        self.assertNotIn((1000, 1000), progress)
+
+    def test_cancelled_download_hides_the_cancel_button(self):
+        harness = self._run(returncode=0, cancelled=True)
+        self.assertEqual(
+            harness.signals.set_cancel_button_visible.emitted[-1], (False,)
+        )
+
+    def test_cancelled_download_clears_process_handle(self):
+        """No stale PID may be left for a later cancel to signal."""
+        harness = self._run(returncode=0, cancelled=True)
+        self.assertIsNone(harness._proc)
+        # The flag is reset too, so the NEXT run starts uncancelled.
+        self.assertFalse(harness._cancelled)
+
+    def test_closing_window_suppresses_final_ui_signals(self):
+        """The worker's final UI batch must be skipped once the window closes.
+
+        Those signals belong to a SignalEmitter that is being destroyed with
+        the window; emitting into it mid-teardown raises (or, at interpreter
+        shutdown, can crash the process).
+        """
+        harness = self._run(returncode=1, shutting_down=True)
+        for name in (
+            "set_download_button_label",
+            "set_download_button_status",
+            "enable_button",
+            "update_dock_tile",
+            "clear_dock_progress",
+            "set_cancel_button_visible",
+        ):
+            self.assertEqual(
+                harness.signals.__getattribute__(name).emitted,
+                [],
+                f"{name} was emitted while the window was closing",
+            )
+        # The cleanup that does NOT touch Qt still happened.
+        self.assertFalse(harness.video_state["is_download_running"])
+        self.assertIsNone(harness._proc)
+
+    def test_closing_window_suppresses_body_signals_too(self):
+        """Not just the final batch: the in-flight output lines as well.
+
+        These are emitted from the try/except body while the worker winds down
+        ("Download cancelled.", the subtitle step lines, ...), which is the
+        other half of the teardown race.
+        """
+        harness = self._run(returncode=0, cancelled=True, shutting_down=True)
+        self.assertEqual(harness.signals.append_output.emitted, [])
+        self.assertEqual(harness.signals.set_indeterminate.emitted, [])
+        self.assertEqual(harness.signals.update_download_progress.emitted, [])
+
+    def test_normal_run_still_emits_the_final_ui_batch(self):
+        """Control case: without the flag, nothing is suppressed."""
+        harness = self._run(returncode=0)
+        self.assertTrue(harness.signals.clear_dock_progress.emitted)
+        self.assertTrue(harness.signals.set_download_button_label.emitted)
+
+    def test_plain_failure_still_says_error(self):
+        harness = self._run(returncode=1)
+        self.assertEqual(
+            harness.signals.set_download_button_label.emitted[-1],
+            ("Download Error 🚨",),
+        )
 
 
 if __name__ == "__main__":

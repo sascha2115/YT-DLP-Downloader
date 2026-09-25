@@ -38,13 +38,20 @@ class _StartHarness(app.DownloadMixin):
         self.output_dir_entry = _Text(output_dir)
         self.download_button = _Button()
         self.url_entry = type("UrlEntry", (), {"setFocus": lambda self: None})()
-        self.signals = type("Signals", (), {"append_output": _Signal()})()
+        # start_download() shows the cancel button via this signal.
+        self.signals = type(
+            "Signals",
+            (),
+            {"append_output": _Signal(), "set_cancel_button_visible": _Signal()},
+        )()
         self.video_state = {
             "channel": "",
             "media_type": "subtitles",
             "is_download_running": False,
         }
         self.build_called = False
+        self._cancelled = False
+        self._shutting_down = False
 
     def get_selected_subtitle_codes(self):
         return ["en"]
@@ -88,6 +95,19 @@ class TestSubtitleExistencePrecheck(unittest.TestCase):
     def test_auto_vtt_is_recognized(self):
         harness = self._run_with_subtitle("Title.a.en.vtt")
         self.assertFalse(harness.build_called)
+
+    def test_skip_path_never_shows_the_cancel_button(self):
+        """No download runs on the skip path, so no Cancel button may appear.
+
+        Regression: the button used to be shown before the existence check, so
+        "all files already exist" left it visible with nothing to cancel.
+        """
+        harness = self._run_with_subtitle("Title.en.srt")
+        self.assertFalse(harness.build_called)
+        self.assertNotIn(
+            (True,),
+            harness.signals.set_cancel_button_visible.emitted,
+        )
 
 
 if __name__ == "__main__":

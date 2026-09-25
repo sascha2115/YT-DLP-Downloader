@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 from datetime import datetime
@@ -27,6 +28,91 @@ AUDIO_OUTPUT_EXTENSIONS = (".mp3", ".m4a", ".wav", ".opus", ".webm")
 
 
 class DownloadMixin:
+    def _emit(self, name, *args):
+        """Emit a UI signal, unless the window is closing.
+
+        self.signals is a QObject owned by the main window, so it is destroyed
+        along with it. A download worker that is still winding down while the
+        window closes would otherwise emit into a dying object: that raises
+        "wrapped C/C++ object has been deleted", and during interpreter
+        shutdown it can take the process down without a traceback.
+
+        Qt-free work (writing EDL/NFO, subtitle files, logging) is unaffected —
+        only the UI notification is dropped, and nobody can see it anyway once
+        the window is gone.
+        """
+        if self._shutting_down:
+            return
+        getattr(self.signals, name).emit(*args)
+
+    def _terminate_process_tree(self, process):
+        """SIGTERM the download's whole process group (yt-dlp + ffmpeg).
+
+        yt-dlp spawns ffmpeg as a child for merging/conversion, so terminating
+        yt-dlp alone can leave ffmpeg writing into a directory we are about to
+        tear down. The Popen is started with start_new_session=True, so it is
+        its own group leader and killpg reaches the children too.
+
+        Falls back to a plain terminate() if the group is already gone.
+        """
+        if process is None:
+            return
+        try:
+            if process.poll() is not None:
+                return
+        except (AttributeError, OSError):
+            return
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except OSError:
+            # ProcessLookupError / PermissionError are both OSError subclasses;
+            # the group may already be gone. Fall back to a plain terminate().
+            try:
+                process.terminate()
+            except (AttributeError, OSError):
+                pass
+
+    def cancel_download(self):
+        """Terminate the running download. Safe to call from the main thread.
+
+        Two deliberate no-ops, both returning False without touching the run:
+          - No process yet: the intent is recorded so run_download()'s post-Popen
+            check terminates immediately (the Cancel/Popen race).
+          - Process already exited (post-processing): nothing left to kill, and
+            honouring the click would relabel a *finished* download as
+            "Cancelled" and zero its progress bars.
+
+        The emits below are intentionally direct, NOT routed through _emit():
+        this method is main-thread-only (button click, Esc, closeEvent), so the
+        SignalEmitter is always still alive here — including inside closeEvent,
+        which sets _shutting_down before calling us. Converting them for
+        "consistency" would make the Cancel feedback silently disappear on
+        window close. _emit() guards the download *worker* thread, not this one.
+        """
+        process = self._proc
+        if process is None:
+            # Pre-Popen race: record the intent so the worker's post-Popen
+            # check acts on it. This is the one case that must set the flag
+            # even though nothing is killed here.
+            self._cancelled = True
+            return False
+        try:
+            already_exited = process.poll() is not None
+        except (AttributeError, OSError):
+            return False
+        if already_exited:
+            self.signals.append_output.emit(
+                "Finishing up (subtitles/EDL/NFO) — nothing left to cancel."
+            )
+            return False
+        self._cancelled = True
+        self._terminate_process_tree(process)
+        self.signals.append_output.emit("Cancelling download…")
+        # Hide immediately so a second click (e.g. during post-processing)
+        # cannot fire again.
+        self.signals.set_cancel_button_visible.emit(False)
+        return True
+
     def start_download(self):
         # Reset label when a new download is initiated
         self.download_button.setText("Download")
@@ -175,6 +261,12 @@ class DownloadMixin:
         self.signals.append_output.emit(
             f"\n🖥️ {' '.join(str(item) for item in cmd if item)}"
         )
+
+        # Shown only here, after every early return above (missing title, failed
+        # directory creation, "already downloaded" skip, invalid URL): the button
+        # must not linger with no download behind it.
+        self._cancelled = False
+        self.signals.set_cancel_button_visible.emit(True)
 
         thread = threading.Thread(target=self.run_download, args=(cmd, selected_langs))
         thread.daemon = True
@@ -353,7 +445,15 @@ class DownloadMixin:
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 bufsize=1,
+                # Own process group, so cancel_download() can SIGTERM yt-dlp
+                # and its ffmpeg children together via killpg().
+                start_new_session=True,
             )
+            self._proc = process
+            # Cancel may have arrived between thread start and Popen (a few ms);
+            # the button is reachable that early, so honour it here.
+            if self._cancelled:
+                self._terminate_process_tree(process)
 
             progress_manager = DownloadProgressManager(
                 media_type=self.video_state.get("media_type", "video")
@@ -368,7 +468,7 @@ class DownloadMixin:
             if process.stdout is None:
                 return
 
-            self.signals.set_indeterminate.emit(True)
+            self._emit("set_indeterminate", True)
 
             # Main Output Loop
             for line in process.stdout:
@@ -383,12 +483,12 @@ class DownloadMixin:
             had_download_progress = progress_manager.is_started()
             if had_download_progress and exit_code == 0:
                 completed_progress = progress_manager.mark_complete()
-                self.signals.update_download_progress.emit(*completed_progress)
+                self._emit("update_download_progress", *completed_progress)
 
             if exit_code == 0:
                 # Post-processing phase: keep the busy spinner visible while we
                 # finalize files (subtitles, EDL/NFO, cleanup, analysis, etc.).
-                self.signals.set_indeterminate.emit(True)
+                self._emit("set_indeterminate", True)
 
                 media_type = self.video_state.get("media_type")
 
@@ -426,16 +526,16 @@ class DownloadMixin:
                         not state["merged_filename"]
                         or not os.path.isfile(state["merged_filename"])
                     ):
-                        self.signals.append_output.emit(
+                        self._emit("append_output",
                             "🚩 yt-dlp exited successfully but no output file was found"
                         )
                         exit_code = -1
 
             if exit_code == 0:
                 if media_type == "subtitles":
-                    self.signals.append_output.emit("Subtitle download complete.")
+                    self._emit("append_output", "Subtitle download complete.")
                 else:
-                    self.signals.append_output.emit("Video/Audio downloaded.")
+                    self._emit("append_output", "Video/Audio downloaded.")
 
                 # Update video state with final filename
                 if state["merged_filename"]:
@@ -449,7 +549,7 @@ class DownloadMixin:
 
                 # Process subtitles (now downloaded together with video)
                 if selected_langs:
-                    self.signals.append_output.emit("\nProcessing subtitles...")
+                    self._emit("append_output", "\nProcessing subtitles...")
                     downloaded_subs = self._normalize_subtitle_names(
                         self._find_downloaded_subtitles(selected_langs)
                     )
@@ -458,7 +558,7 @@ class DownloadMixin:
                         report_langs = [f"{item[0]} ({item[2]})" for item in downloaded_subs]
                         self.video_state["downloaded_subtitles"] = [item[0] for item in downloaded_subs]
 
-                        self.signals.append_output.emit(
+                        self._emit("append_output",
                             f"💬 Subtitles identified: {', '.join(report_langs)}"
                         )
 
@@ -468,12 +568,12 @@ class DownloadMixin:
                         # subs anywhere, auto subs on e.g. Rumble).
                         for lang, srt_path, sub_type in downloaded_subs:
                             if not self._subtitle_needs_resync(sub_type):
-                                self.signals.append_output.emit(f"  → {lang} ({sub_type}): keeping original format")
+                                self._emit("append_output", f"  → {lang} ({sub_type}): keeping original format")
                             else:
-                                self.signals.append_output.emit(f"  → {lang} (auto): merging into 2-line format")
+                                self._emit("append_output", f"  → {lang} (auto): merging into 2-line format")
                                 self._resync_subtitle_for_language(lang, srt_path, [])
                     else:
-                        self.signals.append_output.emit("👉 No subtitles were downloaded.")
+                        self._emit("append_output", "👉 No subtitles were downloaded.")
 
                 # Create EDL and NFO files BEFORE cleanup deletes the .info.json
                 # Skip if we only downloaded subtitles
@@ -487,22 +587,31 @@ class DownloadMixin:
                 # Post Download Analysis (uses cached metadata)
                 # Skip if we only downloaded subtitles (as no new media was created)
                 if state["merged_filename"] and self.video_state.get("media_type") != "subtitles":
-                    self.signals.append_output.emit(f"🔍 Analyzing: {os.path.basename(state['merged_filename'])}")
+                    self._emit("append_output", f"🔍 Analyzing: {os.path.basename(state['merged_filename'])}")
                     self._analyze_downloaded_file(state["merged_filename"])
                 elif not state["merged_filename"] and self.video_state.get("media_type") != "subtitles":
-                    self.signals.append_output.emit("🚩 Could not find filename for analysis")
+                    self._emit("append_output", "🚩 Could not find filename for analysis")
                 # all done
-                self.signals.append_output.emit("\n✅ Download finished.")
+                self._emit("append_output", "\n✅ Download finished.")
                 success = True
             else:
-                self.signals.append_output.emit(
-                    f"🚩 yt-dlp process failed with exit code {exit_code}"
-                )
+                if self._cancelled:
+                    self._emit("append_output", "Download cancelled.")
+                else:
+                    self._emit("append_output",
+                        f"🚩 yt-dlp process failed with exit code {exit_code}"
+                    )
 
         except Exception as e:
-            self.signals.append_output.emit(f"🚩 An unexpected error occurred: {e}")
+            self._emit("append_output", f"🚩 An unexpected error occurred: {e}")
             logger.error(f"Download failed with exception: {e}")
         finally:
+            # Drop the process handle so a later cancel cannot reach a stale
+            # PID, and capture the verdict before the flag is reset.
+            self._proc = None
+            cancelled = self._cancelled
+            self._cancelled = False
+
             # Log SponsorBlock segments separately if available
             if success and removed_sb_segments:
                 segment_info = []
@@ -514,35 +623,43 @@ class DownloadMixin:
                 logger.info(f"SponsorBlock removed: {', '.join(segment_info)}")
 
             # Log the result
-            logger.info(f"Download {'succeeded' if success else 'failed'}")
+            logger.info(
+                f"Download {'succeeded' if success else 'cancelled' if cancelled else 'failed'}"
+            )
 
-            # Clean up state and UI in a single batch to avoid cascading updates
+            # Clean up state and UI in a single batch to avoid cascading updates.
+            # _emit() drops the UI half of this while the window is closing.
             self.video_state["is_download_running"] = False
             if success:
                 if self.video_state.get("media_type") == "subtitles":
-                    self.signals.update_download_progress.emit(
+                    self._emit("update_download_progress",
                         DownloadProgressManager.PROGRESS_MAX,
                         DownloadProgressManager.PROGRESS_MAX,
                     )
                 elif completed_progress is not None:
-                    self.signals.update_download_progress.emit(*completed_progress)
-            elif (
+                    self._emit("update_download_progress", *completed_progress)
+            elif cancelled or (
                 progress_manager is not None
                 and progress_manager.is_started()
             ):
-                # A failed operation must not leave a 100% transfer bar on
-                # screen, even if yt-dlp emitted 100% before failing later.
-                self.signals.update_download_progress.emit(0, 0)
-            self.signals.set_indeterminate.emit(False)
-            self.signals.set_download_button_label.emit(
-                "Download Successful ✅" if success else "Download Error 🚨"
+                # A failed or cancelled operation must not leave a 100%
+                # transfer bar on screen, even if yt-dlp emitted 100% first.
+                self._emit("update_download_progress", 0, 0)
+            self._emit("set_indeterminate", False)
+            self._emit("set_cancel_button_visible", False)
+            if cancelled:
+                button_text, button_status = "Download Cancelled", ""
+            elif success:
+                button_text, button_status = "Download Successful ✅", "success"
+            else:
+                button_text, button_status = "Download Error 🚨", "error"
+            self._emit("set_download_button_label", button_text)
+            self._emit("set_download_button_status", button_status)
+            self._emit("enable_button")
+            self._emit("update_dock_tile",
+                "✓" if success else "!" if not cancelled else ""
             )
-            self.signals.set_download_button_status.emit(
-                "success" if success else "error"
-            )
-            self.signals.enable_button.emit()
-            self.signals.update_dock_tile.emit("✓" if success else "!")
-            self.signals.clear_dock_progress.emit()
+            self._emit("clear_dock_progress")
 
     def cleanup_files(self, selected_langs):
         # Clean up JSON
@@ -592,7 +709,7 @@ class DownloadMixin:
                 or "Merging formats" in line
                 or "Deleting original file" in line
             ):
-                self.signals.set_indeterminate.emit(True)
+                self._emit("set_indeterminate", True)
 
         # Capture the final filename
         new_filename = None
@@ -624,11 +741,11 @@ class DownloadMixin:
 
         # Handle known non-progress output types
         if line.startswith(("[youtube]", "[info]", "[debug]", "[Metadata]")):
-            self.signals.append_output.emit(line)
+            self._emit("append_output", line)
             state["last_line_was_progress"] = False
 
         elif RE_SLEEP.search(line):
-            self.signals.append_output.emit(line)
+            self._emit("append_output", line)
             state["last_line_was_progress"] = False
 
         # Handle downloading (calls the progress update helper)
@@ -638,12 +755,12 @@ class DownloadMixin:
 
         # Handle Merging
         elif RE_MERGE.search(line):
-            self.signals.append_output.emit(line)
+            self._emit("append_output", line)
             state["last_line_was_progress"] = False
 
         # Handle all other output
         else:
-            self.signals.append_output.emit(line)
+            self._emit("append_output", line)
             state["last_line_was_progress"] = False
 
         return state
@@ -681,7 +798,7 @@ class DownloadMixin:
         if not in_subtitle_transfer:
             if not progress_manager.is_started():
                 progress_manager.mark_started()
-                self.signals.set_indeterminate.emit(False)
+                self._emit("set_indeterminate", False)
 
             percent_match = re.search(r"(\d{1,3}(?:\.\d+)?)%", line)
             if percent_match:
@@ -690,8 +807,8 @@ class DownloadMixin:
                     video_val, audio_val = progress_manager.update_from_ytdlp_percent(
                         percent
                     )
-                    self.signals.update_download_progress.emit(video_val, audio_val)
-                    self.signals.update_dock_progress.emit(
+                    self._emit("update_download_progress", video_val, audio_val)
+                    self._emit("update_dock_progress",
                         progress_manager.get_combined_fraction()
                     )
                 except ValueError:
@@ -699,9 +816,9 @@ class DownloadMixin:
 
         # Output line
         if state["last_line_was_progress"]:
-            self.signals.update_last_line.emit(line)
+            self._emit("update_last_line", line)
         else:
-            self.signals.append_output.emit(line)
+            self._emit("append_output", line)
 
         return state
 
@@ -709,16 +826,16 @@ class DownloadMixin:
         # Use cached metadata
         metadata = self.cached_video_metadata
         if not metadata:
-            self.signals.append_output.emit("🚩 No metadata available for analysis")
+            self._emit("append_output", "🚩 No metadata available for analysis")
             return
 
         # Display Metadata Summary
-        self.signals.append_output.emit("\nFile info by ffprobe:")
+        self._emit("append_output", "\nFile info by ffprobe:")
         container = filename.split('.')[-1].upper()
         size_info = f"Container: {container}"
         if metadata.get("file_size_formatted"):
             size_info += f"  (Size: {metadata['file_size_formatted']})"
-        self.signals.append_output.emit(size_info)
+        self._emit("append_output", size_info)
 
         if metadata["video_codec"]:
             video_info = (
@@ -731,24 +848,24 @@ class DownloadMixin:
             v_bitrate = metadata["video_bitrate"]
             video_info += f", {v_bitrate} kbps" if v_bitrate else ", none"
 
-            self.signals.append_output.emit(video_info)
+            self._emit("append_output", video_info)
 
         if metadata["audio_codec"]:
             audio_info = (
                 f"Audio: {metadata['audio_codec']} ({metadata['audio_long_codec']})"
             )
-            self.signals.append_output.emit(audio_info)
+            self._emit("append_output", audio_info)
 
         if metadata["subtitle_streams"]:
             sub_list = [
                 f"{s['lang']} ({s['codec']})" for s in metadata["subtitle_streams"]
             ]
-            self.signals.append_output.emit(f"Subtitles: {', '.join(sub_list)}")
+            self._emit("append_output", f"Subtitles: {', '.join(sub_list)}")
 
         if metadata.get("ffmpeg_bitrate_line"):
-            self.signals.append_output.emit(metadata["ffmpeg_bitrate_line"])
+            self._emit("append_output", metadata["ffmpeg_bitrate_line"])
         else:
-            self.signals.append_output.emit(f"Duration: {metadata['duration_formatted']}")
+            self._emit("append_output", f"Duration: {metadata['duration_formatted']}")
 
     def _is_subtitle_path(self, path) -> bool:
         """Return True if the given yt-dlp destination path is a subtitle file."""
@@ -810,7 +927,7 @@ class DownloadMixin:
             "file_size_formatted": "N/A",
         }
         if not self.ffprobe_bin:
-            self.signals.append_output.emit(
+            self._emit("append_output",
                 "🚩 Cannot analyze file: ffprobe is not installed or accessible"
             )
             return metadata
@@ -904,14 +1021,14 @@ class DownloadMixin:
                     )
 
         except subprocess.CalledProcessError as e:
-            self.signals.append_output.emit(f"🚩 ffprobe failed for: {os.path.basename(file_path)}")
+            self._emit("append_output", f"🚩 ffprobe failed for: {os.path.basename(file_path)}")
             logger.error(f"ffprobe error for {file_path}: {e}")
         except subprocess.TimeoutExpired:
-            self.signals.append_output.emit("👉 ffprobe timed out")
+            self._emit("append_output", "👉 ffprobe timed out")
         except json.JSONDecodeError:
-            self.signals.append_output.emit("🚩 ffprobe returned unreadable output")
+            self._emit("append_output", "🚩 ffprobe returned unreadable output")
         except Exception as e:
-            self.signals.append_output.emit(
+            self._emit("append_output",
                 f"🚩 Unexpected error during file analysis: {e}"
             )
         finally:
@@ -1000,31 +1117,31 @@ class DownloadMixin:
         try:
             with open(nfo_path, "w", encoding="utf-8") as f:
                 f.write(nfo_content)
-            self.signals.append_output.emit(f"🪪 Created NFO file: {os.path.basename(nfo_path)}")
+            self._emit("append_output", f"🪪 Created NFO file: {os.path.basename(nfo_path)}")
         except Exception as e:
-            self.signals.append_output.emit(f"🚩 Error creating NFO file: {e}")
+            self._emit("append_output", f"🚩 Error creating NFO file: {e}")
 
     def create_edl_file(self, video_path):
         if not video_path:
-            self.signals.append_output.emit("📟 create_edl_file called without video_path")
+            self._emit("append_output", "📟 create_edl_file called without video_path")
             return []
 
         json_file = self.get_full_path(".info.json")
         if not os.path.exists(json_file):
-            self.signals.append_output.emit(f"📟 .info.json not found at {json_file}")
+            self._emit("append_output", f"📟 .info.json not found at {json_file}")
             return []
 
         try:
-            self.signals.append_output.emit(f"📟 Reading {json_file} for EDL generation...")
+            self._emit("append_output", f"📟 Reading {json_file} for EDL generation...")
             with open(json_file, "r", encoding="utf-8") as f:
                 info = json.load(f)
 
             segments = []
             removed_categories = self.get_selected_sb_categories()
-            self.signals.append_output.emit(f"📟 Selected SB categories: {removed_categories}")
+            self._emit("append_output", f"📟 Selected SB categories: {removed_categories}")
 
             if "sponsorblock_chapters" in info:
-                self.signals.append_output.emit(f"📟 Found {len(info['sponsorblock_chapters'])} SB chapters")
+                self._emit("append_output", f"📟 Found {len(info['sponsorblock_chapters'])} SB chapters")
                 for chapter in info["sponsorblock_chapters"]:
                     start = chapter.get("start_time", 0)
                     end = chapter.get("end_time", 0)
@@ -1040,15 +1157,15 @@ class DownloadMixin:
 
                     # Check if this segment matches selected categories
                     if any(cat in removed_categories for cat in flat_categories):
-                        self.signals.append_output.emit(f"📟 Matching segment: {start} - {end} ({flat_categories})")
+                        self._emit("append_output", f"📟 Matching segment: {start} - {end} ({flat_categories})")
                         # Store the first category (main category) with the segment
                         category = flat_categories[0] if flat_categories else "unknown"
                         segments.append({"start": start, "end": end, "category": category})
             else:
-                self.signals.append_output.emit("📟 No sponsorblock_chapters in info JSON")
+                self._emit("append_output", "📟 No sponsorblock_chapters in info JSON")
 
             if not segments:
-                self.signals.append_output.emit("📟 No segments to skip found in selected categories")
+                self._emit("append_output", "📟 No segments to skip found in selected categories")
                 return []
 
             edl_path = os.path.splitext(video_path)[0] + ".edl"
@@ -1059,9 +1176,9 @@ class DownloadMixin:
             with open(edl_path, "w", encoding="utf-8") as f:
                 f.write(edl_content + "\n")
 
-            self.signals.append_output.emit(f"🎬 Created EDL file: {os.path.basename(edl_path)}")
+            self._emit("append_output", f"🎬 Created EDL file: {os.path.basename(edl_path)}")
             return segments
 
         except Exception as e:
-            self.signals.append_output.emit(f"🚩 Error creating EDL file: {e}")
+            self._emit("append_output", f"🚩 Error creating EDL file: {e}")
             return []
