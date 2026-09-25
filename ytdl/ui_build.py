@@ -12,7 +12,7 @@ import threading
 import requests
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QAction, QKeyEvent, QKeySequence, QPixmap, QShortcut
-from PyQt6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStyle, QTextBrowser, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStyle, QTextBrowser, QVBoxLayout, QWidget
 from ytdl import APP_VERSION
 from ytdl.config import DEFAULT_OUTPUT_DIR
 from ytdl.progress import DownloadProgressManager
@@ -744,6 +744,7 @@ class UiBuildMixin:
         """)
 
         MAX_LOG_LINES = 500
+        log_has_content = False
         try:
             with open(log_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
@@ -754,6 +755,7 @@ class UiBuildMixin:
                 lines = [f"[ {omitted} earlier lines omitted ]\n"] + lines[-MAX_LOG_LINES:]
 
             if any(ln.strip() for ln in lines):
+                log_has_content = True
                 # Color result lines: red for failed, green for succeeded
                 colored_lines = []
                 for line in lines:
@@ -780,11 +782,93 @@ class UiBuildMixin:
 
         layout.addWidget(text_browser)
 
+        # Buttons: Clear (left) / Close (right)
+        button_layout = QHBoxLayout()
+
+        clear_button = QPushButton("Clear")
+        clear_button.setToolTip("Delete all entries from the log file")
+        clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Nothing to delete when the log is missing/empty
+        clear_button.setEnabled(log_has_content)
+        clear_button.clicked.connect(
+            lambda: self._clear_log_dialog(dialog, text_browser, clear_button, log_path)
+        )
+        button_layout.addWidget(clear_button)
+
+        # Dialog-local shortcut (the window is modal, so no clash with the main
+        # window bindings); QPushButton.click() is a no-op while disabled.
+        clear_shortcut = QShortcut(QKeySequence("Ctrl+K"), dialog)
+        clear_shortcut.activated.connect(clear_button.click)
+
+        button_layout.addStretch(1)
+
         close_button = QPushButton("Close")
         close_button.clicked.connect(dialog.accept)
-        layout.addWidget(close_button, alignment=Qt.AlignmentFlag.AlignRight)
+        button_layout.addWidget(close_button)
+
+        layout.addLayout(button_layout)
 
         dialog.exec()
+
+    def _clear_log_dialog(self, dialog, text_browser, clear_button, log_path):
+        """Confirm, clear the app log on disk and update the dialog in place."""
+        confirm = QMessageBox.question(
+            dialog,
+            "Clear Log",
+            f"Delete all entries from\n{log_path}\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self._truncate_log_file(log_path)
+        except OSError as e:
+            text_browser.setText(f"Could not clear log file:\n{e}")
+            self.signals.append_output.emit(f"🚩 Could not clear log file: {e}")
+            return
+
+        text_browser.setPlainText(f"Log cleared.\n\n{log_path}")
+        clear_button.setEnabled(False)
+        self.signals.append_output.emit("🧹 Log cleared")
+
+    def _truncate_log_file(self, log_path):
+        """Empty the log file, keeping the logging FileHandler in sync.
+
+        Truncates through the handler's own stream while holding its lock, so
+        the stream offset stays consistent (logging opens files in append mode
+        by default, where a plain truncate behind the handler's back would also
+        work — but seeking/truncating on the handler's stream stays correct for
+        any file mode) and the truncation can never interleave with an in-flight
+        emit from a worker thread. Qt-free, so it is unit-testable.
+        """
+        truncated = False
+        for handler in logging.getLogger().handlers:
+            if not isinstance(handler, logging.FileHandler):
+                continue
+            if os.path.abspath(handler.baseFilename) != os.path.abspath(log_path):
+                continue
+            handler.acquire()
+            try:
+                handler.flush()
+                stream = getattr(handler, "stream", None)
+                if stream is None:
+                    # Handler is closed; FileHandler.emit() reopens at offset 0,
+                    # so truncating the file from here is safe.
+                    with open(log_path, "w", encoding="utf-8"):
+                        pass
+                else:
+                    stream.seek(0)
+                    stream.truncate()
+            finally:
+                handler.release()
+            truncated = True
+
+        if not truncated:
+            # No handler owns this file (e.g. tests) — plain truncate
+            with open(log_path, "w", encoding="utf-8"):
+                pass
 
     def keyPressEvent(self, a0):
         if not isinstance(a0, QKeyEvent):
