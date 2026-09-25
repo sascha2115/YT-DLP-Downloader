@@ -14,12 +14,12 @@ import subprocess
 import threading
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
-
 from ytdl.config import DEFAULT_OUTPUT_DIR
 from ytdl.progress import DownloadProgressManager, RE_ALREADY, RE_AUDIO, RE_CONVERT, RE_DEST, RE_MERGE, RE_SLEEP, SUBTITLE_EXTENSIONS
 from ytdl.sites import DEFAULT_SITE, SUPPORTED_SITES, site_wants_js_runtime
 from ytdl.utils import format_duration, format_filesize, sanitize_title
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadMixin:
@@ -32,15 +32,15 @@ class DownloadMixin:
         if not base_name:
             self.signals.append_output.emit("🚩 Error: No video title available")
             return
-            
+
         # Base directory from settings
         root_output_dir = self.output_dir_entry.text().strip() or DEFAULT_OUTPUT_DIR
-        
+
         # Create folder structure: Root / Channel / SxxEyyyy - Video Title
         # Files inside: "SxxEyyyy - Video Title"
         channel = self.video_state.get("channel", "")
         sanitized_base_name = sanitize_title(base_name)
-        
+
         if channel:
             sanitized_channel = sanitize_title(channel)
             # Create nested folder structure: {root}/{channel}/{base_name}
@@ -65,7 +65,7 @@ class DownloadMixin:
         media_type = self.video_state.get("media_type")
         selected_langs = self.get_selected_subtitle_codes()
         base_path = self.get_full_path()
-        
+
         # 1. Check Media (Video/Audio)
         media_exists = False
         media_file = ""
@@ -81,7 +81,7 @@ class DownloadMixin:
                     media_exists = True
                     media_file = os.path.basename(base_path + ext)
                     break
-        
+
         # 2. Check Subtitles
         missing_subs = []
         existing_subs = []
@@ -97,7 +97,7 @@ class DownloadMixin:
         # 3. Output Detailed Status
         if media_file:
             self.signals.append_output.emit(f"✓ Media exists: {media_file}")
-        
+
         for code in existing_subs:
             p1 = self.get_full_path(f".{code}.srt")
             p2 = self.get_full_path(f".a.{code}.srt")
@@ -109,13 +109,13 @@ class DownloadMixin:
         # 4. Decide if we skip
         should_skip = False
         skip_reason = ""
-        
+
         if media_type == "subtitles":
             if not selected_langs:
                 self.signals.append_output.emit("👉 No subtitle languages selected. Please check at least one language.")
                 self.video_state["is_download_running"] = False
                 return
-            
+
             if not missing_subs:
                 should_skip = True
                 skip_reason = "All requested subtitles already exist"
@@ -387,7 +387,7 @@ class DownloadMixin:
                     if downloaded_subs:
                         report_langs = [f"{item[0]} ({item[2]})" for item in downloaded_subs]
                         self.video_state["downloaded_subtitles"] = [item[0] for item in downloaded_subs]
-                        
+
                         self.signals.append_output.emit(
                             f"💬 Subtitles identified: {', '.join(report_langs)}"
                         )
@@ -451,7 +451,7 @@ class DownloadMixin:
                     end = seg.get('end', 0)
                     segment_info.append(f"{category} ({start:.1f}s-{end:.1f}s)")
                 logger.info(f"SponsorBlock removed: {', '.join(segment_info)}")
-            
+
             # Log the result
             logger.info(f"Download {'succeeded' if success else 'failed'}")
 
@@ -486,7 +486,6 @@ class DownloadMixin:
                 os.remove(json_file)
             except OSError:
                 logger.warning(f"Could not remove info JSON file: {json_file}")
-                pass
 
         # Clean up original/auto-generated files
         for code in selected_langs:
@@ -585,7 +584,7 @@ class DownloadMixin:
 
     def _update_download_progress(self, line, state):
         progress_manager = state["progress_manager"]
-        
+
         # yt-dlp downloads subtitles BEFORE the media streams. Those transfers
         # are tiny and would otherwise wreck the bars: the subtitle's 100% lands
         # in the video bar, and the following media destination shifts the real
@@ -661,11 +660,11 @@ class DownloadMixin:
             )
             if metadata["resolution"]:
                 video_info += f", {metadata['resolution']}"
-            
+
             # Show strictly video-specific bitrate as requested
             v_bitrate = metadata["video_bitrate"]
             video_info += f", {v_bitrate} kbps" if v_bitrate else ", none"
-            
+
             self.signals.append_output.emit(video_info)
 
         if metadata["audio_codec"]:
@@ -766,7 +765,7 @@ class DownloadMixin:
             with subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             ) as proc:
-                stdout, stderr = proc.communicate(timeout=20)
+                stdout, _ = proc.communicate(timeout=20)
                 if proc.returncode != 0:
                     raise subprocess.CalledProcessError(proc.returncode, cmd)
 
@@ -804,7 +803,7 @@ class DownloadMixin:
 
                     # Extract video bitrate (in bps -> convert to kbps)
                     bit_rate = stream.get("bit_rate")
-                    
+
                     # Fallback for WebM/MKV: Check tags for 'BPS'
                     if not bit_rate:
                         v_tags = stream.get("tags", {})
@@ -813,7 +812,7 @@ class DownloadMixin:
                             if tag_key.upper().startswith("BPS"):
                                 bit_rate = tag_val
                                 break
-                                
+
                     if bit_rate:
                         try:
                             metadata["video_bitrate"] = round(int(bit_rate) / 1000)

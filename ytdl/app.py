@@ -14,6 +14,12 @@
 # python3 main.py --simulate-download-error
 # ==================================================================================================================================
 #
+# pylint: disable=unused-import,wrong-import-position
+#   unused-import: the ytdl.* block below is the deliberate re-export surface for
+#     main.py and the tests (they patch main.subprocess / main.shutil and read
+#     e.g. main.RUMBLE_ID_REGEX).
+#   wrong-import-position: the Qt/ytdl imports follow the IS_MACOS/AppKit
+#     conditional and the logger setup on purpose (see the comments below).
 import logging
 import os
 import shutil      # re-exported public surface (main.shutil used by tests)
@@ -179,15 +185,17 @@ class YTDLPDownloaderGUI(
         )
         self.signals.update_dock_tile.connect(self.setDockTileCheck)
         self.signals.update_dock_progress.connect(self.setDockProgressOverlay)
-        self.signals.update_sb_bar.connect(
-            lambda segments, duration: self.sb_bar.set_segments(segments, duration)
-        )
+        # Deferred lookup on purpose: self.sb_bar is created by init_ui(), which
+        # runs after these connections — hence a slot method, not self.sb_bar.x.
+        self.signals.update_sb_bar.connect(self._set_sb_bar_segments)
         self.signals.set_download_button_label.connect(self.set_download_button_label)
         self.signals.set_download_button_status.connect(self.set_download_button_status)
         self.signals.thumbnail_ready.connect(self._show_thumbnail_dialog)
 
         # Guard: prevent concurrent thumbnail fetches from double-clicking Info
         self._fetching_thumbnail = False
+        # Last (video, audio) progress values, kept so the bars can be restored
+        self._last_progress_values = (0, 0)
 
         # Preferences shortcut: owned by the "Preferences..." QAction in
         # setup_menu_bar() ("Ctrl+,"/"Cmd+,"). Do NOT also bind a QShortcut
@@ -701,6 +709,10 @@ class YTDLPDownloaderGUI(
 
     def set_download_button_label(self, text: str):
         self.download_button.setText(text)
+
+    def _set_sb_bar_segments(self, segments, duration):
+        """Slot for signals.update_sb_bar (sb_bar exists only after init_ui)."""
+        self.sb_bar.set_segments(segments, duration)
 
     def set_download_button_status(self, status: str):
         """

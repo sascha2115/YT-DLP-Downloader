@@ -9,6 +9,9 @@ import surface for tests and tooling.
 
 import sys
 
+# pylint: disable=wildcard-import,unused-wildcard-import
+#   main.X is the deliberate single import surface for the tests and tooling
+#   (see the module docstring) — the names are re-exported on purpose.
 from ytdl.app import *  # noqa: F401,F403
 from ytdl.app import YTDLPDownloaderGUI  # noqa: F401
 

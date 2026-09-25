@@ -21,8 +21,6 @@ from ytdl.description import clean_youtube_description
 from ytdl.sites import (
     DEFAULT_SITE,
     SUPPORTED_SITES,
-    SUPPORTED_SITES_LABEL,
-    is_plausible_url,
     site_info_timeout,
     site_slow_hint,
     site_wants_js_runtime,
@@ -230,7 +228,7 @@ class InfoFetchMixin:
                 ext = _s("ext")
                 vcodec = _s("vcodec")
                 fps = str(json_data.get("fps", ""))
-                
+
                 subs_dict = json_data.get("subtitles") or {}
                 autos_dict = json_data.get("automatic_captions") or {}
                 all_formats = json_data.get("formats") or []
@@ -276,7 +274,7 @@ class InfoFetchMixin:
                     if f.get("height") and isinstance(f.get("height"), int)
                     and (f.get("vcodec") not in (None, "none") or f.get("video_ext", "none") != "none")
                 )), reverse=True)
-                
+
                 if unique_heights:
                     res_str = " | ".join([f"{h}p" for h in unique_heights])
                     self.signals.append_output.emit(f"Resolutions: {res_str}")
@@ -317,7 +315,7 @@ class InfoFetchMixin:
                             available_codecs.add("VP9")
                         elif vc.startswith("av01"):
                             available_codecs.add("AV1")
-                
+
                 if available_codecs:
                     codec_order = {"H264": 1, "VP9": 2, "AV1": 3}
                     sorted_codecs = sorted(list(available_codecs), key=lambda x: codec_order.get(x, 99))
@@ -371,7 +369,7 @@ class InfoFetchMixin:
                         for lang_code, formats in autos_dict.items():
                             if not formats:
                                 continue
-                            
+
                             # Original auto-captions don't have "tlang=" in their URL.
                             # We check the URL of the first format.
                             fmt_url = formats[0].get("url", "")
@@ -386,7 +384,7 @@ class InfoFetchMixin:
                         # "<code>-auto" inside `subtitles` instead of YouTube's
                         # `automatic_captions` - classify those as "(auto)".
                         target_langs = [("English", "en"), ("German", "de"), ("Spanish", "es")]
-                        for name, code in target_langs:
+                        for _, code in target_langs:
                             # canonical_subtitle_lang maps ISO 639-2 site keys
                             # ("deu" on ARD/ZDF) onto the UI codes ("de").
                             keys = [k for k in subs_dict.keys() if canonical_subtitle_lang(k) == code]
@@ -400,7 +398,7 @@ class InfoFetchMixin:
                         # Use sorted union of manual keys and original auto keys
                         all_langs = sorted({canonical_subtitle_lang(k) for k in list(subs_dict.keys()) + list(original_autos.keys())})
                         report_tokens = []
-                        
+
                         for lang_code in all_langs:
                             lang_keys = [k for k in subs_dict.keys() if canonical_subtitle_lang(k) == lang_code]
                             # Check manual (site keys that are not generated "<...>-auto")
@@ -408,7 +406,7 @@ class InfoFetchMixin:
                                 report_tokens.append(f"{lang_code} (real)")
                             # Check auto (site-generated keys or YouTube original auto-captions)
                             if any("auto" in k.lower() for k in lang_keys) or any(
-                                canonical_subtitle_lang(k) == lang_code for k in original_autos.keys()
+                                canonical_subtitle_lang(k) == lang_code for k in original_autos
                             ):
                                 report_tokens.append(f"{lang_code} (auto)")
 
@@ -437,13 +435,6 @@ class InfoFetchMixin:
                     except (json.JSONDecodeError, Exception) as e:
                         logger.warning(f"Error parsing subtitle info: {e}")
 
-                    if language:
-                        # Normalize language (e.g., 'en-US' -> 'en')
-                        base_lang = language.split("-")[0]
-                        # optional: Check the detected language
-                        # self.signals.update_subtitle_checkboxes.emit(base_lang)
-                    # self.signals.append_output.emit(f"Language: {language}")
-
                     # Set title (without channel name - channel is added to folder name only)
                     if title:
                         episode_code, title = apply_episode_rules(youtube_channel, title)
@@ -456,7 +447,7 @@ class InfoFetchMixin:
                         self.signals.update_title.emit(full_title)
 
                         # Fetch SponsorBlock segments
-                        self.check_sponsorblock(url)
+                        self.check_sponsorblock()
                     else:
                         self.signals.append_output.emit("🚩 Could not find title")
                         error_status["error"] = True
@@ -621,7 +612,8 @@ class InfoFetchMixin:
             # Keep an empty line above the description and force a "..." ending.
             self.signals.append_output.emit(f"\nDescription: {summary}...")
 
-    def check_sponsorblock(self, url):
+    def check_sponsorblock(self):
+        """Query the SponsorBlock API with video_state["video_id"] (YouTube only)."""
         try:
             # Get the categories
             # Get all possible categories to show everything in the visual bar
@@ -716,5 +708,3 @@ class InfoFetchMixin:
                 f"🚩 SponsorBlock: Failed to check segments: {str(e)}"
             )
             self._emit_description_summary()
-
-

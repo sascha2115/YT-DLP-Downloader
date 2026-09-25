@@ -104,7 +104,7 @@ class SponsorBlockBar(QWidget):
 
         self.update()
 
-    def paintEvent(self, event):
+    def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -126,7 +126,7 @@ class SponsorBlockBar(QWidget):
             cat_key = seg.get("category", "unknown")
             # Translate from API name if needed
             cat_key = SB_API_MAP.get(cat_key, cat_key)
-            
+
             times = seg.get("segment", [0, 0])
             start = float(times[0])
             end = float(times[1])
@@ -168,7 +168,7 @@ class BusySpinner(QWidget):
         self._angle = (self._angle + 36) % 360
         self.update()
 
-    def paintEvent(self, event):
+    def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         side = min(self.width(), self.height())

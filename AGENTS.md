@@ -7,7 +7,7 @@
 - `main.py` – the thin launcher at the **repo root**: parses argv, starts the app, and re-exports the public names of `ytdl.app` so `main.detect_site` / `main.YTDLPDownloaderGUI` etc. remain the single import surface for tests and tooling.
 - `ytdl/` – the application package: GUI class in `ytdl/app.py`, pure logic in the sibling modules (see Repository layout).
 - `requirements.txt` – Python dependencies (PyQt6, requests, pyobjc-framework-Cocoa). The external binaries (`yt-dlp`, `ffmpeg`, `deno`) are only listed as comments – install them via Homebrew or pip, not via this file.
-- No CI workflow exists (no `.github/`, no `ci.yml` / `pre-commit.yml`). Build and test are manual, see below.
+- No CI workflow exists (no `.github/`, no `ci.yml` / `pre-commit.yml`). Build and test are manual, see below. Lint config lives in `.pylintrc` (pylint 4.x; run `python3 -m pylint ytdl main.py` once pylint is installed — the VS Code `ms-python.pylint` extension picks the file up automatically). It disables only introspection noise for compiled Qt/PyObjC extension modules and this codebase's documented style choices (docstrings per function, line length, f-string logging, broad excepts at the UI/network boundary, too-many-* in GUI handlers); the check for each disabled message is listed with its reason in the file, so they can be re-enabled selectively. `temp/` is excluded.
 - Runtime preferences are NOT the repo's `preferences.json` – the app reads and writes `~/Library/Application Support/YT-DLP Downloader/preferences.json` (see `PREFERENCES_DIR` in `ytdl/app.py`, edited via the in-app dialog). The repo-root `preferences.json` is only a reference sample (`channel_name_map`).
 
 ## Repository layout (flat at the root, plus `assets/` and the `ytdl/` package)

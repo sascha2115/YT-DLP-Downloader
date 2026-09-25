@@ -23,7 +23,7 @@ SUBTITLE_LANG_ALIASES = {
 
 def canonical_subtitle_lang(code):
     """UI language code (e.g. "de") for a site's subtitle key ("deu", "de-auto")."""
-    base = str(code).split("-")[0].lower()
+    base = str(code).split("-", 1)[0].lower()
     return SUBTITLE_LANG_ALIASES.get(base, base)
 
 

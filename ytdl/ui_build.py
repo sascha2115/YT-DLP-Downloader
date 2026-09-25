@@ -333,7 +333,7 @@ class UiBuildMixin:
         self.sb_hook_checkbox.setToolTip("Greetings or trailer for upcoming video.")
         self.sb_tangents_checkbox = QCheckBox(SB_DISPLAY_NAMES["tangents"])
         self.sb_tangents_checkbox.setToolTip("Tangential scene, filler or jokes.")
-        
+
         # Hide "All" checkbox for now
         self.sb_all_checkbox = QCheckBox("All")
         self.sb_all_checkbox.hide()
@@ -350,7 +350,7 @@ class UiBuildMixin:
             self.sb_tangents_checkbox: "tangents",
         }
         self.sb_all_checkbox.stateChanged.connect(self.toggle_sb_categories)
-        
+
         # Default checked
         self.sb_sponsor_checkbox.setChecked(True)
         self.sb_selfpromo_checkbox.setChecked(True)
@@ -390,7 +390,7 @@ class UiBuildMixin:
             self.sb_tangents_checkbox,
         ]:
             sponsorblock_layout.addWidget(cb)
-        
+
         sponsorblock_layout.addStretch()
         sponsorblock_group_box.setLayout(sponsorblock_layout)
 
@@ -489,7 +489,7 @@ class UiBuildMixin:
     def apply_styles(self):
         qss_path = resource_path("assets/styles.qss")
         try:
-            with open(qss_path, "r") as f:
+            with open(qss_path, "r", encoding="utf-8") as f:
                 stylesheet = f.read()
             self.setStyleSheet(stylesheet)
         except FileNotFoundError:
@@ -550,7 +550,7 @@ class UiBuildMixin:
         # SponsorBlock Category Checkboxes
         sb_categories_enabled = enabled and not self.sb_all_checkbox.isChecked()
 
-        for cb in self.sb_checkbox_map.keys():
+        for cb in self.sb_checkbox_map:
             cb.setEnabled(sb_categories_enabled)
 
     def _on_option_group_change(self, button):
@@ -888,7 +888,7 @@ class UiBuildMixin:
             return
 
         # Handle Cmd/Ctrl + L (Focus URL input and select all text)
-        elif key == Qt.Key.Key_L and (
+        if key == Qt.Key.Key_L and (
             modifiers & Qt.KeyboardModifier.ControlModifier
             or modifiers & Qt.KeyboardModifier.MetaModifier
         ):
@@ -898,7 +898,7 @@ class UiBuildMixin:
             return
 
         # Handle Cmd/Ctrl + D (Start Download)
-        elif key == Qt.Key.Key_D and (
+        if key == Qt.Key.Key_D and (
             modifiers & Qt.KeyboardModifier.ControlModifier
             or modifiers & Qt.KeyboardModifier.MetaModifier
         ):

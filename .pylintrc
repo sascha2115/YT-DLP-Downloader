@@ -1,0 +1,44 @@
+[MAIN]
+# Lint the app package + launcher only; temp/ is dev-only scratch tooling
+ignore=temp,scratch,build,dist,__pycache__
+persistent=no
+
+[MESSAGES CONTROL]
+# All real errors (E) stay enabled; see the comments for why each check below
+# is off. They are either introspection noise or deliberate choices of this
+# codebase (documented in AGENTS.md).
+disable=
+    missing-function-docstring,
+    missing-class-docstring,
+    missing-module-docstring,
+    line-too-long,
+    logging-fstring-interpolation,
+    broad-exception-caught,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    too-many-nested-blocks,
+    too-many-instance-attributes,
+    too-many-boolean-expressions,
+    too-few-public-methods,
+    duplicate-code,
+    invalid-name,
+    subprocess-run-check,
+    consider-using-with,
+    global-statement,
+
+[TYPECHECK]
+# PyQt6 is a compiled extension module: let pylint import it to resolve names
+# instead of reporting no-name-in-module for every Qt import.
+extension-pkg-allow-list=PyQt6.QtCore,PyQt6.QtGui,PyQt6.QtWidgets
+# PyObjC injects its names at runtime, so astroid can never see them (and the
+# bindings are absent on Linux, where the app degrades gracefully).
+ignored-modules=AppKit,Foundation
+# re.Pattern cannot be inferred when the compiled pattern lives in a data table
+ignored-classes=Pattern
+
+[DESIGN]
+max-args=8
+max-positional-arguments=8
+max-public-methods=25
+

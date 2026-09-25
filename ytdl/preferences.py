@@ -35,12 +35,11 @@ def load_preferences():
 
     try:
         os.makedirs(PREFERENCES_DIR, exist_ok=True)
-        if os.path.exists(PREFERENCES_FILE):
-            with open(PREFERENCES_FILE, "r", encoding="utf-8") as f:
-                parsed = json.load(f)
-            return parsed
-        else:
+        if not os.path.exists(PREFERENCES_FILE):
             return default_preferences
+        with open(PREFERENCES_FILE, "r", encoding="utf-8") as f:
+            parsed = json.load(f)
+        return parsed
     except Exception as e:
         logger.error(f"Error loading preferences: {e}")
         return default_preferences

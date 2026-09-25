@@ -16,17 +16,16 @@ class SubtitleMixin:
     def get_selected_subtitle_codes(self):
         return [code for code, cb in self.subtitle_checkboxes.items() if cb.isChecked()]
 
-    def _update_subtitle_checkboxes(self, lang_input):
-        # Normalize the input language (e.g., 'en-US' -> 'en')
-        compare_code = lang_input.split("-")[0].lower() if lang_input else ""
-        
+    def _update_subtitle_checkboxes(self, _lang_input):
+        # The language the site reported is not needed for the labels: availability
+        # comes from video_state["available_subtitles"], keyed by UI language code.
         available = self.video_state.get("available_subtitles", {})
         for code, cb in self.subtitle_checkboxes.items():
             # Update label
             status = available.get(code)
             lang_names = {"en": "English", "de": "German", "es": "Spanish"}
             name = lang_names.get(code, code)
-            
+
             if status:
                 cb.setText(f"{name} ({status})")
                 cb.setEnabled(True)
@@ -53,14 +52,14 @@ class SubtitleMixin:
         # Identify types
         real_codes = []
         available_codes = []
-        
+
         for code, cb in self.subtitle_checkboxes.items():
             text = cb.text().lower()
             if "(real)" in text:
                 real_codes.append(code)
             if "(none)" not in text and cb.isEnabled():
                 available_codes.append(code)
-        
+
         # Apply selection rules
         if real_codes:
             # Check all real ones, uncheck others
@@ -197,7 +196,7 @@ class SubtitleMixin:
 
         # output_srt is just "Title.en.srt" (no "merged" or "resynced" suffix)
         output_srt = self.get_full_path(f".{lang}.srt")
-        
+
         # If output_srt is different from srt_path (e.g. srt_path was .a.en.srt),
         # we process it into the final .en.srt.
         # If they are the same, we overwrite it (safe because resync_subtitles reads into memory).
@@ -313,7 +312,7 @@ class SubtitleMixin:
             if timestamp <= seg_start:
                 # Timestamp is before this segment starts, no more adjustments needed
                 break
-            elif timestamp >= seg_end:
+            if timestamp >= seg_end:
                 # Timestamp is after this segment ends, subtract the full segment duration
                 adjustment += seg_duration
             else:
