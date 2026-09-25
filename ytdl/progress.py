@@ -112,8 +112,11 @@ class DownloadProgressManager:
         elif self.media_type == "video_only":
             self.video_progress = self.PROGRESS_MAX
         else:
+            # video or muxed: always fill video bar; only fill audio bar if
+            # a separate audio stream was actually downloaded (download_count > 1)
             self.video_progress = self.PROGRESS_MAX
-            self.audio_progress = self.PROGRESS_MAX
+            if self.download_count > 1:
+                self.audio_progress = self.PROGRESS_MAX
         return self.video_progress, self.audio_progress
 
     def get_combined_fraction(self) -> float:

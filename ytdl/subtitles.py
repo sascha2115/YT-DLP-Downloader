@@ -211,11 +211,19 @@ class SubtitleMixin:
         if has_segments:
             self.signals.append_output.emit("Resyncing subtitles...")
 
-        with open(srt_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        try:
+            with open(srt_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except (OSError, UnicodeError) as e:
+            logger.warning("Could not read subtitle file %s: %s", srt_path, e)
+            self.signals.append_output.emit(
+                f"⚠️ Could not read subtitle file: {os.path.basename(srt_path)}"
+            )
+            return False
 
-        # Split into subtitle blocks
-        blocks = content.strip().split("\n\n")
+        # Accept common CRLF/CR subtitle files as well as Unix LF files.
+        normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
+        blocks = re.split(r"\n\s*\n", normalized_content.strip())
         subtitles = []
         max_time = 0
 
@@ -253,36 +261,61 @@ class SubtitleMixin:
                     {"original_start": start_sec, "original_end": end_sec, "text": text}
                 )
 
-        # Build consistent time mapping
-        logger.debug(f"Building time map for {max_time:.2f}s of content...")
-        time_map = self._build_time_map(removed_segments, max_time)
-
-        # Second pass: adjust all timestamps using the consistent time map
-        adjusted_subtitles = []
-        for sub in subtitles:
-            new_start = self._adjust_timestamp_with_map(
-                sub["original_start"], time_map, removed_segments
+        if not subtitles:
+            logger.warning("No valid subtitle cues found in %s", srt_path)
+            self.signals.append_output.emit(
+                "⚠️ No valid subtitle cues found; keeping the original file"
             )
-            new_end = self._adjust_timestamp_with_map(
-                sub["original_end"], time_map, removed_segments
-            )
+            return False
 
-            # Skip subtitles that fall entirely within removed segments or are too short/empty
-            if new_start < 0 or new_end <= new_start or new_end - new_start < 0.15:
-                continue
+        # Build consistent time mapping only when SponsorBlock segments exist.
+        # With no removed segments, timestamp adjustment is an identity operation.
+        if has_segments:
+            logger.debug(f"Building time map for {max_time:.2f}s of content...")
+            time_map = self._build_time_map(removed_segments, max_time)
+            adjusted_subtitles = []
+            for sub in subtitles:
+                new_start = self._adjust_timestamp_with_map(
+                    sub["original_start"], time_map, removed_segments
+                )
+                new_end = self._adjust_timestamp_with_map(
+                    sub["original_end"], time_map, removed_segments
+                )
+                adjusted_subtitles.append(
+                    {"start": new_start, "end": new_end, "text": sub["text"]}
+                )
+        else:
+            adjusted_subtitles = [
+                {
+                    "start": sub["original_start"],
+                    "end": sub["original_end"],
+                    "text": sub["text"],
+                }
+                for sub in subtitles
+            ]
 
-            adjusted_subtitles.append(
-                {"start": new_start, "end": new_end, "text": sub["text"]}
-            )
+        # Skip subtitles that fall entirely within removed segments or are too short/empty.
+        adjusted_subtitles = [
+            sub
+            for sub in adjusted_subtitles
+            if sub["start"] >= 0
+            and sub["end"] > sub["start"]
+            and sub["end"] - sub["start"] >= 0.15
+        ]
 
-        logger.debug(
-            f"Adjusted {len(adjusted_subtitles)} subtitles using consistent time mapping"
-        )
+        logger.debug(f"Adjusted {len(adjusted_subtitles)} subtitle cues")
 
         # Merge choppy cues, optimize around pauses/sentences, build 2-line display
         merged_subtitles = self._format_subtitles_for_display(adjusted_subtitles)
 
         # Write merged and resynced subtitles
+        if not merged_subtitles:
+            logger.warning("Subtitle processing produced no cues for %s", srt_path)
+            self.signals.append_output.emit(
+                "⚠️ Subtitle processing produced no cues; keeping the original file"
+            )
+            return False
+
         resynced_blocks = []
         for i, sub in enumerate(merged_subtitles, 1):
             time_line = (
@@ -291,8 +324,19 @@ class SubtitleMixin:
             block = f"{i}\n{time_line}\n{sub['text']}"
             resynced_blocks.append(block)
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("\n\n".join(resynced_blocks))
+        # Write beside the destination and replace atomically so a failed write
+        # never truncates the original subtitle file.
+        temp_path = f"{output_path}.tmp"
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write("\n\n".join(resynced_blocks))
+            os.replace(temp_path, output_path)
+        except OSError:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            raise
 
         final_msg = (
             "Subtitles resynced and merged." if has_segments else "Subtitles merged."
@@ -624,14 +668,30 @@ class SubtitleMixin:
         return self._smart_wrap(flat, max_chars)
 
     def _fix_subtitle_time_overlaps(self, subtitles):
-        for i in range(len(subtitles) - 1):
-            current_end = subtitles[i]["end"]
-            next_start = subtitles[i + 1]["start"]
-            if current_end > next_start:
-                subtitles[i]["end"] = max(
-                    next_start - 0.05, subtitles[i]["start"] + 0.1
-                )
-        return subtitles
+        """Clamp overlapping cues and drop chronologically invalid entries."""
+        if not subtitles:
+            return []
+
+        fixed = []
+        for sub in subtitles:
+            if not sub:
+                continue
+            start = sub.get("start")
+            end = sub.get("end")
+            if start is None or end is None or end <= start:
+                continue
+
+            current = dict(sub)
+            if fixed:
+                previous = fixed[-1]
+                if start < previous["end"]:
+                    if start <= previous["start"]:
+                        # A cue that starts before/equal to the previous cue
+                        # cannot be represented without overlapping it.
+                        continue
+                    previous["end"] = start
+            fixed.append(current)
+        return fixed
 
     def _format_subtitles_for_display(self, subtitles):
         """

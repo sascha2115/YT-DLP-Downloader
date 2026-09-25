@@ -22,6 +22,10 @@ from ytdl.utils import format_duration, format_filesize, sanitize_title
 logger = logging.getLogger(__name__)
 
 
+VIDEO_OUTPUT_EXTENSIONS = (".mp4", ".mkv", ".webm")
+AUDIO_OUTPUT_EXTENSIONS = (".mp3", ".m4a", ".wav", ".opus", ".webm")
+
+
 class DownloadMixin:
     def start_download(self):
         # Reset label when a new download is initiated
@@ -57,8 +61,9 @@ class DownloadMixin:
                 self.signals.append_output.emit(f"🚩 Error creating directory: {e}")
                 return
 
-        # Update video state — filename is just base_name (without channel prefix)
-        self.update_video_state(title=base_name, output_dir=video_dir)
+        # Update video state — store sanitized filename so get_full_path() and
+        # get_filename_template() agree with the directory name we just created.
+        self.update_video_state(title=sanitized_base_name, output_dir=video_dir)
         self.video_state["is_download_running"] = True
 
         # Detailed Existence Check
@@ -70,13 +75,13 @@ class DownloadMixin:
         media_exists = False
         media_file = ""
         if media_type in ["video", "video_only"]:
-            for ext in [".mp4", ".mkv", ".webm"]:
+            for ext in VIDEO_OUTPUT_EXTENSIONS:
                 if os.path.exists(base_path + ext):
                     media_exists = True
                     media_file = os.path.basename(base_path + ext)
                     break
         elif media_type == "audio":
-            for ext in [".mp3", ".m4a", ".wav", ".opus"]:
+            for ext in AUDIO_OUTPUT_EXTENSIONS:
                 if os.path.exists(base_path + ext):
                     media_exists = True
                     media_file = os.path.basename(base_path + ext)
@@ -85,12 +90,22 @@ class DownloadMixin:
         # 2. Check Subtitles
         missing_subs = []
         existing_subs = []
+        existing_subtitle_paths = {}
         for code in selected_langs:
-            # Check both manual (.en.srt) and auto-generated (.a.en.srt) paths
-            p1 = self.get_full_path(f".{code}.srt")
-            p2 = self.get_full_path(f".a.{code}.srt")
-            if os.path.exists(p1) or os.path.exists(p2):
+            # Manual/auto subtitles may be SRT or VTT when conversion was
+            # unavailable; keep the pre-check aligned with subtitle discovery.
+            candidates = [
+                self.get_full_path(f".{code}.srt"),
+                self.get_full_path(f".a.{code}.srt"),
+                self.get_full_path(f".{code}.vtt"),
+                self.get_full_path(f".a.{code}.vtt"),
+            ]
+            existing_path = next(
+                (path for path in candidates if os.path.isfile(path)), None
+            )
+            if existing_path:
                 existing_subs.append(code)
+                existing_subtitle_paths[code] = existing_path
             else:
                 missing_subs.append(code)
 
@@ -99,12 +114,8 @@ class DownloadMixin:
             self.signals.append_output.emit(f"✓ Media exists: {media_file}")
 
         for code in existing_subs:
-            p1 = self.get_full_path(f".{code}.srt")
-            p2 = self.get_full_path(f".a.{code}.srt")
-            if os.path.exists(p1):
-                self.signals.append_output.emit(f"✓ Subtitle exists: {os.path.basename(p1)}")
-            elif os.path.exists(p2):
-                self.signals.append_output.emit(f"✓ Subtitle exists: {os.path.basename(p2)}")
+            path = existing_subtitle_paths[code]
+            self.signals.append_output.emit(f"✓ Subtitle exists: {os.path.basename(path)}")
 
         # 4. Decide if we skip
         should_skip = False
@@ -314,6 +325,8 @@ class DownloadMixin:
     def run_download(self, cmd, selected_langs):
         success = False
         had_download_progress = False
+        progress_manager = None
+        completed_progress = None
         removed_sb_segments = []
         try:
             if self.simulate_download_error:
@@ -352,9 +365,9 @@ class DownloadMixin:
             process.wait()
             exit_code = process.returncode
             had_download_progress = progress_manager.is_started()
-            if had_download_progress:
-                video_done, audio_done = progress_manager.mark_complete()
-                self.signals.update_download_progress.emit(video_done, audio_done)
+            if had_download_progress and exit_code == 0:
+                completed_progress = progress_manager.mark_complete()
+                self.signals.update_download_progress.emit(*completed_progress)
 
             if exit_code == 0:
                 # Post-processing phase: keep the busy spinner visible while we
@@ -362,6 +375,47 @@ class DownloadMixin:
                 self.signals.set_indeterminate.emit(True)
 
                 media_type = self.video_state.get("media_type")
+
+                # Resolve final filename before all post-processing.
+                # Fallback discovery runs here so EDL/NFO/metadata all see the
+                # correct path — not after cleanup has already run.
+                if media_type != "subtitles":
+                    captured_filename = state["merged_filename"]
+                    if captured_filename and not os.path.isfile(captured_filename):
+                        logger.debug(
+                            "Captured output file is missing: %s", captured_filename
+                        )
+                        state["merged_filename"] = None
+
+                    if not state["merged_filename"]:
+                        if media_type in ("video", "video_only"):
+                            extensions = VIDEO_OUTPUT_EXTENSIONS
+                        elif media_type == "audio":
+                            extensions = AUDIO_OUTPUT_EXTENSIONS
+                        else:
+                            extensions = ()
+
+                        base_path = self.get_full_path()
+                        if base_path:
+                            for ext in extensions:
+                                candidate = base_path + ext
+                                if os.path.isfile(candidate):
+                                    state["merged_filename"] = candidate
+                                    logger.debug("Fallback found file: %s", candidate)
+                                    break
+
+                    # For non-subtitle downloads, a missing output file means
+                    # the download effectively failed even though yt-dlp exited 0.
+                    if (
+                        not state["merged_filename"]
+                        or not os.path.isfile(state["merged_filename"])
+                    ):
+                        self.signals.append_output.emit(
+                            "🚩 yt-dlp exited successfully but no output file was found"
+                        )
+                        exit_code = -1
+
+            if exit_code == 0:
                 if media_type == "subtitles":
                     self.signals.append_output.emit("Subtitle download complete.")
                 else:
@@ -413,15 +467,6 @@ class DownloadMixin:
 
                 # Cleanup (deletes .info.json and original subtitles)
                 self.cleanup_files(selected_langs)
-                # Fallback: if filename wasn't captured by regex, try to find it
-                if not state["merged_filename"]:
-                    base_path = self.get_full_path()
-                    # Check for common extensions
-                    for ext in [".mp4", ".mkv", ".webm", ".m4a", ".mp3", ".opus"]:
-                        if os.path.exists(base_path + ext):
-                            state["merged_filename"] = base_path + ext
-                            logger.debug(f"Fallback found file: {state['merged_filename']}")
-                            break
 
                 # Post Download Analysis (uses cached metadata)
                 # Skip if we only downloaded subtitles (as no new media was created)
@@ -457,16 +502,21 @@ class DownloadMixin:
 
             # Clean up state and UI in a single batch to avoid cascading updates
             self.video_state["is_download_running"] = False
-            # Subtitle transfers never touch the bars, so for subtitles-only
-            # runs the bars are filled once here at the end (on success).
-            fill_progress_bars = had_download_progress or (
-                success and self.video_state.get("media_type") == "subtitles"
-            )
-            if fill_progress_bars:
-                self.signals.update_download_progress.emit(
-                    DownloadProgressManager.PROGRESS_MAX,
-                    DownloadProgressManager.PROGRESS_MAX,
-                )
+            if success:
+                if self.video_state.get("media_type") == "subtitles":
+                    self.signals.update_download_progress.emit(
+                        DownloadProgressManager.PROGRESS_MAX,
+                        DownloadProgressManager.PROGRESS_MAX,
+                    )
+                elif completed_progress is not None:
+                    self.signals.update_download_progress.emit(*completed_progress)
+            elif (
+                progress_manager is not None
+                and progress_manager.is_started()
+            ):
+                # A failed operation must not leave a 100% transfer bar on
+                # screen, even if yt-dlp emitted 100% before failing later.
+                self.signals.update_download_progress.emit(0, 0)
             self.signals.set_indeterminate.emit(False)
             self.signals.set_download_button_label.emit(
                 "Download Successful ✅" if success else "Download Error 🚨"
@@ -476,7 +526,7 @@ class DownloadMixin:
             )
             self.signals.enable_button.emit()
             self.signals.update_dock_tile.emit("✓" if success else "!")
-            self.clearDockProgress()
+            self.signals.clear_dock_progress.emit()
 
     def cleanup_files(self, selected_langs):
         # Clean up JSON
@@ -761,13 +811,19 @@ class DownloadMixin:
                 file_path,
             ]
             logger.debug(f"Running ffprobe on: {file_path}")
-            # Execute ffprobe
-            with subprocess.Popen(
+            # Execute ffprobe — kill explicitly on timeout so the process
+            # does not block the worker thread during Popen context-manager cleanup.
+            proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-            ) as proc:
+            )
+            try:
                 stdout, _ = proc.communicate(timeout=20)
-                if proc.returncode != 0:
-                    raise subprocess.CalledProcessError(proc.returncode, cmd)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()  # drain pipes after kill
+                raise
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, cmd)
 
             data = json.loads(stdout)
 
@@ -847,14 +903,19 @@ class DownloadMixin:
             if self.ffmpeg_bin:
                 try:
                     ffmpeg_cmd = [self.ffmpeg_bin, "-i", file_path]
-                    with subprocess.Popen(
+                    f_proc = subprocess.Popen(
                         ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-                    ) as f_proc:
+                    )
+                    try:
                         _, f_stderr = f_proc.communicate(timeout=10)
-                        for f_line in f_stderr.splitlines():
-                            if "bitrate:" in f_line:
-                                metadata["ffmpeg_bitrate_line"] = f_line.strip()
-                                break
+                    except subprocess.TimeoutExpired:
+                        f_proc.kill()
+                        f_proc.communicate()  # drain pipes after kill
+                        f_stderr = ""
+                    for f_line in f_stderr.splitlines():
+                        if "bitrate:" in f_line:
+                            metadata["ffmpeg_bitrate_line"] = f_line.strip()
+                            break
                 except Exception:
                     pass
             # release file handles

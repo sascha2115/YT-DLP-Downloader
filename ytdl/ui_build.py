@@ -116,7 +116,7 @@ class UiBuildMixin:
         self.url_entry = QLineEdit()
         self.url_entry.setPlaceholderText("Paste video URL here...")
         self.url_entry.textChanged.connect(self.on_url_text_change)
-        self.url_entry.returnPressed.connect(self.fetch_video_info)
+        self.url_entry.returnPressed.connect(self.on_reload_button_click)
         url_layout.addWidget(self.url_entry)
         # Reload Button (right side): re-fetches video info for the current URL
         self.reload_button = QPushButton()

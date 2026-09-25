@@ -1,7 +1,7 @@
 """Site profiles, URL detection and normalization (site-aware)."""
 
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from ytdl.config import INFO_FETCH_TIMEOUT_SECONDS
 
@@ -188,6 +188,19 @@ def _path(url):
         return "/"
 
 
+def _query_params(url):
+    """Return parsed query parameters for scheme-optional URL input."""
+    if not url:
+        return {}
+    candidate = str(url).strip()
+    if "://" not in candidate:
+        candidate = "https://" + candidate
+    try:
+        return parse_qs(urlparse(candidate).query)
+    except ValueError:
+        return {}
+
+
 def is_known_site(url):
     """
     Whether the URL's hostname belongs to a SUPPORTED_SITES profile.
@@ -211,6 +224,11 @@ def is_channel_url(url):
     site_key = _match_site_key(_hostname(url))
     if not site_key:
         return False
+    # YouTube: a watch URL with ?list= but no ?v= is a playlist, not a video
+    if site_key == "youtube":
+        qs = _query_params(url)
+        if "list" in qs and "v" not in qs:
+            return True
     pattern = SUPPORTED_SITES[site_key].get("channel_url_regex")
     if pattern is None:
         return False
@@ -317,7 +335,7 @@ def normalize_url(url):
         #    "www.youtube.com/..." or "rumble.com/vXXXXXX-title.html"
         #    or "zdf.de/video/..." (domains taken from SUPPORTED_SITES)
         m = re.search(
-            rf"((?:www\.)?(?:{KNOWN_SITE_DOMAINS})/[^\s]+)",
+            rf"(?<![A-Za-z0-9./-])((?:[A-Za-z0-9-]+\.)*(?:{KNOWN_SITE_DOMAINS})/[^\s]+)",
             url,
             flags=re.IGNORECASE,
         )
@@ -327,26 +345,27 @@ def normalize_url(url):
     # Strip common wrappers / trailing punctuation from copied text
     url = url.strip("`\"'<>[](){}.,;")
 
-    # Non-YouTube sites keep their URL as-is (after wrapper stripping): the
-    # canonicalization below (naked YouTube IDs, "&list=" truncation) is
-    # YouTube-specific and would mangle URLs that legitimately contain
-    # ":", "#" or "$" (e.g. Odysee claim ids, Rumble's "?pri=" param).
-    if detect_site(url) != "youtube":
-        return url
-
-    # If it's a naked 11-char YouTube ID, make it a full URL
-    if re.match(r"^[a-zA-Z0-9_-]{11}$", url):
+    # A naked 11-character ID is the one intentional exception: it has no
+    # hostname, but is explicitly accepted as a YouTube ID.
+    if re.fullmatch(r"[a-zA-Z0-9_-]{11}", url):
         return f"https://www.youtube.com/watch?v={url}"
+
+    # detect_site() intentionally falls back to YouTube for unknown hosts.
+    # Do not use that fallback for canonicalization: only a URL whose actual
+    # hostname belongs to the YouTube profile may be rewritten.
+    if _match_site_key(_hostname(url)) != "youtube":
+        return url
 
     # If the input still isn't a clean URL, but contains a recognizable YouTube ID,
     # canonicalize it to a watch URL (handles cases like trailing backticks, etc.).
     if m := re.search(
-        r"(?:v=|embed/|shorts/|live/|youtu\.be/)([a-zA-Z0-9_-]{11})",
+        r"(?:v=|embed/|shorts/|live/|youtu\.be/)([a-zA-Z0-9_-]{11})(?:[&?#/ ]|$)",
         url,
         flags=re.IGNORECASE,
     ):
         return f"https://www.youtube.com/watch?v={m.group(1)}"
 
-    # Remove query parameters after first & (keeps ?v=... but removes &list=... etc)
-    url = re.sub(r"&.*$", "", url)
+    # Keep the query intact when no valid video ID was recognized. In
+    # particular, a playlist URL such as watch?foo=bar&list=... must reach
+    # is_channel_url() before any cleanup can discard the list parameter.
     return url

@@ -138,6 +138,11 @@ class InfoFetchMixin:
             stop_event.set()
 
     def fetch_video_info(self):
+        # Guard: ignore if a fetch is already in progress (prevents concurrent
+        # workers from the timer and a manual Reload/Enter firing together)
+        if self.video_state.get("is_fetching_info"):
+            return
+
         url = self.get_clean_url()
         if not url:
             self.title_entry.setText("Please enter a valid video URL")
@@ -200,6 +205,7 @@ class InfoFetchMixin:
                 [
                     "--print-json",
                     "--no-warnings",
+                    "--no-playlist",
                     "--skip-download",
                     url,
                 ]

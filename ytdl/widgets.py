@@ -55,6 +55,7 @@ class SignalEmitter(QObject):
     update_subtitle_checkboxes = pyqtSignal(str)
     update_dock_tile = pyqtSignal(str)
     update_dock_progress = pyqtSignal(float)
+    clear_dock_progress = pyqtSignal()
     update_sb_bar = pyqtSignal(list, float)
     set_download_button_label = pyqtSignal(str)
     set_download_button_status = pyqtSignal(str)

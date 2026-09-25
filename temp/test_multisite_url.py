@@ -78,6 +78,19 @@ class TestNormalizeUrlRumble(unittest.TestCase):
         )
         self.assertEqual(app.normalize_url("rumble.com/v6abcde"), "https://rumble.com/v6abcde")
 
+    def test_lookalike_domains_are_not_canonicalized(self):
+        # A supported domain name embedded in a longer hostname must not be
+        # rewritten, including when the path contains a YouTube-looking ID.
+        for url in (
+            "evilrumble.com/v6abcde-title.html",
+            "notyoutube.com/watch?v=abcdefghijk",
+            "https://evilrumble.com/v6abcde-title.html",
+            "https://www.youtube.com.evil.example/watch?v=abcdefghijk",
+            "https://evil.example/?youtube.com/watch?v=abcdefghijk",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(app.normalize_url(url), url)
+
     def test_trailing_punctuation_stripped(self):
         self.assertEqual(
             app.normalize_url("https://rumble.com/v6abcde-title.html."),
@@ -108,6 +121,20 @@ class TestNormalizeUrlYoutubeRegressions(unittest.TestCase):
 
     def test_empty(self):
         self.assertEqual(app.normalize_url(""), "")
+
+    def test_youtube_id_overlong_not_canonicalized(self):
+        # An ID longer than 11 chars must NOT be silently truncated;
+        # the URL should pass through unchanged (the info-fetch gate rejects it later)
+        url = "https://www.youtube.com/watch?v=abcdefghijkEXTRA"
+        result = app.normalize_url(url)
+        self.assertNotEqual(result, "https://www.youtube.com/watch?v=abcdefghijk")
+        self.assertIn("abcdefghijkEXTRA", result)
+
+    def test_youtube_id_exactly_11_canonicalized(self):
+        self.assertEqual(
+            app.normalize_url("https://www.youtube.com/watch?v=abc12345678"),
+            "https://www.youtube.com/watch?v=abc12345678",
+        )
 
 
 class TestNormalizeUrlOdysee(unittest.TestCase):
@@ -230,10 +257,25 @@ class TestChannelUrlGate(unittest.TestCase):
             "https://www.youtube.com/user/SomeUser",
             "https://www.youtube.com/channel/UCabc123",
             "https://www.youtube.com/playlist?list=PL123",
+            "https://www.youtube.com/watch?list=PL123",
+            "https://www.youtube.com/watch?foo=bar&list=PL123",
+            "https://www.youtube.com/watch?list=PL123&foo=bar",
+            "www.youtube.com/watch?list=PL123",
             "https://www.youtube.com/feed/subscriptions",
             "https://www.youtube.com/",
         ):
             self.assertTrue(app.is_channel_url(url), url)
+
+    def test_youtube_watch_playlist_survives_normalization(self):
+        for url in (
+            "https://www.youtube.com/watch?list=PL123",
+            "https://www.youtube.com/watch?foo=bar&list=PL123",
+            "https://www.youtube.com/watch?list=PL123&foo=bar",
+            "www.youtube.com/watch?list=PL123",
+        ):
+            with self.subTest(url=url):
+                normalized = app.normalize_url(url)
+                self.assertTrue(app.is_channel_url(normalized), normalized)
 
     def test_youtube_video_urls_pass(self):
         for url in (
@@ -626,6 +668,7 @@ class TestReloadButton(unittest.TestCase):
         calls = []
 
         class Harness:
+            fetch_title_timer = SimpleNamespace(stop=lambda: None)
             fetch_video_info = lambda self: calls.append("fetch")  # noqa: E731
 
         harness = Harness()
@@ -638,12 +681,11 @@ class TestReloadButton(unittest.TestCase):
     def test_click_with_empty_url_delegates_to_fetch_gate(self):
         # With an empty URL the click must NOT spawn a worker; the gate in
         # fetch_video_info handles it (title message, early return).
+        # on_reload_button_click must stop the timer and delegate to fetch_video_info
         import inspect
-        # on_reload_button_click must do nothing except call fetch_video_info
         src = inspect.getsource(app.YTDLPDownloaderGUI.on_reload_button_click)
-        body = [line for line in src.splitlines() if line.strip() and "def " not in line]
-        self.assertEqual(len(body), 1, "handler should only delegate")
-        self.assertIn("self.fetch_video_info()", body[0])
+        self.assertIn("fetch_title_timer.stop()", src)
+        self.assertIn("self.fetch_video_info()", src)
 
 
 class TestFetchVideoInfoPrecheck(unittest.TestCase):
@@ -653,6 +695,7 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
         def __init__(self):
             self.title_texts = []
             self.title_entry = SimpleNamespace(setText=self.title_texts.append)
+            self.video_state = {"is_fetching_info": False}
 
         fetch_video_info = app.YTDLPDownloaderGUI.fetch_video_info
         is_supported_url = app.YTDLPDownloaderGUI.is_supported_url

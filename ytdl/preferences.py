@@ -39,6 +39,12 @@ def load_preferences():
             return default_preferences
         with open(PREFERENCES_FILE, "r", encoding="utf-8") as f:
             parsed = json.load(f)
+        if not isinstance(parsed, dict):
+            logger.warning(
+                "Preferences file contains %s instead of an object — using defaults",
+                type(parsed).__name__,
+            )
+            return default_preferences
         return parsed
     except Exception as e:
         logger.error(f"Error loading preferences: {e}")
@@ -49,10 +55,19 @@ def apply_preferences(parsed):
     """Replace the in-memory preferences state (called by the preferences
     dialog after a successful save)."""
     global preferences, CHANNEL_NAME_MAP
+    if not isinstance(parsed, dict):
+        logger.warning("apply_preferences received non-dict (%s) — ignoring", type(parsed).__name__)
+        return
     preferences = parsed
     CHANNEL_NAME_MAP = parsed.get("channel_name_map", {})
+    if not isinstance(CHANNEL_NAME_MAP, dict):
+        logger.warning("channel_name_map is not an object — resetting to empty map")
+        CHANNEL_NAME_MAP = {}
 
 
 # Loaded once at import time
 preferences = load_preferences()
 CHANNEL_NAME_MAP = preferences.get("channel_name_map", {})
+if not isinstance(CHANNEL_NAME_MAP, dict):
+    logger.warning("channel_name_map is not an object — resetting to empty map")
+    CHANNEL_NAME_MAP = {}

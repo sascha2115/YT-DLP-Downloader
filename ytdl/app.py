@@ -185,6 +185,7 @@ class YTDLPDownloaderGUI(
         )
         self.signals.update_dock_tile.connect(self.setDockTileCheck)
         self.signals.update_dock_progress.connect(self.setDockProgressOverlay)
+        self.signals.clear_dock_progress.connect(self.clearDockProgress)
         # Deferred lookup on purpose: self.sb_bar is created by init_ui(), which
         # runs after these connections — hence a slot method, not self.sb_bar.x.
         self.signals.update_sb_bar.connect(self._set_sb_bar_segments)
@@ -336,6 +337,9 @@ class YTDLPDownloaderGUI(
     # just like when a new URL is entered)
     # ----------------------------------------------------------------------------------------------------
     def on_reload_button_click(self):
+        # Stop the debounce timer so a pending URL-change fetch doesn't fire
+        # after this one and spawn a second concurrent worker.
+        self.fetch_title_timer.stop()
         self.fetch_video_info()
 
     # ----------------------------------------------------------------------------------------------------
@@ -373,6 +377,13 @@ class YTDLPDownloaderGUI(
             self.video_state["url"] = ""
             self.video_state["site"] = detect_site(new_clean) if new_clean else "youtube"
             self.video_state["episode_code"] = ""  # Clear special-case episode override
+            # Clear stale metadata immediately so the old title/channel cannot
+            # be used as a filename if the user clicks Download during the
+            # 500 ms debounce window before the new info fetch begins.
+            self.video_state["channel"] = ""
+            self.video_state["thumbnail_url"] = ""
+            self.title_entry.clear()
+            self.download_button.setEnabled(False)
             # Disable thumbnail button since info is now stale
             self.thumbnail_button.setEnabled(False)
             # Clear SponsorBlock bar
