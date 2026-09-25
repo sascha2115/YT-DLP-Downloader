@@ -14,21 +14,11 @@
 # python3 main.py --simulate-download-error
 # ==================================================================================================================================
 #
-import gc
-import html
-import json
 import logging
 import os
-import re
-import shutil
-import subprocess
+import shutil      # re-exported public surface (main.shutil used by tests)
+import subprocess  # re-exported public surface (main.subprocess used by tests)
 import sys
-import threading
-import time
-from datetime import datetime
-
-
-import requests
 
 # macOS-only framework bindings (dock tile badge + progress overlay).
 # Optional dependency: on Linux (and other platforms) AppKit does not exist,
@@ -47,36 +37,9 @@ if IS_MACOS:
 else:
     NSApplication = NSImage = NSImageView = NSColor = NSBezierPath = None
     NSMakeRect = None
-from PyQt6.QtCore import QCoreApplication, Qt, QTimer
-from PyQt6.QtGui import (
-    QAction,
-    QKeyEvent,
-    QKeySequence,
-    QIcon,
-    QPixmap,
-    QShortcut,
-)
-from PyQt6.QtWidgets import (
-    QApplication,
-    QButtonGroup,
-    QCheckBox,
-    QDialog,
-    QFileDialog,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QProgressBar,
-    QPushButton,
-    QRadioButton,
-    QSizePolicy,
-    QStyle,
-    QTextBrowser,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import QApplication, QMainWindow
 
 # ----------------------------------------------------------------------------------------------------
 # Support modules (extracted from this file; see ytdl/sites.py, description.py,
@@ -86,7 +49,6 @@ from PyQt6.QtWidgets import (
 # preferences_dialog) decompose the GUI class; assembled below.
 # ----------------------------------------------------------------------------------------------------
 from ytdl import APP_VERSION  # noqa: F401
-from ytdl import preferences as prefs  # noqa: F401  (read live values via prefs.X)
 from ytdl.config import (  # noqa: F401
     DEFAULT_OUTPUT_DIR,
     INFO_FETCH_TIMEOUT_SECONDS,
@@ -111,36 +73,13 @@ from ytdl.sites import (  # noqa: F401
     site_slow_hint,
     site_wants_js_runtime,
 )
-from ytdl.description import clean_youtube_description  # noqa: F401
-from ytdl.progress import (  # noqa: F401
-    RE_ALREADY,
-    RE_AUDIO,
-    RE_CONVERT,
-    RE_DEST,
-    RE_MERGE,
-    RE_SLEEP,
-    SUBTITLE_EXTENSIONS,
-    DownloadProgressManager,
-)
+from ytdl.progress import DownloadProgressManager  # noqa: F401
 from ytdl.utils import (  # noqa: F401
     find_binary,
-    format_duration,
-    format_filesize,
-    format_srt_time,
     get_log_dir,
-    parse_srt_time,
     resource_path,
-    sanitize_title,
 )
-from ytdl.widgets import (  # noqa: F401
-    BusySpinner,
-    CustomTextEdit,
-    SB_API_MAP,
-    SB_CATEGORY_COLORS,
-    SB_DISPLAY_NAMES,
-    SignalEmitter,
-    SponsorBlockBar,
-)
+from ytdl.widgets import SignalEmitter  # noqa: F401
 from ytdl.download import DownloadMixin  # noqa: F401
 from ytdl.info_fetch import InfoFetchMixin  # noqa: F401
 from ytdl.preferences_dialog import PreferencesDialogMixin  # noqa: F401
@@ -533,8 +472,12 @@ class YTDLPDownloaderGUI(
         # Ensure download button state is correct based on result
         if result.get("error"):
             self.download_button.setEnabled(False)
+            self.thumbnail_button.setEnabled(False)
         else:
-            self.thumbnail_button.setEnabled(True)
+            # Only enable Info button when there is actually a thumbnail to show
+            self.thumbnail_button.setEnabled(
+                bool(self.video_state.get("thumbnail_url"))
+            )
 
     # ----------------------------------------------------------------------------------------------------
     # Get selected SponsorBlock categories from checkboxes
@@ -724,29 +667,6 @@ class YTDLPDownloaderGUI(
     # ----------------------------------------------------------------------------------------------------
     # Resync subtitle file based on removed segments and merge into 2-line format
     # ----------------------------------------------------------------------------------------------------
-
-    # ----------------------------------------------------------------------------------------------------
-    # Get the video duration (from ffprobe)
-    # ----------------------------------------------------------------------------------------------------
-    def get_video_duration(self, video_path=None):
-        # Use cached metadata if available
-        if self.cached_video_metadata and self.cached_video_metadata.get(
-            "duration_seconds"
-        ):
-            return self.cached_video_metadata["duration_seconds"]
-
-        # Only fetch if explicitly requested with a path AND cache is empty
-        # This shouldn't happen in normal flow since we cache after download
-        if video_path:
-            print(
-                f"Warning: Fetching metadata for {video_path} - cache was not available"
-            )
-            metadata = self.get_file_metadata(video_path)
-            return metadata.get("duration_seconds")
-
-        # If no cache and no path provided, return None
-        print("Warning: get_video_duration() called without cache or video path")
-        return None
 
     # ----------------------------------------------------------------------------------------------------
     # Verify removed segments match actual video duration and adjust if needed

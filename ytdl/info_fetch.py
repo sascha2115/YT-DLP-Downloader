@@ -4,6 +4,7 @@ Mixin for YTDLPDownloaderGUI (assembled in ytdl/app.py);
 methods access shared state via self."""
 
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -28,6 +29,8 @@ from ytdl.sites import (
 )
 from ytdl.utils import canonical_subtitle_lang, sanitize_title
 from ytdl.widgets import SB_DISPLAY_NAMES
+
+logger = logging.getLogger(__name__)
 
 
 class InfoFetchMixin:
@@ -304,9 +307,9 @@ class InfoFetchMixin:
                             
                             # Original auto-captions don't have "tlang=" in their URL.
                             # We check the URL of the first format.
-                            url = formats[0].get("url", "")
+                            fmt_url = formats[0].get("url", "")
                             # Also check for lang matches if possible
-                            if "tlang=" not in url:
+                            if "tlang=" not in fmt_url:
                                 # Standardize the key - sometimes YouTube provides 'en-orig' or 'en'
                                 base = canonical_subtitle_lang(lang_code)
                                 original_autos[base] = formats
@@ -365,7 +368,7 @@ class InfoFetchMixin:
                         self.signals.update_subtitle_checkboxes.emit(language or "")
 
                     except (json.JSONDecodeError, Exception) as e:
-                        print(f"Error parsing subtitle info: {e}")
+                        logger.warning(f"Error parsing subtitle info: {e}")
 
                     if language:
                         # Normalize language (e.g., 'en-US' -> 'en')
@@ -378,8 +381,9 @@ class InfoFetchMixin:
                     if title:
                         # Special Case: PowerfulJRE (Joe Rogan)
                         if youtube_channel == "PowerfulJRE":
-                            # Look for episode number: e.g. "#2464" or " 2464"
-                            ep_match = re.search(r"(?:#| )(\d+)(?: -| |$)", title)
+                            # Require explicit "#" prefix to avoid matching bare numbers
+                            # in titles like "Fight Companion - June 2024" (year → S01E2024).
+                            ep_match = re.search(r"#(\d+)(?: -| |$)", title)
                             if ep_match:
                                 try:
                                     ep_num = int(ep_match.group(1))
@@ -714,169 +718,4 @@ class InfoFetchMixin:
             )
             self._emit_description_summary()
 
-    def _load_sponsor_segments(self, info_json_path):
-        try:
-            with open(info_json_path, "r", encoding="utf-8") as f:
-                info = json.load(f)
 
-            # Get SponsorBlock chapters/segments
-            segments = []
-            removed_categories = self.get_selected_sb_categories()
-
-            if "sponsorblock_chapters" in info:
-                print(
-                    f"Found {len(info['sponsorblock_chapters'])} SponsorBlock chapters"
-                )
-
-                for i, chapter in enumerate(info["sponsorblock_chapters"], 1):
-                    start = chapter.get("start_time", 0)
-                    end = chapter.get("end_time", 0)
-                    duration = end - start
-                    categories = chapter.get("_categories", [])
-
-                    # Handle case where categories might be nested lists or contain non-strings
-                    # Categories format: [["sponsor", start, end, "Description"]]
-                    flat_categories = []
-                    category_names = []  # Just the category names for matching
-
-                    if categories:
-                        for cat in categories:
-                            if isinstance(cat, list) and len(cat) > 0:
-                                # First element is the category name
-                                category_name = str(cat[0])
-                                category_names.append(category_name)
-                                flat_categories.extend(str(c) for c in cat)
-                            else:
-                                cat_str = str(cat)
-                                category_names.append(cat_str)
-                                flat_categories.append(cat_str)
-                        category_str = ", ".join(flat_categories)
-                    else:
-                        category_str = "unknown"
-
-                    print(
-                        f"\nChapter {i}:, Category: {category_str}, Time: {start:.2f}s - {end:.2f}s, Duration: {duration:.2f}s"
-                    )
-
-                    # Check if this segment should have been removed
-                    should_remove = any(
-                        cat in removed_categories for cat in category_names
-                    )
-                    if should_remove:
-                        print(f"Chapter removed.")
-                        segments.append(
-                            {
-                                "start": start,
-                                "end": end,
-                                "category": category_names[0]
-                                if category_names
-                                else "unknown",
-                            }
-                        )
-                    else:
-                        print(f"Chapter not removed (category not in filter).")
-            else:
-                print("No sponsorblock_chapters found in info JSON.")
-
-                # Try alternative fields
-                if "chapters" in info:
-                    print(
-                        f"\nFound {len(info['chapters'])} regular chapters (not SponsorBlock)"
-                    )
-                    for i, chapter in enumerate(
-                        info["chapters"][:3], 1
-                    ):  # Show first 3
-                        print(
-                            f"  {i}. {chapter.get('title', 'Untitled')}: {chapter.get('start_time', 0):.2f}s"
-                        )
-
-            # Check video duration
-            if "duration" in info:
-                original_duration = info["duration"]
-                total_removed = sum(seg["end"] - seg["start"] for seg in segments)
-                final_duration = original_duration - total_removed
-
-                print(f"Duration Analysis")
-                print(
-                    f"Original video duration: {original_duration:.2f}s ({original_duration / 60:.2f} min)"
-                )
-                print(
-                    f"Total time removed: {total_removed:.2f}s ({total_removed / 60:.2f} min)"
-                )
-                print(
-                    f"Final video duration: {final_duration:.2f}s ({final_duration / 60:.2f} min)"
-                )
-
-            print(f"Summary")
-            self.signals.append_output.emit(
-                f"Read json file: Total segments to be removed: {len(segments)}"
-            )
-
-            # Sort segments by start time
-            segments.sort(key=lambda x: x["start"])
-            return segments
-
-        except FileNotFoundError:
-            self.signals.append_output.emit(f"🚩 Cannot find the json file.")
-            return []
-        except json.JSONDecodeError:
-            print(f"Error parsing JSON file: {info_json_path}")
-            return []
-
-    def _verify_and_adjust_segments(
-        self, removed_segments, original_duration, actual_duration, video_path
-    ):
-        # Use cached duration from ffprobe
-        if actual_duration is None:
-            actual_duration = self.get_video_duration()
-
-        if actual_duration is None:
-            print("Warning: Could not verify video duration, using segments as-is")
-            return removed_segments
-
-        total_removed = sum(seg["end"] - seg["start"] for seg in removed_segments)
-        expected_duration = original_duration - total_removed
-        duration_diff = abs(expected_duration - actual_duration)
-
-        print(f"Duration Verification")
-        print(f"Original duration: {original_duration:.2f}s")
-        print(f"Total removed (from JSON): {total_removed:.2f}s")
-        print(f"Expected final duration: {expected_duration:.2f}s")
-        print(f"Actual video duration: {actual_duration:.2f}s")
-        print(f"Difference: {duration_diff:.2f}s")
-
-        if duration_diff > 1.0:
-            print(f"Warning: Duration mismatch of {duration_diff:.2f}s detected.")
-            print("The actual cuts may not match the info JSON perfectly.")
-            print("This could cause subtitle sync issues.")
-
-            # Try to detect if segments are offset
-            # Calculate what the offset might be
-            discrepancy = actual_duration - expected_duration
-            print(f"\nDiscrepancy: {discrepancy:+.2f}s")
-
-            if abs(discrepancy) > 0.5:
-                print("Consider checking the SponsorBlock data accuracy.")
-        else:
-            print("Duration verification passed - segments appear accurate")
-
-        # Apply drift correction factor
-        # If there's a small discrepancy, apply a scaling factor to prevent accumulating errors
-        if duration_diff > 0.1 and duration_diff <= 1.0:
-            drift_factor = actual_duration / expected_duration
-            print(f"Applying drift correction factor: {drift_factor:.6f}")
-
-            # Adjust segment durations proportionally
-            adjusted_segments = []
-            for seg in removed_segments:
-                adjusted_segments.append(
-                    {
-                        "start": seg["start"],
-                        "end": seg["end"],
-                        "category": seg.get("category", "unknown"),
-                        "drift_factor": drift_factor,
-                    }
-                )
-            return adjusted_segments
-
-        return removed_segments

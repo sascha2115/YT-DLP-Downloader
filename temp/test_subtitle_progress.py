@@ -448,7 +448,6 @@ class UiHarness:
         self.browse_button = FakeCheckbox()
         self.download_button = FakeCheckbox()
         self.thumbnail_button = FakeCheckbox()
-        self.subtitles_checkbox = FakeCheckbox()
         self.sb_all_checkbox = FakeCheckbox("All")
         self.sb_checkbox_map = {FakeCheckbox("Sponsor"): "sponsor"}
         self.option_group_map = [{"buttons": [{"button": FakeCheckbox()}], "enabled": True}]

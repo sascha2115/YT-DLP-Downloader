@@ -3,10 +3,13 @@
 Mixin for YTDLPDownloaderGUI (assembled in ytdl/app.py);
 methods access shared state via self."""
 
+import logging
 import os
 import re
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
 from ytdl.utils import SUBTITLE_LANG_ALIASES, canonical_subtitle_lang, format_srt_time, parse_srt_time
+
+logger = logging.getLogger(__name__)
 
 
 class SubtitleMixin:
@@ -170,7 +173,7 @@ class SubtitleMixin:
                 except OSError as e:
                     # Non-fatal: resync then writes the canonical file and the
                     # site-named original stays (old, pre-fix behavior).
-                    print(f"Could not rename subtitle file {srt_path}: {e}")
+                    logger.warning(f"Could not rename subtitle file {srt_path}: {e}")
             normalized.append((lang, srt_path, sub_type))
         return normalized
 
@@ -202,7 +205,7 @@ class SubtitleMixin:
 
     def resync_subtitles(self, srt_path, removed_segments, output_path):
         if not os.path.exists(srt_path):
-            print(f"Subtitle file not found: {srt_path}")
+            logger.warning(f"Subtitle file not found: {srt_path}")
             return False
 
         has_segments = bool(removed_segments)
@@ -252,7 +255,7 @@ class SubtitleMixin:
                 )
 
         # Build consistent time mapping
-        print(f"Building time map for {max_time:.2f}s of content...")
+        logger.debug(f"Building time map for {max_time:.2f}s of content...")
         time_map = self._build_time_map(removed_segments, max_time)
 
         # Second pass: adjust all timestamps using the consistent time map
@@ -273,7 +276,7 @@ class SubtitleMixin:
                 {"start": new_start, "end": new_end, "text": sub["text"]}
             )
 
-        print(
+        logger.debug(
             f"Adjusted {len(adjusted_subtitles)} subtitles using consistent time mapping"
         )
 

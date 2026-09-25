@@ -131,7 +131,6 @@ class DownloadMixin:
             self.video_state["is_download_running"] = False
             return
 
-        selected_langs = self.get_selected_subtitle_codes()
         cmd = self.build_command(selected_langs)
         if not cmd:
             self.signals.append_output.emit("👉 Please enter a valid video URL")
@@ -160,7 +159,6 @@ class DownloadMixin:
             f"\n🖥️ {' '.join(str(item) for item in cmd if item)}"
         )
 
-        selected_langs = self.get_selected_subtitle_codes()
         thread = threading.Thread(target=self.run_download, args=(cmd, selected_langs))
         thread.daemon = True
         thread.start()
@@ -261,15 +259,7 @@ class DownloadMixin:
             cmd.extend(["--skip-download"])
 
         # SponsorBlock Integration
-        sb_categories = []
-        if self.sb_all_checkbox.isChecked():
-            sb_categories = ["all"]
-        else:
-            sb_categories = [
-                category
-                for checkbox, category in self.sb_checkbox_map.items()
-                if checkbox.isChecked()
-            ]
+        sb_categories = self.get_selected_sb_categories()
 
         if sb_categories and SUPPORTED_SITES.get(
             self.video_state.get("site", DEFAULT_SITE), {}
@@ -324,6 +314,7 @@ class DownloadMixin:
     def run_download(self, cmd, selected_langs):
         success = False
         had_download_progress = False
+        removed_sb_segments = []
         try:
             if self.simulate_download_error:
                 raise RuntimeError("Simulated download error (testing flag enabled)")
@@ -429,7 +420,7 @@ class DownloadMixin:
                     for ext in [".mp4", ".mkv", ".webm", ".m4a", ".mp3", ".opus"]:
                         if os.path.exists(base_path + ext):
                             state["merged_filename"] = base_path + ext
-                            print(f"Fallback found file: {state['merged_filename']}")
+                            logger.debug(f"Fallback found file: {state['merged_filename']}")
                             break
 
                 # Post Download Analysis (uses cached metadata)
@@ -452,7 +443,7 @@ class DownloadMixin:
             logger.error(f"Download failed with exception: {e}")
         finally:
             # Log SponsorBlock segments separately if available
-            if success and 'removed_sb_segments' in locals() and removed_sb_segments:
+            if success and removed_sb_segments:
                 segment_info = []
                 for seg in removed_sb_segments:
                     category = seg.get('category', 'unknown')
@@ -494,7 +485,7 @@ class DownloadMixin:
             try:
                 os.remove(json_file)
             except OSError:
-                print("Error: Could not remove json file.")
+                logger.warning("Could not remove info JSON file: %s", json_file)
                 pass
 
         # Clean up original/auto-generated files
@@ -564,7 +555,7 @@ class DownloadMixin:
             # Clean up trailing quotes if they leaked through
             new_filename = new_filename.strip('"')
             state["merged_filename"] = new_filename
-            print(f"Captured final filename: {new_filename}")
+            logger.debug(f"Captured final filename: {new_filename}")
 
         # Handle known non-progress output types
         if line.startswith(("[youtube]", "[info]", "[debug]", "[Metadata]")):
@@ -770,7 +761,7 @@ class DownloadMixin:
                 "json",
                 file_path,
             ]
-            print(f"Running ffprobe on: {file_path}")
+            logger.debug(f"Running ffprobe on: {file_path}")
             # Execute ffprobe
             with subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
@@ -843,7 +834,7 @@ class DownloadMixin:
 
         except subprocess.CalledProcessError as e:
             self.signals.append_output.emit(f"🚩 ffprobe failed for: {os.path.basename(file_path)}")
-            print(f"ffprobe error for {file_path}: {e}")
+            logger.error(f"ffprobe error for {file_path}: {e}")
         except subprocess.TimeoutExpired:
             self.signals.append_output.emit("👉 ffprobe timed out")
         except json.JSONDecodeError:
@@ -945,7 +936,7 @@ class DownloadMixin:
         json_file = self.get_full_path(".info.json")
         if not os.path.exists(json_file):
             self.signals.append_output.emit(f"📟 .info.json not found at {json_file}")
-            return
+            return []
 
         try:
             self.signals.append_output.emit(f"📟 Reading {json_file} for EDL generation...")

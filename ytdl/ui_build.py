@@ -4,9 +4,11 @@ Mixin for YTDLPDownloaderGUI (assembled in ytdl/app.py);
 methods access shared state via self."""
 
 import html
+import logging
 import os
 import re
 import shutil
+import threading
 import requests
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QAction, QKeyEvent, QKeySequence, QPixmap, QShortcut
@@ -14,28 +16,28 @@ from PyQt6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QDialog, QFil
 from ytdl import APP_VERSION
 from ytdl.config import DEFAULT_OUTPUT_DIR
 from ytdl.progress import DownloadProgressManager
-from ytdl.utils import get_log_dir
 from ytdl.sites import SUPPORTED_SITES_LABEL
-from ytdl.utils import resource_path
+from ytdl.utils import get_log_dir, resource_path
 from ytdl.widgets import BusySpinner, CustomTextEdit, SB_CATEGORY_COLORS, SB_DISPLAY_NAMES, SponsorBlockBar
+
+logger = logging.getLogger(__name__)
 
 
 class UiBuildMixin:
     def check_dependencies(self):
-        # print(f"yt-dlp: {self.yt_dlp_bin}")
-        # print(f"ffmpeg: {self.ffmpeg_bin}")
-        # print(f"ffprobe: {self.ffprobe_bin}")
-        # print(f"deno: {self.deno_bin}")
         missing = []
 
-        if not shutil.which(self.yt_dlp_bin):
+        if not os.path.isfile(self.yt_dlp_bin) and not shutil.which(self.yt_dlp_bin):
             missing.append("yt-dlp")
 
-        if not shutil.which(self.ffmpeg_bin):
+        if not os.path.isfile(self.ffmpeg_bin) and not shutil.which(self.ffmpeg_bin):
             missing.append("ffmpeg")
 
-        if not shutil.which(self.deno_bin):
-            missing.append("deno")
+        if not os.path.isfile(self.ffprobe_bin) and not shutil.which(self.ffprobe_bin):
+            missing.append("ffprobe")
+
+        # deno is optional — yt-dlp works without it; only YouTube JS-challenge
+        # extraction benefits from it. No startup warning needed.
 
         if missing:
             missing_str = ", ".join(missing)
@@ -283,10 +285,6 @@ class UiBuildMixin:
         subtitle_group_box = QGroupBox("Subtitles")
         subtitle_layout = QVBoxLayout()
         subtitle_layout.setContentsMargins(15, 0, 20, 0)
-        self.subtitles_checkbox = QCheckBox("Subtitles")
-        self.subtitles_checkbox.setChecked(False)
-        # self.subtitles_checkbox.stateChanged.connect(self.on_subtitles_toggle)
-
         # Language Checkboxes
         languages = [("English", "en"), ("German", "de"), ("Spanish", "es")]
         self.subtitle_checkboxes = {}
@@ -410,17 +408,11 @@ class UiBuildMixin:
         main_layout.addLayout(sb_bar_layout)
         main_layout.addSpacing(5)
 
-        # Output Directory
-        output_dir_layout = QHBoxLayout()
-        output_dir_layout.setContentsMargins(0, 5, 0, 0)
-        output_dir_label = QLabel("Save to:")
+        # Output Directory (layout intentionally not added to main_layout;
+        # widgets kept because get_output_dir / start_download / _set_ui_enabled_state use them)
         self.output_dir_entry = QLineEdit(DEFAULT_OUTPUT_DIR)
         self.browse_button = QPushButton("📂")
         self.browse_button.clicked.connect(self.on_browse_directory)
-        output_dir_layout.addWidget(output_dir_label)
-        output_dir_layout.addWidget(self.output_dir_entry)
-        output_dir_layout.addWidget(self.browse_button)
-        # main_layout.addLayout(output_dir_layout)
 
         # Download Button
         self.download_button = QPushButton("Download")
@@ -501,7 +493,7 @@ class UiBuildMixin:
                 stylesheet = f.read()
             self.setStyleSheet(stylesheet)
         except FileNotFoundError:
-            print(f"Error: Stylesheet file NOT found at: {qss_path}")
+            logger.error(f"Stylesheet not found at: {qss_path}")
 
     def setup_menu_bar(self):
         menu_bar = self.menuBar()
@@ -532,8 +524,6 @@ class UiBuildMixin:
             self.output_dir_entry,
             self.browse_button,
             self.download_button,
-            self.thumbnail_button,
-            self.subtitles_checkbox,
             self.sb_all_checkbox,
         ]
         for control in controls:
@@ -649,11 +639,21 @@ class UiBuildMixin:
             self.signals.append_output.emit("👉 No thumbnail available")
             return
 
-        try:
-            # Fetch the image
-            response = requests.get(thumbnail_url, timeout=10)
-            response.raise_for_status()
+        def _fetch_and_show():
+            try:
+                response = requests.get(thumbnail_url, timeout=10)
+                response.raise_for_status()
+                image_data = response.content
+            except Exception as e:
+                self.signals.append_output.emit(f"🚩 Error loading thumbnail: {e}")
+                return
+            # Hand off to the main thread for all Qt widget construction
+            QTimer.singleShot(0, lambda: self._show_thumbnail_dialog(image_data))
 
+        threading.Thread(target=_fetch_and_show, daemon=True).start()
+
+    def _show_thumbnail_dialog(self, image_data: bytes):
+        try:
             # Create dialog
             dialog = QDialog(self)
             dialog.setWindowTitle("Video Description")
@@ -669,7 +669,7 @@ class UiBuildMixin:
             image_label = QLabel()
             image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             pixmap = QPixmap()
-            pixmap.loadFromData(response.content)
+            pixmap.loadFromData(image_data)
 
             # Scale image if too large
             max_width = 420
@@ -712,7 +712,7 @@ class UiBuildMixin:
             dialog.exec()
 
         except Exception as e:
-            self.signals.append_output.emit(f"🚩 Error loading thumbnail: {e}")
+            self.signals.append_output.emit(f"🚩 Error showing thumbnail dialog: {e}")
 
     def open_log_dialog(self):
         log_path = os.path.join(get_log_dir(), "app.log")
@@ -732,23 +732,28 @@ class UiBuildMixin:
             }
         """)
 
+        MAX_LOG_LINES = 500
         try:
             with open(log_path, "r", encoding="utf-8") as f:
-                content = f.read()
+                lines = f.readlines()
 
-            if content.strip():
+            # Keep only the tail so the dialog stays fast on long-lived installs
+            if len(lines) > MAX_LOG_LINES:
+                omitted = len(lines) - MAX_LOG_LINES
+                lines = [f"[ {omitted} earlier lines omitted ]\n"] + lines[-MAX_LOG_LINES:]
+
+            if any(ln.strip() for ln in lines):
                 # Color result lines: red for failed, green for succeeded
-                lines = content.strip().splitlines()
                 colored_lines = []
                 for line in lines:
+                    line = line.rstrip("\n")
                     if "Download failed" in line:
                         colored_lines.append(f'<span style="color: #ff6b6b;">{html.escape(line)}</span>')
                     elif "Download succeeded" in line:
                         colored_lines.append(f'<span style="color: #4ade80;">{html.escape(line)}</span>')
                     else:
                         colored_lines.append(html.escape(line))
-                html_content = "<br>".join(colored_lines)
-                text_browser.setHtml(html_content)
+                text_browser.setHtml("<br>".join(colored_lines))
                 # Auto-scroll to bottom so latest entries are visible (use timer to ensure content is rendered)
                 def scroll_to_bottom():
                     scrollbar = text_browser.verticalScrollBar()

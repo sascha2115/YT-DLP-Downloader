@@ -355,6 +355,9 @@ class TestBuildCommandAudio(unittest.TestCase):
     class Harness(app.DownloadMixin, app.SubtitleMixin):
         # Inherits the real mixins (so new helper methods come along);
         # only GUI state/overrides are provided here.
+        # build_command() reads the SponsorBlock selection through the UI
+        # helper (single source of truth), so bind the real one here.
+        get_selected_sb_categories = app.YTDLPDownloaderGUI.get_selected_sb_categories
         HARNESS_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
         def __init__(self, media_type="audio", audio_fmt="best"):
