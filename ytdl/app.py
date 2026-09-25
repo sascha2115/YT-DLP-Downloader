@@ -109,6 +109,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# Redrawing the dock overlay is expensive: every call allocates an NSImage,
+# repaints the app icon and calls -display(). yt-dlp emits a percent line far
+# more often than that is visible, so redraw only once the fraction has moved
+# by at least this much (0.5% of the bar width).
+DOCK_PROGRESS_MIN_DELTA = 0.005
+
+
+def should_redraw_dock(last_fraction: float, new_fraction: float) -> bool:
+    """Decide whether the dock progress overlay needs a repaint.
+
+    ``last_fraction`` is negative (initially -1.0) when nothing has been drawn
+    for the current download yet, which always repaints. The 0.0 and 1.0
+    endpoints always repaint too, so a download never appears to stall just
+    short of full — a sub-threshold final step must still land.
+
+    Pure function — no GUI state, safe to unit-test.
+    """
+    if last_fraction < 0.0:
+        return True
+    fraction = max(0.0, min(1.0, new_fraction))
+    if fraction in (0.0, 1.0):
+        return True
+    return abs(fraction - last_fraction) >= DOCK_PROGRESS_MIN_DELTA
+
+
 # ====================================================================================================
 # Main Class
 # ====================================================================================================
@@ -219,6 +244,10 @@ class YTDLPDownloaderGUI(
             self.dockTile = NSApplication.sharedApplication().dockTile()
         except Exception:
             self.dockTile = None
+
+        # Last fraction painted on the dock overlay; -1.0 = nothing drawn yet.
+        # Only read by the throttle in setDockProgressOverlay().
+        self._last_dock_fraction = -1.0
 
         # Check clipboard on startup
         self.check_clipboard_on_startup()
@@ -752,9 +781,17 @@ class YTDLPDownloaderGUI(
         """
         Draw a progress bar onto the dock icon tile.
         progress: 0.0 – 1.0
+
+        Throttled: yt-dlp emits a progress line per update, and every redraw
+        allocates an NSImage and repaints the app icon. should_redraw_dock()
+        skips the calls that would not move the visible bar.
         """
         if not self.dockTile:
             return
+
+        if not should_redraw_dock(self._last_dock_fraction, progress):
+            return
+        self._last_dock_fraction = max(0.0, min(1.0, progress))
 
         size = self.dockTile.size()  # typically 128x128
 
@@ -792,6 +829,9 @@ class YTDLPDownloaderGUI(
         self.dockTile.display()
 
     def clearDockProgress(self):
+        # Forget the cached fraction so the next download always paints a
+        # first frame, even if it resumes at the same value it ended on.
+        self._last_dock_fraction = -1.0
         if self.dockTile:
             self.dockTile.setContentView_(None)
             self.dockTile.display()

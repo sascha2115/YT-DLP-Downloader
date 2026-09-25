@@ -45,6 +45,9 @@ class FakeSignals:
             "update_download_progress",
             "update_dock_progress",
             "title_fetch_complete",
+            # get_video_info() refreshes the subtitle checkboxes on every
+            # path (including failures), so the failure-path harness needs it.
+            "update_subtitle_checkboxes",
         ):
             setattr(self, name, FakeSignal())
 
@@ -554,8 +557,9 @@ class InfoFetchHarness(ParserHarness, app.InfoFetchMixin):
     (inherited from InfoFetchMixin, so new helper methods come along).
 
     The failure paths of get_video_info() only touch `yt_dlp_bin`, `deno_bin`,
-    `signals.append_output`, `_dump_ytdlp_error_output()` and
-    `signals.title_fetch_complete` — all provided here. No Qt event loop.
+    `signals.append_output`, `signals.update_subtitle_checkboxes`,
+    `_dump_ytdlp_error_output()` and `signals.title_fetch_complete` — all
+    provided here. No Qt event loop.
     """
 
     def __init__(self):

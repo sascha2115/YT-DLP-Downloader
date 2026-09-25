@@ -44,9 +44,15 @@ class DownloadMixin:
         # Files inside: "SxxEyyyy - Video Title"
         channel = self.video_state.get("channel", "")
         sanitized_base_name = sanitize_title(base_name)
+        if not sanitized_base_name:
+            # A title made only of illegal characters sanitizes to an empty
+            # string, which would collapse video_dir to the output root and
+            # dump the media straight into it. Use a defined fallback so the
+            # directory and base_filename always agree.
+            sanitized_base_name = "downloaded_video"
 
         if channel:
-            sanitized_channel = sanitize_title(channel)
+            sanitized_channel = sanitize_title(channel) or "Unknown Channel"
             # Create nested folder structure: {root}/{channel}/{base_name}
             video_dir = os.path.join(root_output_dir, sanitized_channel, sanitized_base_name)
         else:
@@ -179,13 +185,23 @@ class DownloadMixin:
         if not url:
             return None
 
-        # Get the user-edited title for filename
+        # Get the user-edited title for filename. It must be sanitized here
+        # too: start_download() already stored the sanitized basename (and
+        # created that directory), so writing the raw text back would make
+        # base_filename, get_full_path() and the -o template disagree with the
+        # directory that actually exists.
         custom_title = self.title_entry.text().strip()
         if not custom_title:
             custom_title = "downloaded_video"
+        sanitized_title = sanitize_title(custom_title)
+        if not sanitized_title:
+            # A title made only of illegal characters (e.g. "///") sanitizes
+            # to an empty string, which would collapse the path to the output
+            # root. Fall back to a safe, non-empty basename.
+            sanitized_title = "downloaded_video"
 
         # Update state
-        self.update_video_state(title=custom_title)
+        self.update_video_state(title=sanitized_title)
 
         cmd = [self.yt_dlp_bin]
 

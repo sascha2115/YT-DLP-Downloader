@@ -9,13 +9,13 @@ import re
 import shutil
 import subprocess
 import threading
-import time
 from datetime import datetime
 import requests
 from ytdl import preferences as prefs
 from ytdl.config import (
     INFO_FETCH_HINT_AFTER_SECONDS,
     INFO_FETCH_HINT_EVERY_SECONDS,
+    SPONSORBLOCK_TIMEOUT_SECONDS,
 )
 from ytdl.description import clean_youtube_description
 from ytdl.sites import (
@@ -96,6 +96,25 @@ def apply_episode_rules(channel: str, title: str) -> tuple[str, str]:
         clean = clean.strip().strip("-").strip("|").strip()
         return episode_code, clean
     return "", title
+
+
+def build_title_with_prefix(prefix: str, title: str) -> str:
+    """
+    Join an episode/date prefix and a title, skipping the prefix when absent.
+
+    ``prefix`` is an episode code ("S01E2481") or a date-derived code
+    ("S26E0110"); it is empty when the video has no usable upload date and no
+    channel rule matched. Without this guard the concatenation produced titles
+    like " - Some Video Title", and that malformed string became the on-disk
+    folder/file name because sanitize_title() preserves the leading dash.
+
+    Pure function — no GUI state, safe to unit-test.
+    """
+    clean_title = sanitize_title(title)
+    prefix = (prefix or "").strip()
+    if not prefix:
+        return clean_title
+    return f"{prefix} - {clean_title}"
 
 
 class InfoFetchMixin:
@@ -185,6 +204,18 @@ class InfoFetchMixin:
 
     def get_video_info(self, url):
         error_status = {"error": False}
+        # Reset subtitle availability up front, before any yt-dlp call. It is
+        # written only on the success path further down, so without this a
+        # failed fetch (nonzero exit, timeout, no audio, or a parse error)
+        # would leave the PREVIOUS video's languages in place — and
+        # _update_subtitle_checkboxes() never runs to correct the labels, so
+        # its checkboxes would stay enabled and get_selected_subtitle_codes()
+        # would ask yt-dlp for subtitles this video does not have.
+        self.video_state["available_subtitles"] = {}
+        # `language` is only assigned after a successful parse, but the
+        # checkbox refresh at the end of this method runs on every path —
+        # default it here so the failure paths do not raise NameError.
+        language = ""
         # Per-site budget: slow extractors (Odysee/LBRY resolves for ~40s)
         # would otherwise be killed by the default 15s timeout.
         info_timeout = site_info_timeout(self.video_state.get("site", DEFAULT_SITE))
@@ -257,15 +288,22 @@ class InfoFetchMixin:
                     self.signals.append_output.emit(f"Podcast: {channel}")
 
                 # Format and display info
+                # short_date is the title prefix: only keep it when the date
+                # actually parsed, otherwise build_title_with_prefix() would
+                # emit a malformed " - Title" (or a raw "not-a-date - Title").
                 formatted_date = upload_date
-                short_date = upload_date
+                short_date = ""
                 if upload_date:
                     try:
                         dt = datetime.strptime(upload_date, "%Y%m%d")
                         formatted_date = dt.strftime("%Y-%m-%d")  # For display: "2026-01-10"
                         short_date = dt.strftime("S%yE%m%d")      # For title: "S26E0110"
                     except ValueError:
-                        pass
+                        # Unparseable date: report it, but never use it as a prefix.
+                        logger.debug(
+                            f"Unparseable upload_date {upload_date!r}; "
+                            "omitting the title prefix"
+                        )
 
                     self.signals.append_output.emit(f"Upload date: {formatted_date}")
 
@@ -432,14 +470,18 @@ class InfoFetchMixin:
                                     f"Subtitles: Not available on {label}"
                                 )
 
-                        # Cache availability BEFORE emitting, so the
+                        # Cache availability BEFORE the emit below, so the
                         # main-thread slot always reads the fresh data
                         self.video_state["available_subtitles"] = available_subs
-                        # Update checkbox labels in UI
-                        self.signals.update_subtitle_checkboxes.emit(language or "")
 
-                    except (json.JSONDecodeError, Exception) as e:
+                    except Exception as e:
+                        # json.JSONDecodeError is not listed on purpose: the
+                        # subs_dict/autos_dict inputs were already decoded from
+                        # json_data above, so no JSON parsing happens here.
                         logger.warning(f"Error parsing subtitle info: {e}")
+                        self.signals.append_output.emit(
+                            "⚠️ Could not read subtitle information for this video"
+                        )
 
                     # Set title (without channel name - channel is added to folder name only)
                     if title:
@@ -448,12 +490,8 @@ class InfoFetchMixin:
                             short_date = episode_code
                             self.video_state["episode_code"] = episode_code
 
-                        sanitized_title = sanitize_title(title)
-                        full_title = short_date + " - " + sanitized_title
+                        full_title = build_title_with_prefix(short_date, title)
                         self.signals.update_title.emit(full_title)
-
-                        # Fetch SponsorBlock segments
-                        self.check_sponsorblock()
                     else:
                         self.signals.append_output.emit("🚩 Could not find title")
                         error_status["error"] = True
@@ -495,7 +533,30 @@ class InfoFetchMixin:
             self.signals.append_output.emit(f"🚩 Error fetching video info: {e}")
             error_status["error"] = True
 
+        # Refresh the subtitle checkboxes on every path. The availability dict
+        # was reset at the top of this method and only re-populated when the
+        # parse succeeded, so this always leaves the UI matching what we
+        # actually learned — including a failed fetch, which leaves it empty
+        # and disables the boxes instead of showing the previous video's.
+        self.signals.update_subtitle_checkboxes.emit(language or "")
+
+        # Release the UI first. Everything above is local metadata state; the
+        # SponsorBlock lookup below is optional enrichment over the network and
+        # must never gate readiness (it used to run inline, delaying this
+        # signal by up to ~49s on a failing API). The description summary moves
+        # here too, so it no longer rides on the SponsorBlock code path.
+        self._emit_description_summary()
         self.signals.title_fetch_complete.emit(error_status)
+
+        if not error_status["error"]:
+            # Pass an explicit snapshot: check_sponsorblock() hands the HTTP
+            # request to its own thread, and that thread must not read
+            # video_state later, when a new URL may already have replaced it.
+            self.check_sponsorblock(
+                video_id=self.video_state.get("video_id", ""),
+                site=self.video_state.get("site", DEFAULT_SITE),
+                duration_sec=self.video_state.get("duration_sec", 0),
+            )
 
     def _dump_ytdlp_error_output(self, headline, stdout=None, stderr=None, max_lines=40):
         """
@@ -618,52 +679,72 @@ class InfoFetchMixin:
             # Keep an empty line above the description and force a "..." ending.
             self.signals.append_output.emit(f"\nDescription: {summary}...")
 
-    def check_sponsorblock(self):
-        """Query the SponsorBlock API with video_state["video_id"] (YouTube only)."""
-        try:
-            # Get the categories
-            # Get all possible categories to show everything in the visual bar
-            all_categories = [
-                "sponsor", "selfpromo", "interaction", "intro", "outro", 
-                "preview", "music_offtopic", "filler", "poi_highlight", 
-                "exclusive_access", "chapter"
-            ]
-            # video_id already extracted in fetch_video_info
-            video_id = self.video_state["video_id"]
-            site = self.video_state.get("site", DEFAULT_SITE)
-            if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
-                # SponsorBlock is a YouTube-only database; skip cleanly on other sites
-                self.signals.append_output.emit(
-                    "SponsorBlock: Not available for this site (YouTube only) — skipping"
-                )
-                self._emit_description_summary()
-                return
-            if not video_id:
-                self.signals.append_output.emit(
-                    "SponsorBlock: Could not extract video ID from URL"
-                )
-                self._emit_description_summary()
-                return
+    def check_sponsorblock(self, video_id=None, site=None, duration_sec=None):
+        """Run the SponsorBlock gate now and schedule the segment lookup.
 
+        The local gate (site profile flag, extracted video id) is pure local
+        state, so it stays synchronous and its output line keeps its place in
+        the log. Only the HTTP request is handed to a background thread: the
+        API is optional enrichment, and a slow or failing endpoint must never
+        delay the info fetch's title_fetch_complete hand-off.
+
+        The three arguments default to the current video_state values (for a
+        direct call), but get_video_info() passes an explicit snapshot taken on
+        the metadata worker so a later URL change cannot race this thread.
+        """
+        if video_id is None:
+            video_id = self.video_state.get("video_id", "")
+        if site is None:
+            site = self.video_state.get("site", DEFAULT_SITE)
+        if duration_sec is None:
+            duration_sec = self.video_state.get("duration_sec", 0)
+
+        # Get all possible categories to show everything in the visual bar
+        all_categories = [
+            "sponsor", "selfpromo", "interaction", "intro", "outro",
+            "preview", "music_offtopic", "filler", "poi_highlight",
+            "exclusive_access", "chapter"
+        ]
+
+        if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
+            # SponsorBlock is a YouTube-only database; skip cleanly on other sites
+            self.signals.append_output.emit(
+                "SponsorBlock: Not available for this site (YouTube only) — skipping"
+            )
+            return
+        if not video_id:
+            self.signals.append_output.emit(
+                "SponsorBlock: Could not extract video ID from URL"
+            )
+            return
+
+        thread = threading.Thread(
+            target=self._fetch_sponsorblock_segments,
+            args=(video_id, all_categories, duration_sec),
+            name="sponsorblock-lookup",
+            daemon=True,
+        )
+        thread.start()
+
+    def _fetch_sponsorblock_segments(self, video_id, all_categories, duration):
+        """Query the SponsorBlock API for one video id (YouTube only).
+
+        Runs on its own daemon thread, so a slow or failing endpoint delays
+        only the progress bar — never the metadata hand-off. Every result is
+        published through queued signals, so the UI updates on the main thread.
+        """
+        try:
             # Build the API URL with query parameters
             api_url = "https://sponsor.ajay.app/api/skipSegments"
             payload = {"videoID": video_id, "category": all_categories}
-            max_attempts = 3
             try:
-                response = None
-                for attempt in range(1, max_attempts + 1):
-                    response = requests.get(api_url, params=payload, timeout=15)
-                    # Retry on 5xx server errors
-                    if response.status_code >= 500 and attempt < max_attempts:
-                        self.signals.append_output.emit(
-                            f"👉 SponsorBlock: Server error {response.status_code}, retrying ({attempt}/{max_attempts - 1})..."
-                        )
-                        time.sleep(2)
-                        continue
-                    break
-
-                if response is None:
-                    return
+                # One request, short budget: the previous 3 attempts x 15s plus
+                # two 2s sleeps could hold the fetch for ~49s on a bad API.
+                response = requests.get(
+                    api_url,
+                    params=payload,
+                    timeout=SPONSORBLOCK_TIMEOUT_SECONDS,
+                )
 
                 if response.status_code == 200:
                     segments = response.json()
@@ -687,7 +768,6 @@ class InfoFetchMixin:
                             f"📟 SponsorBlock: {total} segment(s) available ({segments_info})"
                         )
                         # Update visual bar
-                        duration = self.video_state.get("duration_sec", 0)
                         self.signals.update_sb_bar.emit(segments, float(duration))
                     else:
                         self.signals.append_output.emit(
@@ -707,10 +787,7 @@ class InfoFetchMixin:
                 self.signals.append_output.emit(
                     f"🚩 SponsorBlock: Request error: {str(e)}"
                 )
-            finally:
-                self._emit_description_summary()
         except Exception as e:
             self.signals.append_output.emit(
                 f"🚩 SponsorBlock: Failed to check segments: {str(e)}"
             )
-            self._emit_description_summary()

@@ -17,3 +17,9 @@ INFO_FETCH_TIMEOUT_SECONDS = 15
 # waits (Odysee's LBRY resolve routinely takes ~40-70s) do not look frozen.
 INFO_FETCH_HINT_AFTER_SECONDS = 10
 INFO_FETCH_HINT_EVERY_SECONDS = 20
+
+# SponsorBlock is optional enrichment, not metadata: it runs after the UI is
+# already re-enabled, on a background thread with its own tight budget. A
+# single request timeout bounds the worst case (one request, no retry sleeps),
+# because stalling the thread further delays only the progress bar.
+SPONSORBLOCK_TIMEOUT_SECONDS = 4
