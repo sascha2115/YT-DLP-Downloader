@@ -19,7 +19,7 @@ SponsorBlock is YouTube-only and is skipped automatically for other sites; Odyse
 | External binaries (macOS) | brew install yt-dlp ffmpeg deno |
 | External binaries (Linux) | pip install yt-dlp · distro package for ffmpeg · deno installer script |
 
-> The external binaries are not bundled by PyInstaller: `yt-dlp` (pip or distro package), `ffmpeg` **and** `ffprobe` (distro `ffmpeg` package provides both; `ffprobe` is used by the app even though the startup warning doesn't list it), and `deno` (optional but recommended — passed to yt-dlp as a JS runtime for YouTube extraction; the app warns but still runs without it). All are checked at startup; a `pip`-installed `yt-dlp` in the Python that launches the app is detected as well.
+> The external binaries are not bundled by PyInstaller: `yt-dlp` (pip or distro package), `ffmpeg` **and** `ffprobe` (distro `ffmpeg` package provides both; the startup check lists all three), and `deno` (optional but recommended — passed to yt-dlp as a JS runtime for YouTube extraction; the app runs without it and does not warn if it is absent). All required binaries are checked at startup; a `pip`-installed `yt-dlp` in the Python that launches the app is detected as well.
 
 ## Installation
 ```bash

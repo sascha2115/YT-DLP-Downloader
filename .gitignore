@@ -15,3 +15,7 @@ dist/
 
 # Editor tooling artifacts
 .groupedtimelineinclude
+
+# Temporary commit message files
+.git_commit_msg.txt
+check_syntax.py

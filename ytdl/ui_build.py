@@ -494,6 +494,7 @@ class UiBuildMixin:
             self.setStyleSheet(stylesheet)
         except FileNotFoundError:
             logger.error(f"Stylesheet not found at: {qss_path}")
+            self.signals.append_output.emit(f"🚩 Stylesheet not found: {qss_path}")
 
     def setup_menu_bar(self):
         menu_bar = self.menuBar()
@@ -639,6 +640,11 @@ class UiBuildMixin:
             self.signals.append_output.emit("👉 No thumbnail available")
             return
 
+        # Single-flight guard: ignore extra clicks while a fetch is in progress
+        if self._fetching_thumbnail:
+            return
+        self._fetching_thumbnail = True
+
         def _fetch_and_show():
             try:
                 response = requests.get(thumbnail_url, timeout=10)
@@ -646,13 +652,18 @@ class UiBuildMixin:
                 image_data = response.content
             except Exception as e:
                 self.signals.append_output.emit(f"🚩 Error loading thumbnail: {e}")
+                self._fetching_thumbnail = False
                 return
-            # Hand off to the main thread for all Qt widget construction
-            QTimer.singleShot(0, lambda: self._show_thumbnail_dialog(image_data))
+            # Deliver bytes to the main thread via a queued signal — the only
+            # safe way to trigger Qt widget construction from a worker thread.
+            # (QTimer.singleShot from a plain threading.Thread has no event
+            # loop and is silently dropped by Qt 6.)
+            self.signals.thumbnail_ready.emit(image_data)
 
         threading.Thread(target=_fetch_and_show, daemon=True).start()
 
     def _show_thumbnail_dialog(self, image_data: bytes):
+        self._fetching_thumbnail = False
         try:
             # Create dialog
             dialog = QDialog(self)
@@ -764,6 +775,8 @@ class UiBuildMixin:
                 text_browser.setText("Log is empty.")
         except FileNotFoundError:
             text_browser.setText(f"Log file not found at:\n{log_path}")
+        except OSError as e:
+            text_browser.setText(f"Could not read log file:\n{e}")
 
         layout.addWidget(text_browser)
 

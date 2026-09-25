@@ -485,7 +485,7 @@ class DownloadMixin:
             try:
                 os.remove(json_file)
             except OSError:
-                logger.warning("Could not remove info JSON file: %s", json_file)
+                logger.warning(f"Could not remove info JSON file: {json_file}")
                 pass
 
         # Clean up original/auto-generated files
@@ -973,7 +973,7 @@ class DownloadMixin:
 
             if not segments:
                 self.signals.append_output.emit("📟 No segments to skip found in selected categories")
-                return
+                return []
 
             edl_path = os.path.splitext(video_path)[0] + ".edl"
             # Format: [start] [stop] [action]

@@ -126,7 +126,7 @@ curl -fsSL https://deno.land/install.sh | sh
 
 > If `yt-dlp` errors on specific videos, try the nightly pre-release — see §6 Troubleshooting.
 
-> **ffprobe gotcha:** the app's startup warning only lists `yt-dlp`, `ffmpeg`, and `deno` — but it also calls `ffprobe`. Distro `ffmpeg` packages include it; a bare/static ffmpeg without ffprobe will quietly break media-duration features. Verify with `ffprobe -version`.
+> **ffprobe note:** the app's startup warning lists `yt-dlp`, `ffmpeg`, and `ffprobe` — all three are required. Distro `ffmpeg` packages include `ffprobe`; a bare/static ffmpeg without ffprobe will quietly break media-duration features. Verify with `ffprobe -version`.
 
 ### 3.3 Python environment
 
@@ -176,9 +176,10 @@ python3 -m unittest temp.test_subtitle_progress -v
 python3 main.py --simulate-download-error
 ```
 
-On startup the app checks for `yt-dlp`, `ffmpeg`, and `deno` and prints
+On startup the app checks for `yt-dlp`, `ffmpeg`, and `ffprobe` and prints
 `🚩 Error: Missing Dependencies: …` in its output pane if anything is absent.
-Cross-check manually:
+`deno` is optional — the app runs without it, but passing it to yt-dlp improves
+YouTube extraction. Cross-check manually:
 
 ```bash
 which yt-dlp ffmpeg ffprobe deno
@@ -266,8 +267,9 @@ Categories=Network;AudioVideo;
 > **Quoting:** `Exec=` must be double-quoted here — the bundle path contains spaces, and an
 > unquoted `Exec` value would be split into separate arguments. With a `--onefile` build the
 > executable is `dist/main` (no spaces): `Exec=/absolute/path/to/ytdl/dist/main`.
-> The bundle needs no Python or venv at runtime, but `yt-dlp`, `ffmpeg`, and `deno` must
-> still be installed on the machine — they are never bundled (§1).
+> The bundle needs no Python or venv at runtime, but `yt-dlp`, `ffmpeg`, and `ffprobe` must
+> still be installed on the machine — they are never bundled (§1). `deno` is optional but
+> recommended for YouTube extraction.
 
 > **Frozen snapshot:** the entry starts whatever is inside `dist/` at build time. After
 > changing `main.py`, re-run `./build-linux.sh`; otherwise the menu keeps starting the old

@@ -37,7 +37,7 @@ if IS_MACOS:
 else:
     NSApplication = NSImage = NSImageView = NSColor = NSBezierPath = None
     NSMakeRect = None
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMainWindow
 
@@ -95,7 +95,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(message)s",
     handlers=[
-        logging.FileHandler(os.path.join(log_dir, "app.log")),
+        logging.FileHandler(os.path.join(log_dir, "app.log"), encoding="utf-8"),
         logging.StreamHandler(),
     ],
     force=True,
@@ -184,6 +184,10 @@ class YTDLPDownloaderGUI(
         )
         self.signals.set_download_button_label.connect(self.set_download_button_label)
         self.signals.set_download_button_status.connect(self.set_download_button_status)
+        self.signals.thumbnail_ready.connect(self._show_thumbnail_dialog)
+
+        # Guard: prevent concurrent thumbnail fetches from double-clicking Info
+        self._fetching_thumbnail = False
 
         # Preferences shortcut: owned by the "Preferences..." QAction in
         # setup_menu_bar() ("Ctrl+,"/"Cmd+,"). Do NOT also bind a QShortcut

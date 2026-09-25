@@ -33,6 +33,73 @@ from ytdl.widgets import SB_DISPLAY_NAMES
 logger = logging.getLogger(__name__)
 
 
+# ----------------------------------------------------------------------------------------------------
+# Episode-rule table
+# Each entry maps a YouTube channel name to a regex and a clean-up strategy.
+# apply_episode_rules() is a pure function so it can be unit-tested without Qt.
+# ----------------------------------------------------------------------------------------------------
+
+# Each rule is a dict:
+#   channel   : exact YouTube channel string
+#   pattern   : compiled regex; group(1) must capture the episode number digits
+#   clean     : "replace_with_dash" | "remove"  — what to do with the matched token in the title
+_EPISODE_RULES = [
+    {
+        "channel": "PowerfulJRE",
+        # Require explicit "#" so bare numbers (years, Fight Companion dates) don't match.
+        "pattern": re.compile(r"#(\d+)(?: -| |$)"),
+        "clean": "replace_with_dash",
+    },
+    {
+        "channel": "Shawn Ryan Show",
+        "pattern": re.compile(r"(?:[|]\s*)?SRS\s*#?\s*(\d+)"),
+        "clean": "remove",
+    },
+    {
+        "channel": "Lex Fridman",
+        "pattern": re.compile(r"(?:[|]\s*)?Lex Fridman Podcast\s*#?\s*(\d+)"),
+        "clean": "remove",
+    },
+    {
+        "channel": "PBD Podcast",
+        "pattern": re.compile(r"(?:[|]\s*)?PBD(?: Podcast)?\s*#?\s*(\d+)"),
+        "clean": "remove",
+    },
+]
+
+
+def apply_episode_rules(channel: str, title: str) -> tuple[str, str]:
+    """
+    Apply channel-specific episode-number extraction rules.
+
+    Returns (episode_code, clean_title) where episode_code is e.g. "S01E2481"
+    or "" if no rule matched, and clean_title has the episode token removed.
+    Pure function — no GUI state, safe to unit-test.
+    """
+    for rule in _EPISODE_RULES:
+        if channel != rule["channel"]:
+            continue
+        m = rule["pattern"].search(title)
+        if not m:
+            break  # channel matched but no episode token — leave title unchanged
+        try:
+            ep_num = int(m.group(1))
+        except (ValueError, IndexError):
+            break
+        episode_code = f"S01E{ep_num:04d}"
+        match_str = m.group(0)
+        if rule["clean"] == "replace_with_dash":
+            clean = title.replace(match_str, " - ")
+        else:
+            clean = title.replace(match_str, "")
+        # Normalise whitespace, stray dashes and pipes left by the removal
+        clean = re.sub(r"\s+", " ", clean)
+        clean = clean.replace(" - - ", " - ")
+        clean = clean.strip().strip("-").strip("|").strip()
+        return episode_code, clean
+    return "", title
+
+
 class InfoFetchMixin:
     def _info_wait_hint_text(self, elapsed):
         """Hint shown in the output panel while the info fetch is still running."""
@@ -379,78 +446,10 @@ class InfoFetchMixin:
 
                     # Set title (without channel name - channel is added to folder name only)
                     if title:
-                        # Special Case: PowerfulJRE (Joe Rogan)
-                        if youtube_channel == "PowerfulJRE":
-                            # Require explicit "#" prefix to avoid matching bare numbers
-                            # in titles like "Fight Companion - June 2024" (year → S01E2024).
-                            ep_match = re.search(r"#(\d+)(?: -| |$)", title)
-                            if ep_match:
-                                try:
-                                    ep_num = int(ep_match.group(1))
-                                    # We pad to 4 digits to match the general S##E#### format
-                                    short_date = f"S01E{ep_num:04d}"
-                                    self.video_state["episode_code"] = short_date
-                                    # Remove episode number from title (e.g. "Joe Rogan Experience #2467 - Michael Pollan" -> "Joe Rogan Experience - Michael Pollan")
-                                    match_str = ep_match.group(0)
-                                    title = title.replace(match_str, " - ")
-                                    # Clean up title if we introduced double dash or extra space
-                                    title = re.sub(r"\s+", " ", title).replace(" - - ", " - ").strip().strip("-").strip()
-                                except (ValueError, IndexError):
-                                    pass
-
-                        # Special Case: Shawn Ryan Show
-                        elif youtube_channel == "Shawn Ryan Show":
-                            # Look for SRS episode number: e.g. "| SRS #285" or "SRS #285"
-                            ep_match = re.search(r"(?:[|]\s*)?SRS\s*#?\s*(\d+)", title)
-                            if ep_match:
-                                try:
-                                    ep_num = int(ep_match.group(1))
-                                    # User requested no offset for SRS: e.g. 285 becomes S01E0285
-                                    short_date = f"S01E{ep_num:04d}"
-                                    self.video_state["episode_code"] = short_date
-                                    # Remove episode tag from title
-                                    match_str = ep_match.group(0)
-                                    title = title.replace(match_str, "")
-                                    # Clean up title
-                                    title = re.sub(r"\s+", " ", title).replace(" - - ", " - ").strip().strip("-").strip().strip("|").strip()
-                                except (ValueError, IndexError):
-                                    pass
-
-                        # Special Case: Lex Fridman
-                        elif youtube_channel == "Lex Fridman":
-                            # Look for episode number: e.g. "| Lex Fridman Podcast #491"
-                            ep_match = re.search(r"(?:[|]\s*)?Lex Fridman Podcast\s*#?\s*(\d+)", title)
-                            if ep_match:
-                                try:
-                                    ep_num = int(ep_match.group(1))
-                                    # Lex Fridman: e.g. 491 becomes S01E0491
-                                    short_date = f"S01E{ep_num:04d}"
-                                    self.video_state["episode_code"] = short_date
-                                    # Remove episode tag from title
-                                    match_str = ep_match.group(0)
-                                    title = title.replace(match_str, "")
-                                    # Clean up title
-                                    title = re.sub(r"\s+", " ", title).replace(" - - ", " - ").strip().strip("-").strip().strip("|").strip()
-                                except (ValueError, IndexError):
-                                    pass
-
-                        # Special Case: PBD Podcast
-                        elif youtube_channel == "PBD Podcast":
-                            # Look for episode number: e.g. "| PBD #754" or "| PBD Podcast #754"
-                            ep_match = re.search(r"(?:[|]\s*)?PBD(?: Podcast)?\s*#?\s*(\d+)", title)
-                            if ep_match:
-                                try:
-                                    ep_num = int(ep_match.group(1))
-                                    # PBD Podcast: e.g. 754 becomes S01E0754
-                                    short_date = f"S01E{ep_num:04d}"
-                                    self.video_state["episode_code"] = short_date
-                                    # Remove episode tag from title
-                                    match_str = ep_match.group(0)
-                                    title = title.replace(match_str, "")
-                                    # Clean up title
-                                    title = re.sub(r"\s+", " ", title).replace(" - - ", " - ").strip().strip("-").strip().strip("|").strip()
-                                except (ValueError, IndexError):
-                                    pass
+                        episode_code, title = apply_episode_rules(youtube_channel, title)
+                        if episode_code:
+                            short_date = episode_code
+                            self.video_state["episode_code"] = episode_code
 
                         sanitized_title = sanitize_title(title)
                         full_title = short_date + " - " + sanitized_title

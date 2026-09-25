@@ -15,7 +15,7 @@
 - `ytdl/app.py` – class assembly (`YTDLPDownloaderGUI` inherits the per-concern mixins), `__init__` shared-state init, URL/clipboard handlers, output-panel helpers, dock methods, `APP_VERSION` re-export.
 - `ytdl/config.py` – app-wide constants (`DEFAULT_OUTPUT_DIR`, `TITLE_FETCH_DELAY_MS`).
 - `ytdl/preferences.py` – preferences file path/loading and in-memory state (`preferences`, `CHANNEL_NAME_MAP`); mutate via `apply_preferences()` and read live values through the module.
-- `ytdl/info_fetch.py` – `InfoFetchMixin`: video-info fetch (yt-dlp subprocess), parsing, description summary, SponsorBlock API.
+- `ytdl/info_fetch.py` – `InfoFetchMixin`: video-info fetch (yt-dlp subprocess), parsing, description summary, SponsorBlock API. Also exports `apply_episode_rules(channel, title) -> (episode_code, clean_title)` and `_EPISODE_RULES` — a pure, Qt-free function that handles per-channel episode-number extraction (PowerfulJRE, Shawn Ryan Show, Lex Fridman, PBD Podcast); adding a new channel is a one-line table entry.
 - `ytdl/download.py` – `DownloadMixin`: download orchestration (start/build command/run), yt-dlp output/progress parsing, file metadata, NFO/EDL creation.
 - `ytdl/subtitles.py` – `SubtitleMixin`: subtitle selection/file mapping and the resync/2-line-merge pipeline.
 - `ytdl/ui_build.py` – `UiBuildMixin`: `init_ui` widget construction, styling, menus, dialogs, UI enable state.
@@ -68,13 +68,14 @@
 
 ## Testing notes
 - Unit tests (no Qt event loop needed): `python3 -m unittest temp.test_subtitle_progress -v` from the repo root (also works from `temp/`). They replay real captured yt-dlp output through the real parser methods (`_parse_download_output`, `_update_download_progress`, `_is_subtitle_path`) bound to a lightweight harness.
-- Suite overview: `temp/test_subtitle_progress.py` (progress parser + UI enable state), `temp/test_multisite_url.py` (site profiles, URL gate, command construction), `temp/test_subtitle_multisite.py` (subtitle key shapes/normalization), `temp/test_rumble_info_parse.py`, `temp/test_odysee_info_parse.py`, `temp/test_ard_info_parse.py` and `temp/test_zdf_info_parse.py` (info parsing from captured `yt-dlp -J` fixtures: `temp/rumble-info-capture.json`, `temp/odysee-info-capture.json`, `temp/ard-info-capture.json`, `temp/zdf-info-capture.json`).
+- Suite overview: `temp/test_subtitle_progress.py` (progress parser + UI enable state), `temp/test_multisite_url.py` (site profiles, URL gate, command construction), `temp/test_subtitle_multisite.py` (subtitle key shapes/normalization), `temp/test_rumble_info_parse.py`, `temp/test_odysee_info_parse.py`, `temp/test_ard_info_parse.py` and `temp/test_zdf_info_parse.py` (info parsing from captured `yt-dlp -J` fixtures: `temp/rumble-info-capture.json`, `temp/odysee-info-capture.json`, `temp/ard-info-capture.json`, `temp/zdf-info-capture.json`), `temp/test_episode_rules.py` (channel episode-number extraction rules — pure function, no Qt needed).
 - `temp/replay_ytdlp_output.py <captured.log> <media_type>` – debug helper: replays a captured yt-dlp log through the parser and prints video/audio bar + dock state per line.
 - `temp/replay_rumble_info.py` / `temp/replay_rumble_subtitles.py` / `temp/replay_url_gate.py` / `temp/replay_odysee_info.py` – replay helpers for the info panel, the subtitle post-processing chain, the URL gate and a real (unmocked) Odysee info fetch.
 - `temp/smoke_gui.py` – headless full-window construction smoke test (run after structural refactors).
 - `temp/analyze_app_split.py` / `temp/analyze_odysee.py` – analysis helpers (method inventory; summarize a captured info JSON).
 - `temp/test_dock_progress.py` is NOT a unittest – it is a manual AppKit dock-tile demo script.
 - No global test suite, no coverage tooling, no CI.
+- **Coverage gaps (UI layer):** `open_thumbnail_dialog` (threaded fetch → queued signal → Qt dialog) and `open_log_dialog` (tail logic, HTML coloring) have no automated tests. Both require a Qt event loop or mock framework to test meaningfully — shallow tests would not have caught the `QTimer.singleShot`-from-worker-thread regression that silently dropped the dialog in Qt 6. The correct pattern for new GUI logic is to extract the pure part (see `apply_episode_rules()` in `info_fetch.py` as a model) and test that independently.
 
 ## Subtitle & progress parsing
 - yt-dlp downloads subtitles BEFORE the media streams; their `[download] Destination:` and percent lines must not affect the video/audio progress bars or the captured media filename.
@@ -85,6 +86,7 @@
 ## Common gotchas
 - GUI updates must use signals, not direct widget modifications.
 - Signals emitted from **worker threads** are queued to the main thread and only delivered while the Qt event loop is running. Headless test harnesses (and replay scripts) have no event loop, so cross-thread emissions are silently dropped: call the emitting code from the main thread, or drive the helper directly (see `TestOdyseeInfoParse.test_wait_hints_emitted_while_waiting`, which runs `_info_wait_monitor()` while a timer thread sets its stop event).
+- **Never call `QTimer.singleShot` from a plain `threading.Thread`** — a plain thread has no Qt event loop, so the timer is silently dropped by Qt 6 with no warning or exception. The correct pattern for handing work back to the main thread from a worker is to emit a queued signal (`pyqtSignal`); Qt delivers it to the main-thread slot automatically. `open_thumbnail_dialog` uses this pattern: the worker thread emits `signals.thumbnail_ready` (bytes), and the main-thread slot `_show_thumbnail_dialog` builds the dialog. The `QTimer.singleShot(0, scroll_to_bottom)` in `open_log_dialog` is fine — it is called from the main thread.
 - Never bind the same key sequence to both a `QShortcut` and a menu `QAction` — Qt treats the duplicate as ambiguous and fires **neither** (silent failure). One binding per key; menu `QAction`s already work window-globally. Observed with `Ctrl+,`/Preferences (fixed).
 - Avoid relative paths when invoking external binaries; rely on `find_binary()` (wraps `shutil.which()` and adds macOS/pip fallbacks).
 - Do not modify `archive/` files – they are frozen snapshots.
