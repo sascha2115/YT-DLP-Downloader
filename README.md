@@ -6,7 +6,9 @@ Supported sites (via yt-dlp's extractors): **YouTube**, **Rumble**, **Odysee** (
 SponsorBlock is YouTube-only and is skipped automatically for other sites; Odysee has no subtitle tracks (the app says so instead of offering empty language checkboxes), while the ARD/ZDF German captions (ISO key `deu`) are mapped onto the German checkbox. Channel/playlist URLs are rejected — paste a link to a single video.
 
 ## Features
-- **Video / Audio / Subtitles** selection
+- **Video / Audio / Subtitles** selection — a video's only subtitle is saved as
+  `<title>.srt`; pick several languages and each keeps its code (`<title>.en.srt`,
+  `<title>.de.srt`)
 - **SponsorBlock** segment highlighting inside a custom bar
 - **Cancel** a running download from the button or `Esc`; closing the window cancels too
 - Progress shown in the dock icon and the main window (dock icon on macOS only)

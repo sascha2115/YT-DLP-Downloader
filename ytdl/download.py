@@ -183,6 +183,12 @@ class DownloadMixin:
         missing_subs = []
         existing_subs = []
         existing_subtitle_paths = {}
+        # A video whose only subtitle is stored without a language code
+        # ("Title.srt") must still be recognized as downloaded - otherwise
+        # re-running it would fetch the media file all over again. That name
+        # carries no language, so it is only credited to the one request it can
+        # be attributed to (SubtitleMixin._bare_subtitle_credit).
+        bare_credit = self._bare_subtitle_credit(selected_langs)
         for code in selected_langs:
             # Manual/auto subtitles may be SRT or VTT when conversion was
             # unavailable; keep the pre-check aligned with subtitle discovery.
@@ -192,6 +198,8 @@ class DownloadMixin:
                 self.get_full_path(f".{code}.vtt"),
                 self.get_full_path(f".a.{code}.vtt"),
             ]
+            if code == bare_credit:
+                candidates += [self.get_full_path(".srt"), self.get_full_path(".vtt")]
             existing_path = next(
                 (path for path in candidates if os.path.isfile(path)), None
             )
@@ -548,10 +556,18 @@ class DownloadMixin:
                     )
 
                 # Process subtitles (now downloaded together with video)
+                downloaded_subs = []
+                bare_name = False
                 if selected_langs:
                     self._emit("append_output", "\nProcessing subtitles...")
+                    found_subs = self._find_downloaded_subtitles(selected_langs)
+                    # One subtitle for the whole video carries no information
+                    # in its name: store it as "<title>.srt" instead of
+                    # "<title>.en.srt". Two or more files keep their code -
+                    # that is what tells them apart.
+                    bare_name = self._uses_bare_subtitle_name(len(found_subs))
                     downloaded_subs = self._normalize_subtitle_names(
-                        self._find_downloaded_subtitles(selected_langs)
+                        found_subs, bare=bare_name
                     )
 
                     if downloaded_subs:
@@ -562,6 +578,14 @@ class DownloadMixin:
                             f"💬 Subtitles identified: {', '.join(report_langs)}"
                         )
 
+                        if bare_name:
+                            final_name = os.path.basename(
+                                self._subtitle_output_path(downloaded_subs[0][0], bare=True)
+                            )
+                            self._emit("append_output",
+                                f"  → single subtitle, stored as: {final_name}"
+                            )
+
                         # Process subtitles: merge auto-generated ones for 2-line
                         # display where the site needs it (YouTube), but leave
                         # subs untouched that are already well-formatted (real
@@ -571,7 +595,9 @@ class DownloadMixin:
                                 self._emit("append_output", f"  → {lang} ({sub_type}): keeping original format")
                             else:
                                 self._emit("append_output", f"  → {lang} (auto): merging into 2-line format")
-                                self._resync_subtitle_for_language(lang, srt_path, [])
+                                self._resync_subtitle_for_language(
+                                    lang, srt_path, [], bare=bare_name
+                                )
                     else:
                         self._emit("append_output", "👉 No subtitles were downloaded.")
 
@@ -583,6 +609,15 @@ class DownloadMixin:
 
                 # Cleanup (deletes .info.json and original subtitles)
                 self.cleanup_files(selected_langs)
+
+                # A language-less subtitle from an earlier single-language run
+                # is superseded once this run stored language-tagged files.
+                if selected_langs and downloaded_subs and not bare_name:
+                    removed_bare = self._remove_superseded_bare_subtitle()
+                    if removed_bare:
+                        self._emit("append_output",
+                            f"  → removed superseded subtitle: {os.path.basename(removed_bare)}"
+                        )
 
                 # Post Download Analysis (uses cached metadata)
                 # Skip if we only downloaded subtitles (as no new media was created)
@@ -672,9 +707,9 @@ class DownloadMixin:
 
         # Clean up original/auto-generated files
         for code in selected_langs:
-            # We always output to Title.[lang].srt.
-            # So we only need to clean up Title.[lang].a.srt if it exists,
-            # as it was replaced by the processed Title.[lang].srt.
+            # We always output to Title.[lang].srt (or Title.srt for a video
+            # with a single subtitle), so we only need to clean up the
+            # Title.[lang].a.srt that it replaced, if it is still there.
             auto_srt = self.get_full_path(f".a.{code}.srt")
             if os.path.exists(auto_srt):
                 try:

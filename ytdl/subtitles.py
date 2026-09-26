@@ -151,20 +151,63 @@ class SubtitleMixin:
             downloaded_subs.append((lang, chosen, found_sub_files[chosen][1]))
         return downloaded_subs
 
-    def _normalize_subtitle_names(self, downloaded_subs):
+    def _uses_bare_subtitle_name(self, subtitle_count=1):
+        """Whether subtitle files are stored without a language code.
+
+        "<title>.en.srt" repeats what the name already implies when only one
+        subtitle file was produced, so the file is simply "<title>.srt" - the
+        name players and editors expect. With two or more files the code is the
+        only thing that tells them apart, so it is kept.
+
+        The count is the number of files that actually landed, not the number of
+        selected languages: two selected languages resolve to a single file
+        when the site offers only one of them.
         """
-        Rename site-specific subtitle files to the canonical "<base>.<lang>.srt"
-        name (YouTube-style), returning an updated (lang, path, sub_type) list.
+        return subtitle_count == 1
+
+    def _bare_subtitle_credit(self, selected_langs):
+        """Which requested language a language-less "<title>.srt" may count for.
+
+        The bare name does not record its language, so it can only be trusted
+        when the request covers every language the site offers for this video:
+        the file then has to be one of them. At most ONE language is credited -
+        a request for several languages still misses the others, so it is
+        re-requested and the folder ends up language-tagged again.
+
+        Returns None when the file cannot be attributed: without an info fetch
+        the offered languages are unknown, and when the site offers a language
+        that was NOT requested the bare file may well be that other language.
+        Crediting it anyway would skip the download and silently leave the
+        wrong language on disk.
+        """
+        if not selected_langs:
+            return None
+        offered = set(self.video_state.get("available_subtitles") or {})
+        if offered and offered.issubset(set(selected_langs)):
+            return selected_langs[0]
+        return None
+
+    def _subtitle_output_path(self, lang, extension=".srt", bare=False):
+        """Path the processed subtitle file for `lang` is written to."""
+        if bare:
+            return self.get_full_path(extension)
+        return self.get_full_path(f".{lang}{extension}")
+
+    def _normalize_subtitle_names(self, downloaded_subs, bare=False):
+        """
+        Rename site-specific subtitle files to the canonical name -
+        "<base>.<lang>.srt", or "<base>.srt" when `bare` (one file for the
+        whole video) - returning an updated (lang, path, sub_type) list.
 
         yt-dlp names subtitle files after the site's subtitle key, e.g. Rumble
         writes "<base>.en-auto.srt". Post-processing (_resync_subtitle_for_language)
-        always writes the canonical "<base>.en.srt" - without this rename, both
-        the site-named original and the processed canonical file end up on disk.
+        always writes the canonical name - without this rename, both the
+        site-named original and the processed canonical file end up on disk.
         After renaming, resync overwrites the single file in place.
         """
         normalized = []
         for lang, srt_path, sub_type in downloaded_subs:
-            canonical = self.get_full_path(f".{lang}.srt")
+            canonical = self._subtitle_output_path(lang, bare=bare)
             if srt_path != canonical and srt_path and os.path.exists(srt_path):
                 try:
                     os.replace(srt_path, canonical)
@@ -175,6 +218,31 @@ class SubtitleMixin:
                     logger.warning(f"Could not rename subtitle file {srt_path}: {e}")
             normalized.append((lang, srt_path, sub_type))
         return normalized
+
+    def _remove_superseded_bare_subtitle(self):
+        """Drop a language-less "<base>.srt" that language-tagged files replaced.
+
+        Only reachable when a video offers more than one subtitle language now,
+        while an earlier run (when it offered just one) stored its single
+        subtitle without a code. This run's tagged files supersede that
+        content, and the leftover's language can no longer be read from its
+        name, so it is removed rather than silently duplicating a track.
+
+        Returns the removed path, or None if there was nothing to remove.
+        """
+        removed = None
+        for extension in (".srt", ".vtt"):
+            path = self.get_full_path(extension)
+            if not os.path.isfile(path):
+                continue
+            try:
+                os.remove(path)
+            except OSError as e:
+                logger.warning(f"Could not remove superseded subtitle {path}: {e}")
+                continue
+            logger.info(f"Removed superseded language-less subtitle: {path}")
+            removed = path
+        return removed
 
     def _subtitle_needs_resync(self, sub_type):
         """
@@ -189,16 +257,17 @@ class SubtitleMixin:
         site = self.video_state.get("site", DEFAULT_SITE)
         return site_resyncs_auto_subs(site)
 
-    def _resync_subtitle_for_language(self, lang, srt_path, removed_segments):
+    def _resync_subtitle_for_language(self, lang, srt_path, removed_segments, bare=False):
         if not os.path.exists(srt_path):
             self.signals.append_output.emit(f"No srt file: {srt_path}")
             return
 
-        # output_srt is just "Title.en.srt" (no "merged" or "resynced" suffix)
-        output_srt = self.get_full_path(f".{lang}.srt")
+        # output_srt is "Title.en.srt" (no "merged" or "resynced" suffix), or
+        # plain "Title.srt" for a video whose only subtitle needs no code.
+        output_srt = self._subtitle_output_path(lang, bare=bare)
 
         # If output_srt is different from srt_path (e.g. srt_path was .a.en.srt),
-        # we process it into the final .en.srt.
+        # we process it into the final name.
         # If they are the same, we overwrite it (safe because resync_subtitles reads into memory).
         self.resync_subtitles(srt_path, removed_segments, output_srt)
 
