@@ -238,8 +238,10 @@ class TestRetryAfterDownloadError(unittest.TestCase):
         self.assertEqual((pm.video_progress, pm.audio_progress), (984, 0))
         # The re-printed destinations are retries, not new files
         self.assertEqual(pm.download_count, 1)
-        # Single-stream download: dock fraction is the plain video fraction
-        self.assertAlmostEqual(pm.get_combined_fraction(), 0.984)
+        # Single-stream download: the video phase fills only its share of the
+        # dock bar, because a separate audio transfer may still follow. The
+        # reserved share is released when the run completes (mark_complete).
+        self.assertAlmostEqual(pm.get_combined_fraction(), 0.984 * 0.85)
 
     def test_progress_signal_tracks_video_stream_through_retries(self):
         feed(self.gui, make_state(self.gui), VIDEO_WITH_RETRIES_LINES)

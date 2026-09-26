@@ -49,6 +49,12 @@ class DownloadProgressManager:
         self.active_stream = self.STREAM_VIDEO
         self.download_count = 0
         self.started = False
+        # Set by mark_complete(), i.e. a run that ended with exit code 0. The
+        # dock overlay needs it to report the terminal 1.0 when the download
+        # turned out to be a single muxed stream: the video phase is scaled
+        # down to VIDEO_BYTE_WEIGHT to leave room for a possible audio
+        # transfer, and that reservation is only released once the run is over.
+        self.completed = False
         # Last "[download] Destination:" path seen. yt-dlp RE-PRINTS the
         # destination of the file it is RETRYING after a network error, so
         # a repeated destination must not advance the stream accounting.
@@ -107,6 +113,7 @@ class DownloadProgressManager:
         return self.video_progress, self.audio_progress
 
     def mark_complete(self) -> tuple[int, int]:
+        self.completed = True
         if self.media_type == "audio":
             self.audio_progress = self.PROGRESS_MAX
         elif self.media_type == "video_only":
@@ -120,15 +127,26 @@ class DownloadProgressManager:
         return self.video_progress, self.audio_progress
 
     def get_combined_fraction(self) -> float:
-        """Overall progress for dock icon overlay (0.0 – 1.0)."""
+        """Overall progress for dock icon overlay (0.0 - 1.0).
+
+        Monotonic by construction: the video transfer only fills its share of
+        the bar (VIDEO_BYTE_WEIGHT) and the audio transfer the rest, so the
+        overlay keeps rising when the second stream starts. Returning the plain
+        video fraction during the video phase instead painted the bar to 100%
+        and then dropped it back to VIDEO_BYTE_WEIGHT the moment the audio
+        destination appeared - the overlay visibly jumped backwards.
+        """
         v = self.video_progress / self.PROGRESS_MAX
         a = self.audio_progress / self.PROGRESS_MAX
         if self.media_type == "audio":
             return a
         if self.media_type == "video_only":
             return v
-        if self.download_count <= 1 and self.audio_progress == 0:
-            return v
+        if self.completed and self.audio_progress == 0:
+            # Single muxed stream: no audio transfer followed the video, so it
+            # owned the whole bar after all (and the run is over, so nothing
+            # can still arrive in the reserved share).
+            return 1.0
         return (
             v * self.VIDEO_BYTE_WEIGHT + a * self.AUDIO_BYTE_WEIGHT
         )

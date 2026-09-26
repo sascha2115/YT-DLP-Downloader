@@ -492,6 +492,14 @@ class DownloadMixin:
             if had_download_progress and exit_code == 0:
                 completed_progress = progress_manager.mark_complete()
                 self._emit("update_download_progress", *completed_progress)
+                # Push the terminal dock fraction explicitly. During the run the
+                # overlay only reaches the video's share of the bar (an audio
+                # transfer may still follow), so a single muxed download would
+                # otherwise sit at 85% forever - should_redraw_dock() always
+                # repaints the 1.0 endpoint, so this lands the final frame.
+                self._emit("update_dock_progress",
+                    progress_manager.get_combined_fraction()
+                )
 
             if exit_code == 0:
                 # Post-processing phase: keep the busy spinner visible while we
