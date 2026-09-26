@@ -79,7 +79,30 @@
 - `temp/analyze_app_split.py` / `temp/analyze_odysee.py` – analysis helpers (method inventory; summarize a captured info JSON).
 - `temp/test_dock_progress.py` is NOT a unittest – it is a manual AppKit dock-tile demo script.
 - No global test suite, no coverage tooling, no CI.
+
 - **Coverage gaps (UI layer):** `open_thumbnail_dialog` (threaded fetch → queued signal → Qt dialog) and `open_log_dialog` (tail logic, HTML coloring; only its Qt-free `_truncate_log_file()` helper is covered, by `temp/test_log_clear.py`) have no automated tests. Both require a Qt event loop or mock framework to test meaningfully — shallow tests would not have caught the `QTimer.singleShot`-from-worker-thread regression that silently dropped the dialog in Qt 6. The correct pattern for new GUI logic is to extract the pure part (see `apply_episode_rules()` in `info_fetch.py` as a model) and test that independently.
+
+## Shell command limits (agent tooling)
+**Cline's terminal setting should be `background exec`.** With the VS-terminal backend, input over roughly a kilobyte was corrupted: the command came back echoed two or three times, interleaved, and the process never started. Measured (each attempt discarded, nothing applied):
+
+| command | input | "vs terminal" |
+|---|---|---|
+| 1 line | ~50 B | ok |
+| 3 lines, no heredoc | ~90 B | ok |
+| 1 line | ~470 B | ok |
+| heredoc, 26 lines | ~80 B | ok |
+| heredoc, 26 lines | ~1700 B | **broken** (echoed twice, never ran) |
+| heredoc, 50 lines | ~2900 B | **broken** (a `git add` in the same batch silently did not run) |
+
+It was **total size, not line count** — a 26-line heredoc of 80 B is fine, and heredocs were never the problem. With `background exec` the same payloads run correctly (verified up to ~4 KB), so the size limit is no longer a constraint; the rule below is a cheap habit, not a necessity.
+
+Two failure properties that outlive the setting, because both cost time when unnoticed:
+- **A corrupted command changes nothing** — the process never starts, and commands *after it in the same batch* silently never run (a `git add` went missing that way). After a failure, check `git status` or re-run a small probe instead of retrying the same payload.
+- **Captured output can be polluted** (a stray `%` from the shell's progress indicator), so pipe long output through `grep`/`tail` and parse that, not the raw buffer.
+
+House rules:
+- Keep shell commands to a single short line. Write file *content* with the editor tool (chunked if needed — it rejects payloads over 6000 chars) and let the shell only **run** it: `python3 temp/script.py`, `git commit -F /tmp/msg.txt`. Inline content is fragile for ordinary reasons too (quoting/escaping, shell history).
+- Throwaway scripts go to `/tmp`, written with the editor rather than piped in.
 
 ## Dock tile
 - The overlay's overall fraction (`DownloadProgressManager.get_combined_fraction()`) is **monotonic**: the video transfer fills only its share of the bar (`VIDEO_BYTE_WEIGHT` 0.85) and the audio transfer the rest, so the bar keeps rising when the second stream starts. It used to return the plain video fraction during the video phase and switch to the byte-weighted sum afterwards — with the audio at 0% that is 0.85, so the bar painted to 100% and then visibly jumped *back* to ~85% before climbing again. The 0.85 reservation is released by `mark_complete()` (`completed` flag) for a download that turned out to be a single muxed stream; `run_download()` therefore pushes the terminal `update_dock_progress` itself, since the last percent line only reaches the video's share.
