@@ -1,0 +1,13 @@
+{
+    // The repo's lint policy lives in .pylintrc (deliberate disables, documented
+    // in AGENTS.md). pylint only finds it automatically when it is run from the
+    // workspace root; the editor does not always, and without it every file is
+    // reported as missing-function-docstring, which this codebase ignores on
+    // purpose (module docstrings + explanatory comments, not one docstring per
+    // function). Passing the path explicitly makes the editor agree with
+    // `python3 -m pylint ytdl main.py`, which is the source of truth.
+    "pylint.args": ["--rcfile=${workspaceFolder}/.pylintrc"],
+    // The old built-in linter is deprecated and cannot see the rcfile reliably;
+    // keep it off so only ms-python.pylint reports.
+    "python.linting.enabled": false
+}
