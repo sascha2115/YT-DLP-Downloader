@@ -93,15 +93,42 @@ class SubtitleMixin:
                 variants.extend([key, f"a.{key}", f"{key}-auto", f"a.{key}-auto"])
         return ",".join(variants)
 
+    def _subtitle_type_for_file(self, lang, marked_auto):
+        """
+        "auto" (site-generated) or "real" (manual) for a downloaded subtitle file.
+
+        A file name only proves a track is auto-generated when the SITE named
+        it that way (Rumble's "en-auto"). It does NOT work for YouTube: current
+        yt-dlp merges "--write-subs" and "--write-auto-subs" into one language
+        namespace (a manual track wins the slot) and writes automatic captions
+        as plain "<title>.en.srt" - no "a." prefix, exactly like a manual
+        track. Treating every unmarked name as "real" therefore disabled the
+        2-line merge for every YouTube ASR video and stored the raw rolling
+        captions instead (see _subtitle_needs_resync).
+
+        So an unmarked name is resolved through the info fetch, which knows the
+        difference: video_state["available_subtitles"][lang] is "auto" when the
+        site offers no manual track for that language. Without an info fetch
+        (replays, tests) the name is the only evidence, so it stays "real".
+        """
+        if marked_auto:
+            return "auto"
+        base = canonical_subtitle_lang(lang)
+        offered = (self.video_state.get("available_subtitles") or {}).get(base)
+        if offered in ("auto", "real"):
+            return offered
+        return "real"
+
     def _find_downloaded_subtitles(self, selected_langs):
         """
         Locate downloaded subtitle files for the requested languages.
 
-        Sites name subtitle files differently: YouTube "en.srt"/"a.en.srt",
-        Rumble "en-auto.srt" (its generated subs live in `subtitles` under
-        "<code>-auto"). The full output filename is "<base>.<lang>.<ext>",
-        so scan the output directory once and map every subtitle suffix back
-        to the requested base language.
+        Sites name subtitle files differently: YouTube writes both manual and
+        auto-generated tracks as "<base>.<lang>.srt", Rumble names its generated
+        subs "en-auto.srt" (they live in `subtitles` under "<code>-auto"). The
+        full output filename is "<base>.<lang>.<ext>", so scan the output
+        directory once and map every subtitle suffix back to the requested base
+        language.
 
         Returns a list of (lang, path, sub_type) with sub_type
         "real" or "auto", preferring real/manual and canonical names.
@@ -112,7 +139,9 @@ class SubtitleMixin:
             for fname in os.listdir(out_dir):
                 # Suffix match: the base filename (video title) is arbitrary;
                 # only the trailing "<lang>[-auto].srt/vtt" part identifies a
-                # subtitle file. "a." prefix marks YouTube auto-subs.
+                # subtitle file. An "a." prefix or a "-auto" suffix marks a
+                # generated track; an unmarked name is resolved via the info
+                # fetch (see _subtitle_type_for_file).
                 m = re.search(
                     r"(?P<prefix>a\.)?(?P<lang>[A-Za-z0-9]+)(?P<auto>-auto)?\.(?P<ext>srt|vtt)$",
                     fname,
@@ -120,7 +149,8 @@ class SubtitleMixin:
                 if not m:
                     continue
                 lang = m.group("lang").lower()
-                sub_type = "auto" if (m.group("prefix") or m.group("auto")) else "real"
+                marked_auto = bool(m.group("prefix") or m.group("auto"))
+                sub_type = self._subtitle_type_for_file(lang, marked_auto)
                 found_sub_files[os.path.join(out_dir, fname)] = (lang, sub_type, m.group("ext"))
         except OSError:
             pass

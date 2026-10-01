@@ -109,6 +109,65 @@ class TestFindDownloadedSubtitles(unittest.TestCase):
         self.assertEqual(path, os.path.join(d, "Title.deu.srt"))
 
 
+class TestSubtitleTypeForFile(unittest.TestCase):
+    """real/auto must come from the info fetch when the filename cannot say.
+
+    yt-dlp writes YouTube's automatic captions as "<title>.en.srt" - the same
+    name it uses for a manual track ("--write-subs"/"--write-auto-subs" share
+    one language namespace, and the "a." prefix is not produced). Reading the
+    filename alone classified every YouTube ASR track as "real", which
+    switched off the 2-line merge and stored the raw rolling captions.
+    """
+
+    def _harness(self, files, available=None, site="youtube"):
+        d = tempfile.mkdtemp()
+        for name in files:
+            with open(os.path.join(d, name), "w") as fh:
+                fh.write("sub")
+        h = SubtitleHarness(d)
+        h.video_state["site"] = site
+        if available is not None:
+            h.video_state["available_subtitles"] = available
+        return h
+
+    def test_unmarked_youtube_asr_is_auto(self):
+        h = self._harness(["Title.en.srt"], available={"en": "auto"})
+        self.assertEqual(h._find_downloaded_subtitles(["en"])[0][2], "auto")
+
+    def test_unmarked_manual_track_stays_real(self):
+        # A video whose English track was uploaded by the channel: the same
+        # filename, but the info fetch reports a manual track, so the file
+        # must be left untouched.
+        h = self._harness(["Title.en.srt"], available={"en": "real"})
+        self.assertEqual(h._find_downloaded_subtitles(["en"])[0][2], "real")
+
+    def test_unmarked_without_info_fetch_falls_back_to_real(self):
+        # Replays/tests have no info fetch: the name is the only evidence.
+        h = self._harness(["Title.en.srt"])
+        self.assertEqual(h._find_downloaded_subtitles(["en"])[0][2], "real")
+
+    def test_site_named_generated_track_stays_auto_without_info(self):
+        # Rumble's own "en-auto" key proves it; no info fetch needed.
+        h = self._harness(["Title.en-auto.srt"], site="rumble")
+        self.assertEqual(h._find_downloaded_subtitles(["en"])[0][2], "auto")
+
+    def test_iso639_2_name_uses_canonical_language_lookup(self):
+        h = self._harness(["Title.deu.srt"], available={"de": "auto"})
+        self.assertEqual(h._find_downloaded_subtitles(["de"])[0][2], "auto")
+
+    def test_youtube_asr_reaches_the_merge(self):
+        # End-to-end gate: the detected type must actually enable the merge.
+        h = self._harness(["Title.en.srt"], available={"en": "auto"})
+        _lang, _path, sub_type = h._find_downloaded_subtitles(["en"])[0]
+        self.assertTrue(h._subtitle_needs_resync(sub_type))
+
+    def test_youtube_asr_still_untouched_on_non_resync_site(self):
+        # The site gate is independent of the real/auto verdict.
+        h = self._harness(["Title.en.srt"], available={"en": "auto"}, site="rumble")
+        _lang, _path, sub_type = h._find_downloaded_subtitles(["en"])[0]
+        self.assertFalse(h._subtitle_needs_resync(sub_type))
+
+
 class TestNormalizeSubtitleNames(unittest.TestCase):
     def _harness(self, files):
         d = tempfile.mkdtemp()
