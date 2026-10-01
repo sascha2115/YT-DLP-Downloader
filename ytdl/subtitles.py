@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
+from ytdl.subtitle_layout import layout_cues
 from ytdl.utils import (
     SUBTITLE_LANG_ALIASES,
     canonical_subtitle_lang,
@@ -20,24 +21,24 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------
 # Display-layout thresholds
 # ----------------------------------------------------------------------------------------------------
-# Three passes plus the wrapper judge "does this text fit on a line?" and "are
-# these two cues the same event?", so the thresholds live here instead of being
-# repeated in three signatures. These are the values the pipeline has always
-# used: hoisted, NOT retuned - the written file must come out unchanged.
+# Sized in WORDS, not characters: sentence length is stable across languages and
+# channels (median 9-12 words across six real captures) while character counts
+# swing with the language alone (11.7 vs 18.8 chars/sec at the same word rate).
 #
-# _smart_wrap keeps its own 42-char default on purpose: it is a generic helper,
-# and its one call site passes MAX_LINE_CHARS deliberately.
-MAX_LINE_CHARS = 50
-# Pairing two cues into one two-line event. Both merge passes must agree on
-# these, so they share one definition.
-MAX_MERGE_GAP_S = 1.0
-MAX_CUE_DURATION_S = 6.0
-# Independent knobs of the boundary pass. PAUSE_THRESHOLD_S happens to equal
-# MAX_MERGE_GAP_S, but it answers a different question ("is this a long pause?"
-# vs "do these cues belong together"), so the two are not merged into one.
-PAUSE_THRESHOLD_S = 1.0
-MAX_TAIL_WORDS = 3
-MIN_WORDS_KEEP = 3
+# Reading speed is a property of a reader, NOT of the video, so TARGET_WPS is a
+# constant. Real captures span 2.1-3.3 words/sec - 0.9x to 1.4x of the target -
+# and the same speaker varies by 1.5x between episodes, so nothing here can be
+# calibrated per channel. MAX_WPS is the grace band: a sentence end always wins
+# up to it, and a cue is only cut early when even that does not fit.
+LAYOUT_TARGET_WPS = 2.4
+LAYOUT_MAX_WPS = 3.4
+LAYOUT_MIN_DUR = 1.0
+LAYOUT_MAX_DUR = 7.0
+LAYOUT_TARGET_WORDS = 12
+LAYOUT_CEILING_WORDS = 17
+LAYOUT_MIN_CUE_WORDS = 4
+# A pause at least this long inside a long sentence is a good place to break it
+LAYOUT_SPLIT_PAUSE_S = 0.6
 
 
 class SubtitleMixin:
@@ -443,8 +444,8 @@ class SubtitleMixin:
         # it does so silently - counted here for the summary line below.
         too_short_cues = len(subtitles) - len(adjusted_subtitles)
 
-        # Merge choppy cues, optimize around pauses/sentences, build 2-line display
-        merged_subtitles, dropped_cues = self._format_subtitles_for_display(
+        # Sentence-aligned 2-line layout (see ytdl/subtitle_layout.py)
+        merged_subtitles, layout_stats = self._format_subtitles_for_display(
             adjusted_subtitles
         )
 
@@ -495,10 +496,14 @@ class SubtitleMixin:
             + format_subtitle_stats(
                 len(adjusted_subtitles),
                 len(merged_subtitles),
-                two_line=two_line_cues,
-                no_text=no_text_cues,
-                too_short=too_short_cues,
-                dropped=dropped_cues,
+                counters={
+                    "two_line": two_line_cues,
+                    "wps": layout_stats.get("wps"),
+                    "over_target": layout_stats.get("over_target", 0),
+                    "no_text": no_text_cues,
+                    "too_short": too_short_cues,
+                    "dropped": layout_stats.get("dropped", 0),
+                },
                 name=os.path.basename(output_path),
             )
         )
@@ -568,38 +573,6 @@ class SubtitleMixin:
         # Fallback to direct calculation
         return timestamp - self._calculate_time_adjustment(timestamp, removed_segments)
 
-    def _smart_wrap(self, text, max_chars=42):
-        """
-        Splits a single line of text into at most two lines at the best space near the midpoint
-        if the text exceeds max_chars. Returns the original text if no split is possible.
-        """
-        if len(text) <= max_chars:
-            return text
-
-        words = text.split()
-        if len(words) < 2:
-            return text
-
-        # Target midpoint for a balanced split
-        midpoint = len(text) // 2
-        best_split_idx = 1  # Index of word to start second line
-        min_dist = float("inf")
-
-        current_len = 0
-        for i in range(len(words) - 1):
-            current_len += len(words[i])
-            # The space is after words[i]. Its position is current_len.
-            dist = abs(current_len - midpoint)
-            if dist < min_dist:
-                min_dist = dist
-                best_split_idx = i + 1
-            current_len += 1  # for the space
-
-        line1 = " ".join(words[:best_split_idx])
-        line2 = " ".join(words[best_split_idx:])
-
-        return f"{line1}\n{line2}"
-
     def _strip_nonspoken_brackets(self, text: str) -> str:
         """
         Remove stage directions / non-spoken tokens that commonly appear in subtitles
@@ -616,216 +589,6 @@ class SubtitleMixin:
 
     def _flatten_subtitle_text(self, text: str) -> str:
         return " ".join((text or "").replace("\n", " ").split())
-
-    def _subtitle_gap(self, cur: dict, nxt: dict) -> float:
-        return (nxt.get("start") or 0) - (cur.get("end") or 0)
-
-    def _last_sentence_boundary_index(self, text: str, min_words_before: int = 1) -> int:
-        """Index immediately after the last valid sentence-ending .!? in text, or -1."""
-        text = self._flatten_subtitle_text(text)
-        if not text:
-            return -1
-
-        last_good = -1
-        for i, ch in enumerate(text):
-            if ch not in ".!?":
-                continue
-
-            next_char = text[i + 1] if i + 1 < len(text) else ""
-            if next_char not in ("", " "):
-                continue
-
-            before = text[:i].rstrip()
-            if len(before.split()) < min_words_before:
-                continue
-
-            last_token = before.split()[-1] if before else ""
-            token_key = last_token.lower().strip("()[]{}\"'“”‘’.,:;")
-            if token_key in self._SUBTITLE_SENTENCE_ABBREVS:
-                continue
-
-            last_good = i + 1
-
-        return last_good
-
-    def _ends_with_sentence(self, text: str) -> bool:
-        flat = self._flatten_subtitle_text(text)
-        boundary = self._last_sentence_boundary_index(flat)
-        return boundary > 0 and not flat[boundary:].strip()
-
-    def _merge_choppy_subtitle_cues(
-        self,
-        subtitles,
-        max_line_chars: int = MAX_LINE_CHARS,
-        max_gap_s: float = MAX_MERGE_GAP_S,
-        max_duration_s: float = MAX_CUE_DURATION_S,
-    ):
-        """Pair rapid consecutive cues into one two-line subtitle event."""
-        if not subtitles:
-            return []
-
-        merged = []
-        i = 0
-        while i < len(subtitles):
-            cur = subtitles[i]
-            if i + 1 < len(subtitles):
-                nxt = subtitles[i + 1]
-                cur_line = self._flatten_subtitle_text(cur.get("text"))
-                nxt_line = self._flatten_subtitle_text(nxt.get("text"))
-                gap = self._subtitle_gap(cur, nxt)
-                duration = (nxt.get("end") or 0) - (cur.get("start") or 0)
-
-                if (
-                    cur_line
-                    and nxt_line
-                    and gap < max_gap_s
-                    and duration < max_duration_s
-                    and len(cur_line) < max_line_chars
-                    and len(nxt_line) < max_line_chars
-                ):
-                    merged.append(
-                        {
-                            "start": cur["start"],
-                            "end": nxt["end"],
-                            "text": f"{cur_line}\n{nxt_line}",
-                        }
-                    )
-                    i += 2
-                    continue
-
-            merged.append(
-                {
-                    "start": cur["start"],
-                    "end": cur["end"],
-                    "text": self._flatten_subtitle_text(cur.get("text")),
-                }
-            )
-            i += 1
-
-        return [s for s in merged if s.get("text")]
-
-    def _optimize_subtitle_pause_boundaries(
-        self,
-        subtitles,
-        pause_threshold_s: float = PAUSE_THRESHOLD_S,
-        max_tail_words: int = MAX_TAIL_WORDS,
-        min_words_keep: int = MIN_WORDS_KEEP,
-    ):
-        """
-        Move loose words off the end of a subtitle so pauses and sentence breaks read cleanly.
-
-        - After a sentence end: push any trailing words to the next cue (any gap).
-        - After a long pause with no sentence end: push a short tail (or whole tiny cue) forward.
-        """
-        if len(subtitles) < 2:
-            return subtitles
-
-        subs = [dict(s) for s in subtitles]
-        i = 0
-        while i < len(subs) - 1:
-            cur = subs[i]
-            nxt = subs[i + 1]
-            gap = self._subtitle_gap(cur, nxt)
-
-            cur_text = self._flatten_subtitle_text(cur.get("text"))
-            nxt_text = self._flatten_subtitle_text(nxt.get("text"))
-            if not cur_text or not nxt_text:
-                i += 1
-                continue
-
-            boundary = self._last_sentence_boundary_index(cur_text)
-            long_pause = gap >= pause_threshold_s
-
-            if boundary > 0:
-                before = cur_text[:boundary].strip()
-                tail = cur_text[boundary:].strip()
-                tail_words = tail.split()
-                if tail_words and (
-                    long_pause or len(tail_words) <= max_tail_words
-                ):
-                    if before and len(before.split()) >= min_words_keep:
-                        cur_text = before
-                        nxt_text = f"{tail} {nxt_text}".strip()
-                    elif not before:
-                        cur_text = ""
-                        nxt_text = f"{tail} {nxt_text}".strip()
-
-            elif long_pause:
-                words = cur_text.split()
-                if len(words) <= max_tail_words:
-                    nxt_text = f"{cur_text} {nxt_text}".strip()
-                    cur_text = ""
-                elif len(words) > max_tail_words + min_words_keep:
-                    tail = " ".join(words[-max_tail_words:])
-                    keep = " ".join(words[:-max_tail_words])
-                    cur_text = keep
-                    nxt_text = f"{tail} {nxt_text}".strip()
-
-            if cur_text:
-                cur["text"] = cur_text
-                nxt["text"] = nxt_text
-                i += 1
-            else:
-                nxt["text"] = nxt_text
-                subs.pop(i)
-
-        return [s for s in subs if self._flatten_subtitle_text(s.get("text"))]
-
-    def _merge_subtitle_continuations(
-        self,
-        subtitles,
-        max_line_chars: int = MAX_LINE_CHARS,
-        max_gap_s: float = MAX_MERGE_GAP_S,
-        max_duration_s: float = MAX_CUE_DURATION_S,
-    ):
-        """Re-merge short continuation cues that the boundary pass left as separate one-liners."""
-        if not subtitles:
-            return []
-
-        merged = []
-        i = 0
-        while i < len(subtitles):
-            cur = subtitles[i]
-            if i + 1 < len(subtitles):
-                nxt = subtitles[i + 1]
-                cur_line = self._flatten_subtitle_text(cur.get("text"))
-                nxt_line = self._flatten_subtitle_text(nxt.get("text"))
-                gap = self._subtitle_gap(cur, nxt)
-                duration = (nxt.get("end") or 0) - (cur.get("start") or 0)
-
-                if (
-                    cur_line
-                    and nxt_line
-                    and gap < max_gap_s
-                    and duration < max_duration_s
-                    and len(cur_line) < max_line_chars
-                    and len(nxt_line) < max_line_chars
-                    and not self._ends_with_sentence(cur_line)
-                ):
-                    merged.append(
-                        {
-                            "start": cur["start"],
-                            "end": nxt["end"],
-                            "text": f"{cur_line}\n{nxt_line}",
-                        }
-                    )
-                    i += 2
-                    continue
-
-            merged.append(dict(cur))
-            i += 1
-
-        return merged
-
-    def _wrap_subtitle_text(self, text: str, max_chars: int = MAX_LINE_CHARS) -> str:
-        flat = self._flatten_subtitle_text(text)
-        if not flat:
-            return ""
-        if "\n" in (text or ""):
-            lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-            if len(lines) == 2 and all(len(ln) <= max_chars for ln in lines):
-                return f"{lines[0]}\n{lines[1]}"
-        return self._smart_wrap(flat, max_chars)
 
     def _fix_subtitle_time_overlaps(self, subtitles):
         """Clamp overlapping cues and drop chronologically invalid entries."""
@@ -854,34 +617,26 @@ class SubtitleMixin:
         return fixed
 
     def _format_subtitles_for_display(self, subtitles):
-        """
-        Full auto-caption layout pass:
-        1. Merge choppy single-line cues into two-line events
-        2. Shift loose words across pauses / sentence ends
-        3. Merge same-sentence continuations again
-        4. Wrap long single lines and fix timestamp overlaps
+        """Lay out parsed cues for display: sentence-aligned, two lines, timed.
 
-        Returns (cues, dropped): the cues to write, and how many the final
-        overlap fix discarded as degenerate or out-of-order. That count is
-        reported rather than swallowed - unlike the passes above it, which only
-        ever move text between neighbours, this is the one step where a cue's
-        text can be lost.
+        Delegates to ytdl.subtitle_layout (pure, no Qt) and returns
+        (cues, stats). See that module for the rules; the short version is that
+        a cue ends at a sentence end whenever it fits the word ceiling and the
+        available time, and its duration comes from the word count rather than
+        being inherited from the ASR.
         """
         if not subtitles:
-            return ([], 0)
+            return ([], {})
 
-        subs = self._merge_choppy_subtitle_cues(subtitles)
-        subs = self._optimize_subtitle_pause_boundaries(subs)
-        subs = self._merge_subtitle_continuations(subs)
-
-        formatted = []
-        for sub in subs:
-            wrapped = self._wrap_subtitle_text(sub.get("text") or "")
-            if wrapped:
-                formatted.append({**sub, "text": wrapped})
-
-        fixed = self._fix_subtitle_time_overlaps(formatted)
-        return fixed, len(formatted) - len(fixed)
+        laid_out, stats = layout_cues(
+            subtitles, abbreviations=self._SUBTITLE_SENTENCE_ABBREVS
+        )
+        # Final guard only: layout_cues already produces a monotonic,
+        # non-overlapping sequence, so this drops nothing - it is here so a
+        # future change cannot write an overlapping file.
+        fixed = self._fix_subtitle_time_overlaps(laid_out)
+        stats["dropped"] = len(laid_out) - len(fixed)
+        return fixed, stats
 
     _SUBTITLE_SENTENCE_ABBREVS = frozenset(
         {

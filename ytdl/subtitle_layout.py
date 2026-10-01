@@ -1,0 +1,289 @@
+"""Subtitle display layout: turn ASR cues into readable, sentence-aligned cues.
+
+Pure logic - no Qt, no filesystem. `layout_cues()` is the whole stage and every
+helper is a module-level function, so the behaviour can be tested without the
+app (see temp/test_subtitle_layout.py and the six real captures
+temp/subtitle-capture-*.srt).
+
+What it replaces: three heuristic passes (pair choppy cues -> shift words across
+pauses -> pair again). Those produced two-line cues whose line break was a
+character midpoint and whose boundaries were inherited from the ASR's
+time-based chunking, so ~75% of subtitles ended mid-sentence - they closed
+wherever a 50-character budget happened to fall.
+
+The rule here is a compromise, in this order:
+  1. a cue ends at a sentence end whenever one fits the shape and the time;
+  2. a sentence too long for the shape is broken at a pause or clause mark;
+  3. a cue never overlaps the next one, and never shows for less than
+     LAYOUT_MIN_DUR.
+Timing: starts stay on the ASR grid (the source cue that carries the first
+word), durations come from the word count at the effective reading speed. That
+is the one thing the old pipeline never did - it inherited the ASR's durations.
+"""
+
+import re
+
+# Display-layout targets.
+#
+# Sized in WORDS, not characters: sentence length is stable across languages and
+# channels (median 9-12 words across six real captures) while character counts
+# swing with the language alone (11.7 vs 18.8 chars/sec at the same word rate).
+#
+# Reading speed is a property of a reader, NOT of the video, so TARGET_WPS is a
+# constant. Real captures span 2.1-3.3 words/sec - 0.9x to 1.4x of the target -
+# and the same speaker varies by 1.5x between episodes, so nothing here can be
+# calibrated per channel. MAX_WPS is the grace band: a sentence end always wins
+# up to it, and a cue is only cut early when even that does not fit.
+LAYOUT_TARGET_WPS = 2.4
+LAYOUT_MAX_WPS = 3.4
+LAYOUT_MIN_DUR = 1.0
+LAYOUT_MAX_DUR = 7.0
+LAYOUT_TARGET_WORDS = 12
+LAYOUT_CEILING_WORDS = 17
+LAYOUT_MIN_CUE_WORDS = 4
+# Two fragments closer together than a minimum display have to be shown as one
+# cue - stacking is worse than a slightly longer cue. This ceiling only applies
+# to that forced merge, never to normal packing.
+LAYOUT_MERGE_CEILING_WORDS = 21
+# A pause at least this long inside a long sentence is a good place to break it
+LAYOUT_SPLIT_PAUSE_S = 0.6
+
+_SENTENCE_END = re.compile(r"[.!?][\"'’”)\]]*$")
+_CLAUSE_END = (",", ";", ":", "—", "–", "-")
+
+DEFAULT_ABBREVIATIONS = frozenset(
+    {"dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e"}
+)
+
+
+def word_stream(cues):
+    """Flatten cues to (word, time, source cue index).
+
+    Times are interpolated evenly inside each source cue: the ASR only gives
+    cue-level windows, and this is what cue starts are derived from.
+
+    The ASR windows themselves OVERLAP (a rolling window covers text that the
+    next one repeats in time), so the interpolated times are forced to be
+    non-decreasing - otherwise a later cue gets an earlier time than the one
+    before it, and two output cues end up out of order.
+    """
+    words = []
+    previous = 0.0
+    for index, cue in enumerate(cues):
+        parts = (cue.get("text") or "").split()
+        if not parts:
+            continue
+        start = cue.get("start") or 0.0
+        span = max((cue.get("end") or 0) - start, 0.001)
+        step = span / len(parts)
+        for i, word in enumerate(parts):
+            when = max(start + step * (i + 0.5), previous)
+            words.append((word, when, index))
+            previous = when
+    return words
+
+
+def word_ends_sentence(word, abbreviations=DEFAULT_ABBREVIATIONS):
+    """Whether `word` closes a sentence (abbreviations and ellipses excluded)."""
+    if not _SENTENCE_END.search(word):
+        return False
+    return word.strip("\"'”’)]").rstrip(".!?…").lower() not in abbreviations
+
+
+def split_sentences(words, abbreviations=DEFAULT_ABBREVIATIONS):
+    """Group the word stream into sentences, cutting after each sentence end."""
+    sentences, current = [], []
+    for item in words:
+        current.append(item)
+        if word_ends_sentence(item[0], abbreviations):
+            sentences.append(current)
+            current = []
+    if current:
+        sentences.append(current)
+    return sentences
+
+
+def split_long_sentence(sentence, ceiling=LAYOUT_CEILING_WORDS,
+                        pause_s=LAYOUT_SPLIT_PAUSE_S):
+    """Break a sentence that cannot fit the shape into fragments.
+
+    Only ~70% of sentences fit two lines, so this path is the exception, not the
+    rule: prefer a real pause, then clause punctuation, and only then fall back
+    to the hard ceiling.
+    """
+    if len(sentence) <= ceiling:
+        return [sentence]
+
+    fragments, current = [], []
+    for item in sentence:
+        current.append(item)
+        if len(current) < ceiling:
+            continue
+        cut = len(current)
+        for j in range(len(current) - 1, max(len(current) - 5, 1) - 1, -1):
+            previous, following = current[j - 1], current[j]
+            if (following[1] - previous[1] >= pause_s
+                    or previous[0].endswith(_CLAUSE_END)):
+                cut = j
+                break
+        fragments.append(current[:cut])
+        current = current[cut:]
+    if current:
+        fragments.append(current)
+    return fragments
+
+
+def split_lines(sentence, target_words=LAYOUT_TARGET_WORDS):
+    """One line when it fits, otherwise two balanced ones."""
+    texts = [item[0] for item in sentence]
+    if len(texts) <= (target_words + 1) // 2:
+        return " ".join(texts)
+    half = len(texts) / 2
+    cut = round(half)
+    for j in range(round(half), max(round(half) - 3, 1) - 1, -1):
+        if j < len(texts) and (
+            texts[j - 1].endswith(_CLAUSE_END) or word_ends_sentence(texts[j - 1])
+        ):
+            cut = j
+            break
+    return " ".join(texts[:cut]) + "\n" + " ".join(texts[cut:])
+
+
+def effective_wps(natural_wps, target=LAYOUT_TARGET_WPS, ceiling=LAYOUT_MAX_WPS):
+    """Reading speed to lay this video out at.
+
+    Never slower than the readability target, and at most the grace band above
+    it. A video that speaks faster than the band is simply laid out at its own
+    pace - that is reported, not hidden, because exceeding the target is then
+    unavoidable rather than a packing failure.
+    """
+    if natural_wps <= 0:
+        return target
+    return min(max(natural_wps, target), ceiling)
+
+
+def pack_sentences(sentences, wps, ceiling_words=LAYOUT_CEILING_WORDS,
+                   min_dur=LAYOUT_MIN_DUR, max_dur=LAYOUT_MAX_DUR,
+                   merge_ceiling=LAYOUT_MERGE_CEILING_WORDS):
+    """Group sentences into cues.
+
+    Greedy with look-ahead: take the furthest sentence end that fits the word
+    ceiling AND leaves enough time to read what is already there before the
+    next sentence starts. The time test is local, not average - a speaker who
+    bursts through a sentence needs a shorter cue there even when the video
+    overall is comfortable.
+
+    Two exceptions, both forced rather than chosen:
+      * a single sentence is always emitted whole (it cannot be dropped), even
+        when it does not fit the time available;
+      * two fragments closer together than a minimum display are merged up to
+        the (larger) merge ceiling, because two cues that close cannot both be
+        on screen without stacking.
+    """
+    starts = [sentence[0][1] for sentence in sentences]
+    lengths = [len(sentence) for sentence in sentences]
+    groups = []
+    index = 0
+    while index < len(sentences):
+        best = index
+        total = 0
+        for j in range(index, len(sentences)):
+            total += lengths[j]
+            if total > merge_ceiling:
+                break
+            available = starts[j + 1] - starts[index] if j + 1 < len(sentences) else max_dur
+            # The boundary created by including sentence j sits between its
+            # last word and the next sentence's first word - that is the gap
+            # that decides whether two cues would have to be shown at once.
+            boundary_gap = (
+                starts[j + 1] - sentences[j][-1][1] if j + 1 < len(sentences) else max_dur
+            )
+            roomy = total <= ceiling_words and total / wps <= available
+            forced_merge = boundary_gap < min_dur
+            if j == index or roomy or forced_merge:
+                best = j
+            else:
+                break
+        groups.append([w for k in range(index, best + 1) for w in sentences[k]])
+        index = best + 1
+    return groups
+
+
+def assign_timings(groups, wps, min_dur=LAYOUT_MIN_DUR,
+                   max_dur=LAYOUT_MAX_DUR, target_words=LAYOUT_TARGET_WORDS):
+    """Durations from the boundaries the packer chose.
+
+    A cue starts at the estimated time of its own first word - the midpoint of
+    that word's slice inside its ASR window, so still YouTube's clock, strictly
+    increasing in word order - and lasts until the next cue starts.
+
+    Three things cannot all hold at once when a speaker is faster than readable:
+    reading time, on-time starts, and no overlap. Starts win: a subtitle that
+    appears a second late is worse than one shown a moment too briefly, and the
+    moment is bounded by the (already merged) gap to the next cue. Cues that
+    end earlier than their reading time need are counted as `over_target`, so
+    the density of the material is visible instead of silent.
+    """
+    cues = []
+    over_target = 0
+    tight = 0
+    for index, group in enumerate(groups):
+        needed = len(group) / wps
+        start = group[0][1]
+        duration = min(max_dur, max(min_dur, needed))
+
+        if index + 1 < len(groups):
+            gap = groups[index + 1][0][1] - start
+            duration = min(duration, max(gap, 0.0))
+            if gap < min_dur:
+                tight += 1
+
+        if duration < needed - 1e-6:
+            over_target += 1
+        if duration <= 0:
+            duration = min_dur
+
+        cues.append({
+            "start": round(start, 3),
+            "end": round(start + duration, 3),
+            "duration": duration,
+            "needed": needed,
+            "words": len(group),
+            "text": split_lines(group, target_words),
+        })
+
+    stats = {
+        "cues": len(cues),
+        "two_line": sum(1 for c in cues if "\n" in c["text"]),
+        "over_target": over_target,
+        "tight": tight,
+        "words": sum(c["words"] for c in cues),
+    }
+    return cues, stats
+
+
+def layout_cues(cues, abbreviations=DEFAULT_ABBREVIATIONS):
+    """Lay out parsed ASR cues for display. Returns (cues, stats).
+
+    `cues` are dicts with start/end/text (already SponsorBlock-adjusted when
+    segments were removed). Stats describe the run for the log line.
+    """
+    usable = [c for c in cues if (c.get("text") or "").strip()]
+    if not usable:
+        return [], {"cues": 0, "two_line": 0, "over_target": 0, "pushed": 0, "words": 0}
+
+    span = max(usable[-1]["end"] - usable[0]["start"], 0.001)
+    natural_wps = sum(len((c.get("text") or "").split()) for c in usable) / span
+    wps = effective_wps(natural_wps)
+
+    words = word_stream(usable)
+    sentences = split_sentences(words, abbreviations)
+    fragments = []
+    for sentence in sentences:
+        fragments.extend(split_long_sentence(sentence))
+    groups = pack_sentences(fragments, wps)
+
+    laid_out, stats = assign_timings(groups, wps)
+    stats["natural_wps"] = round(natural_wps, 2)
+    stats["wps"] = round(wps, 2)
+    return laid_out, stats

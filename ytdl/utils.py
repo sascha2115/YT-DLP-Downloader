@@ -185,27 +185,33 @@ def format_srt_time(seconds):
 # ----------------------------------------------------------------------------------------------------
 # Describe what a subtitle layout run did
 # ----------------------------------------------------------------------------------------------------
-def format_subtitle_stats(
-    cues_in, cues_out, two_line=0, no_text=0, too_short=0, dropped=0, name=None
-):
+def format_subtitle_stats(cues_in, cues_out, counters=None, name=None):
     """One-line summary of a subtitle layout run.
 
-    "Title.srt: 2957 in → 1787 out · 1028 two-line · 8 no text · 9 too short"
+    "Title.srt: 417 in → 152 out · 147 two-line · 3.2 wps · 84 over target"
 
-    Only "in → out" and the two-line count are unconditional: they describe what
-    the run produced. The three loss counters appear when non-zero, and between
-    them they account for every block that did not survive as a cue, so the
-    numbers reconcile with the cue count in the file the user can open.
+    "in → out" and the two-line count always describe what the run produced.
+    `counters` may carry wps (the rate the video was laid out at, so a viewer
+    can tell a dense video from a packing failure), over_target (cues that could
+    not be given their full reading time), and the loss counters. Everything
+    except the two-line count is omitted when it is zero or missing.
 
-    Pure formatter (no Qt, no filesystem): the counts are taken where the
-    layout runs, this only renders them.
+    Pure formatter (no Qt, no filesystem): the counts are taken where the layout
+    runs, this only renders them.
     """
-    parts = [f"{cues_in} in → {cues_out} out", f"{two_line} two-line"]
-    if no_text:
-        parts.append(f"{no_text} no text")
-    if too_short:
-        parts.append(f"{too_short} too short")
-    if dropped:
-        parts.append(f"{dropped} dropped")
+    counters = counters or {}
+    parts = [f"{cues_in} in → {cues_out} out",
+             f"{counters.get('two_line', 0)} two-line"]
+    labels = (
+        ("wps", "wps"),
+        ("over_target", "over target"),
+        ("no_text", "no text"),
+        ("too_short", "too short"),
+        ("dropped", "dropped"),
+    )
+    for key, label in labels:
+        value = counters.get(key)
+        if value:
+            parts.append(f"{value} {label}")
     summary = " · ".join(parts)
     return f"{name}: {summary}" if name else summary
