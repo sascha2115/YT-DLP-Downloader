@@ -61,6 +61,40 @@ class TestFormatSubtitleStats(unittest.TestCase):
         )
 
 
+class TestNoTextIsEverLost(unittest.TestCase):
+    """The overlap guard must never drop a cue on real material.
+
+    The guard prefers shifting a cue over deleting it, so a drop means the cue
+    could not be placed even after shifting - text that would be missing from
+    the file with nothing to say so. It is zero on every capture; this test is
+    the tripwire that says so on every run.
+    """
+
+    def test_no_capture_loses_a_cue(self):
+        from temp.test_subtitle_layout import CAPTURES, read_capture
+
+        self.assertTrue(CAPTURES, "no subtitle captures found")
+        for path in CAPTURES:
+            with self.subTest(capture=os.path.basename(path)):
+                harness = _SubtitleHarness()
+                _cues, stats = harness._format_subtitles_for_display(read_capture(path))
+                self.assertEqual(stats.get("dropped", 0), 0, path)
+                self.assertEqual(stats.get("dropped_cues", []), [], path)
+
+    def test_a_lost_cue_is_reported_by_name(self):
+        # The warning path: if a cue is ever lost, the panel must name the file
+        # and the count, and the log must carry the text.
+        harness = _SubtitleHarness()
+        lost = [{"start": 12.5, "end": 13.0, "text": "ein verlorener Satz"}]
+        with self.assertLogs("ytdl.subtitles", level="WARNING") as captured:
+            harness._warn_about_dropped_cues(lost, "Title.srt")
+        self.assertTrue(any("ein verlorener Satz" in line for line in captured.output))
+        panel = [args[0] for args in harness.signals.append_output.emitted]
+        self.assertTrue(
+            any("⚠️" in line and "Title.srt" in line for line in panel), panel
+        )
+
+
 class TestSubtitlePostProcessing(unittest.TestCase):
     def setUp(self):
         self.gui = _SubtitleHarness()
@@ -70,17 +104,47 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             {"start": 10.0, "end": 10.2, "text": "first"},
             {"start": 10.05, "end": 10.3, "text": "second"},
         ]
-        fixed = self.gui._fix_subtitle_time_overlaps(subtitles)
+        fixed, _dropped = self.gui._fix_subtitle_time_overlaps(subtitles)
         self.assertEqual(fixed[0]["end"], 10.05)
         self.assertLessEqual(fixed[0]["end"], fixed[1]["start"])
 
-    def test_chronologically_invalid_cue_is_dropped(self):
+    def test_out_of_order_cue_is_shifted_not_dropped(self):
+        # A subtitle that appears a little late is much better than a missing
+        # sentence, so the guard moves the cue behind its predecessor and keeps
+        # the text. Dropping is the last resort, not the first.
         subtitles = [
             {"start": 2.0, "end": 3.0, "text": "first"},
             {"start": 1.0, "end": 4.0, "text": "out-of-order"},
         ]
-        fixed = self.gui._fix_subtitle_time_overlaps(subtitles)
-        self.assertEqual([item["text"] for item in fixed], ["first"])
+        fixed, dropped = self.gui._fix_subtitle_time_overlaps(subtitles)
+        self.assertEqual(dropped, [])
+        self.assertEqual([item["text"] for item in fixed],
+                         ["first", "out-of-order"])
+        self.assertEqual(fixed[1]["start"], 3.0)
+        self.assertGreater(fixed[1]["end"], fixed[1]["start"])
+
+    def test_cue_without_a_duration_keeps_its_text(self):
+        fixed, dropped = self.gui._fix_subtitle_time_overlaps(
+            [{"start": 5.0, "end": 5.0, "text": "no duration"}]
+        )
+        self.assertEqual(dropped, [])
+        self.assertEqual(fixed[0]["text"], "no duration")
+        self.assertGreater(fixed[0]["end"], fixed[0]["start"])
+
+    def test_written_file_ends_with_a_newline(self):
+        # A parser can drop a trailing block that has none; the SRT ends with a
+        # newline. Pinned because the file is written in one place and the
+        # detail is invisible until someone's player eats the last line.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "Title.en.srt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("1\n00:00:00,000 --> 00:00:02,000\nHallo Welt.\n\n")
+            self.assertTrue(self.gui.resync_subtitles(path, [], path))
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            self.assertTrue(content.endswith("\n"))
+            self.assertFalse(content.endswith("\n\n\n"))
+            self.assertIn("Hallo Welt.", content)
 
     def test_malformed_srt_is_not_replaced(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -102,8 +166,9 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             output = os.path.join(temp_dir, "Title.en.srt")
             with open(source, "w", encoding="utf-8") as f:
                 f.write(
-                    "1\n00:00:00,000 --> 00:00:01,000\n"
-                    "Hello\n\n"
+                    "1\n00:00:00,000 --> 00:00:01,500\n"
+                    "Hallo Welt. Das ist ein deutlich zu kurzes Fenster\n"
+                    "für diese ganze Menge an Wörtern hier.\n\n"
                 )
 
             with mock.patch.object(
@@ -117,11 +182,13 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             with open(output, encoding="utf-8") as f:
                 content = f.read()
             # The cue text survives and the SponsorBlock time map was skipped.
-            # Its TIMESTAMPS are not the source ones any more: the layout derives
-            # durations from the word count (see ytdl/subtitle_layout.py), which
-            # is the whole point of the stage.
-            self.assertIn("Hello", content)
-            self.assertNotIn("00:00:00,000 --> 00:00:01,000", content)
+            # Its duration is NOT the source one: the layout derives it from the
+            # word count (see ytdl/subtitle_layout.py). A one-second window is
+            # too small to show that - the derived duration floors at
+            # LAYOUT_MIN_DUR - so this uses a source window far too short for
+            # the text it carries.
+            self.assertIn("Hallo Welt.", content)
+            self.assertNotIn("00:00:00,000 --> 00:00:01,500", content)
 
     def test_summary_reports_what_the_layout_did(self):
         # The summary must describe the run that actually happened, so the

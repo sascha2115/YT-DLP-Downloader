@@ -18,28 +18,6 @@ from ytdl.utils import (
 
 logger = logging.getLogger(__name__)
 
-# ----------------------------------------------------------------------------------------------------
-# Display-layout thresholds
-# ----------------------------------------------------------------------------------------------------
-# Sized in WORDS, not characters: sentence length is stable across languages and
-# channels (median 9-12 words across six real captures) while character counts
-# swing with the language alone (11.7 vs 18.8 chars/sec at the same word rate).
-#
-# Reading speed is a property of a reader, NOT of the video, so TARGET_WPS is a
-# constant. Real captures span 2.1-3.3 words/sec - 0.9x to 1.4x of the target -
-# and the same speaker varies by 1.5x between episodes, so nothing here can be
-# calibrated per channel. MAX_WPS is the grace band: a sentence end always wins
-# up to it, and a cue is only cut early when even that does not fit.
-LAYOUT_TARGET_WPS = 2.4
-LAYOUT_MAX_WPS = 3.4
-LAYOUT_MIN_DUR = 1.0
-LAYOUT_MAX_DUR = 7.0
-LAYOUT_TARGET_WORDS = 12
-LAYOUT_CEILING_WORDS = 17
-LAYOUT_MIN_CUE_WORDS = 4
-# A pause at least this long inside a long sentence is a good place to break it
-LAYOUT_SPLIT_PAUSE_S = 0.6
-
 
 class SubtitleMixin:
     def get_selected_subtitle_codes(self):
@@ -466,11 +444,14 @@ class SubtitleMixin:
             resynced_blocks.append(block)
 
         # Write beside the destination and replace atomically so a failed write
-        # never truncates the original subtitle file.
+        # never truncates the original subtitle file. Blocks are joined by a
+        # blank line and the file ends with a newline: that is the shape an SRT
+        # is expected to have, and a parser can drop a trailing block that has
+        # none.
         temp_path = f"{output_path}.tmp"
         try:
             with open(temp_path, "w", encoding="utf-8") as f:
-                f.write("\n\n".join(resynced_blocks))
+                f.write("\n\n".join(resynced_blocks) + "\n")
             os.replace(temp_path, output_path)
         except OSError:
             try:
@@ -507,7 +488,36 @@ class SubtitleMixin:
                 name=os.path.basename(output_path),
             )
         )
+        self._warn_about_dropped_cues(layout_stats.get("dropped_cues") or [],
+                                      os.path.basename(output_path))
         return True
+
+    def _warn_about_dropped_cues(self, dropped, name):
+        """Report cues the overlap guard could not place, by name.
+
+        Should never fire - the layout produces a monotonic sequence, and the
+        guard only drops what cannot be shifted into place. It exists so that a
+        text loss is impossible to miss: the panel line names the file and the
+        count, the log file carries the text of each lost cue.
+        """
+        if not dropped:
+            return
+        for cue in dropped:
+            logger.warning(
+                "Subtitle cue dropped by the overlap guard in %s at %.3fs: %s",
+                name,
+                cue.get("start") or 0.0,
+                (cue.get("text") or "").replace("\n", " ")[:80],
+            )
+        preview = ", ".join(
+            f"{(cue.get('text') or '').replace(chr(10), ' ')[:40]}"
+            for cue in dropped[:2]
+        )
+        suffix = f" — {preview}" if preview else ""
+        self.signals.append_output.emit(
+            f"⚠️ {len(dropped)} subtitle line(s) could not be timed and were "
+            f"dropped from {name}{suffix}"
+        )
 
     def _calculate_time_adjustment(self, timestamp, removed_segments):
         # Calculates the cumulative duration of all removed segments that occur BEFORE the given timestamp
@@ -591,30 +601,53 @@ class SubtitleMixin:
         return " ".join((text or "").replace("\n", " ").split())
 
     def _fix_subtitle_time_overlaps(self, subtitles):
-        """Clamp overlapping cues and drop chronologically invalid entries."""
-        if not subtitles:
-            return []
+        """Make the cue sequence monotonic and non-overlapping, without losing text.
 
+        Returns (cues, dropped) where `dropped` lists the cues that could not be
+        placed at all, so the caller can report them.
+
+        Placement is preferred over deletion. A cue that would overlap is first
+        given room by trimming its neighbour's end (text untouched, no cascade);
+        only a cue that claims to start at or before its predecessor - or one
+        that arrives with no duration - is shifted to where it fits. A subtitle
+        that appears a little late is far better than a missing sentence, so
+        nothing is dropped unless it still has no room once shifted.
+        """
+        if not subtitles:
+            return ([], [])
+
+        minimum_duration = 0.2
         fixed = []
+        dropped = []
         for sub in subtitles:
             if not sub:
                 continue
             start = sub.get("start")
             end = sub.get("end")
-            if start is None or end is None or end <= start:
+            if start is None or end is None:
+                dropped.append(sub)
                 continue
+            if end <= start:
+                # No duration at all: keep the text, give it the shortest
+                # display rather than losing the line.
+                end = start + minimum_duration
 
             current = dict(sub)
             if fixed:
                 previous = fixed[-1]
-                if start < previous["end"]:
-                    if start <= previous["start"]:
-                        # A cue that starts before/equal to the previous cue
-                        # cannot be represented without overlapping it.
+                if start <= previous["start"]:
+                    # Out-of-order cue: push it behind its predecessor.
+                    start = previous["end"]
+                    if end <= start:
+                        dropped.append(sub)
                         continue
+                if start < previous["end"]:
                     previous["end"] = start
+
+            current["start"] = start
+            current["end"] = end
             fixed.append(current)
-        return fixed
+        return fixed, dropped
 
     def _format_subtitles_for_display(self, subtitles):
         """Lay out parsed cues for display: sentence-aligned, two lines, timed.
@@ -624,6 +657,11 @@ class SubtitleMixin:
         a cue ends at a sentence end whenever it fits the word ceiling and the
         available time, and its duration comes from the word count rather than
         being inherited from the ASR.
+
+        `stats["dropped"]` counts the cues the final overlap guard could not
+        place at all, and `stats["dropped_cues"]` carries them so the caller can
+        name them. Both are zero for every real capture - they exist so that a
+        text loss can never be silent.
         """
         if not subtitles:
             return ([], {})
@@ -632,10 +670,11 @@ class SubtitleMixin:
             subtitles, abbreviations=self._SUBTITLE_SENTENCE_ABBREVS
         )
         # Final guard only: layout_cues already produces a monotonic,
-        # non-overlapping sequence, so this drops nothing - it is here so a
-        # future change cannot write an overlapping file.
-        fixed = self._fix_subtitle_time_overlaps(laid_out)
-        stats["dropped"] = len(laid_out) - len(fixed)
+        # non-overlapping sequence, so this drops nothing in practice - it is
+        # here so a future change cannot write an overlapping or lossy file.
+        fixed, dropped = self._fix_subtitle_time_overlaps(laid_out)
+        stats["dropped"] = len(dropped)
+        stats["dropped_cues"] = dropped
         return fixed, stats
 
     _SUBTITLE_SENTENCE_ABBREVS = frozenset(

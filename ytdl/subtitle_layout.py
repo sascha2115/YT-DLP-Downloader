@@ -38,13 +38,12 @@ LAYOUT_TARGET_WPS = 2.4
 LAYOUT_MAX_WPS = 3.4
 LAYOUT_MIN_DUR = 1.0
 LAYOUT_MAX_DUR = 7.0
-LAYOUT_TARGET_WORDS = 12
-LAYOUT_CEILING_WORDS = 17
-LAYOUT_MIN_CUE_WORDS = 4
-# Two fragments closer together than a minimum display have to be shown as one
-# cue - stacking is worse than a slightly longer cue. This ceiling only applies
-# to that forced merge, never to normal packing.
-LAYOUT_MERGE_CEILING_WORDS = 21
+# A subtitle lingers into the pause that follows it, but never more than this
+# past the time it needs to be read. Fills the ~0.5s flicker between cues (40%
+# of transitions were blank) without leaving stale text through a real pause.
+LAYOUT_GAP_FILL_S = 1.5
+LAYOUT_TARGET_WORDS = 10
+LAYOUT_CEILING_WORDS = 12
 # A pause at least this long inside a long sentence is a good place to break it
 LAYOUT_SPLIT_PAUSE_S = 0.6
 
@@ -59,25 +58,35 @@ DEFAULT_ABBREVIATIONS = frozenset(
 def word_stream(cues):
     """Flatten cues to (word, time, source cue index).
 
-    Times are interpolated evenly inside each source cue: the ASR only gives
-    cue-level windows, and this is what cue starts are derived from.
+    Times are what cue starts are derived from, so they have to stay on
+    YouTube's clock. The ASR windows ROLL: every window overlaps the next one
+    (100% of pairs, by a median of 1.6s on real captures), so a window's words
+    cannot be spread across its own start->end span - its later words would be
+    stamped after the NEXT window had already opened, and the timestamps
+    ratchet forward. Measured: +2.05s mean against YouTube's grid.
 
-    The ASR windows themselves OVERLAP (a rolling window covers text that the
-    next one repeats in time), so the interpolated times are forced to be
-    non-decreasing - otherwise a later cue gets an earlier time than the one
-    before it, and two output cues end up out of order.
+    Spreading each window's words up to the next window's start instead uses
+    the interval where they can actually have been spoken: +0.74s mean, and
+    non-decreasing by construction because the window starts increase.
     """
+    usable = [
+        (index, cue) for index, cue in enumerate(cues)
+        if (cue.get("text") or "").split()
+    ]
     words = []
     previous = 0.0
-    for index, cue in enumerate(cues):
-        parts = (cue.get("text") or "").split()
-        if not parts:
-            continue
+    for position, (index, cue) in enumerate(usable):
+        parts = cue["text"].split()
         start = cue.get("start") or 0.0
-        span = max((cue.get("end") or 0) - start, 0.001)
+        if position + 1 < len(usable):
+            span = max((usable[position + 1][1].get("start") or start) - start, 0.001)
+        else:
+            span = max((cue.get("end") or 0) - start, 0.001)
         step = span / len(parts)
         for i, word in enumerate(parts):
-            when = max(start + step * (i + 0.5), previous)
+            # The max() is a guard for malformed input with non-increasing
+            # window starts; it never fires on real data and so adds no drift.
+            when = max(start + step * i, previous)
             words.append((word, when, index))
             previous = when
     return words
@@ -163,8 +172,7 @@ def effective_wps(natural_wps, target=LAYOUT_TARGET_WPS, ceiling=LAYOUT_MAX_WPS)
 
 
 def pack_sentences(sentences, wps, ceiling_words=LAYOUT_CEILING_WORDS,
-                   min_dur=LAYOUT_MIN_DUR, max_dur=LAYOUT_MAX_DUR,
-                   merge_ceiling=LAYOUT_MERGE_CEILING_WORDS):
+                   min_dur=LAYOUT_MIN_DUR, max_dur=LAYOUT_MAX_DUR):
     """Group sentences into cues.
 
     Greedy with look-ahead: take the furthest sentence end that fits the word
@@ -176,9 +184,9 @@ def pack_sentences(sentences, wps, ceiling_words=LAYOUT_CEILING_WORDS,
     Two exceptions, both forced rather than chosen:
       * a single sentence is always emitted whole (it cannot be dropped), even
         when it does not fit the time available;
-      * two fragments closer together than a minimum display are merged up to
-        the (larger) merge ceiling, because two cues that close cannot both be
-        on screen without stacking.
+      * two fragments closer together than a minimum display are merged, but
+        only up to the same word ceiling - a wider cue is a trade the reader
+        feels, while two cues drawn on top of each other is a defect.
     """
     starts = [sentence[0][1] for sentence in sentences]
     lengths = [len(sentence) for sentence in sentences]
@@ -189,7 +197,7 @@ def pack_sentences(sentences, wps, ceiling_words=LAYOUT_CEILING_WORDS,
         total = 0
         for j in range(index, len(sentences)):
             total += lengths[j]
-            if total > merge_ceiling:
+            if total > ceiling_words:
                 break
             available = starts[j + 1] - starts[index] if j + 1 < len(sentences) else max_dur
             # The boundary created by including sentence j sits between its
@@ -198,9 +206,8 @@ def pack_sentences(sentences, wps, ceiling_words=LAYOUT_CEILING_WORDS,
             boundary_gap = (
                 starts[j + 1] - sentences[j][-1][1] if j + 1 < len(sentences) else max_dur
             )
-            roomy = total <= ceiling_words and total / wps <= available
-            forced_merge = boundary_gap < min_dur
-            if j == index or roomy or forced_merge:
+            fits = total / wps <= available or boundary_gap < min_dur
+            if j == index or (fits and total <= ceiling_words):
                 best = j
             else:
                 break
@@ -210,7 +217,8 @@ def pack_sentences(sentences, wps, ceiling_words=LAYOUT_CEILING_WORDS,
 
 
 def assign_timings(groups, wps, min_dur=LAYOUT_MIN_DUR,
-                   max_dur=LAYOUT_MAX_DUR, target_words=LAYOUT_TARGET_WORDS):
+                   max_dur=LAYOUT_MAX_DUR, target_words=LAYOUT_TARGET_WORDS,
+                   gap_fill=LAYOUT_GAP_FILL_S):
     """Durations from the boundaries the packer chose.
 
     A cue starts at the estimated time of its own first word - the midpoint of
@@ -234,9 +242,16 @@ def assign_timings(groups, wps, min_dur=LAYOUT_MIN_DUR,
 
         if index + 1 < len(groups):
             gap = groups[index + 1][0][1] - start
-            duration = min(duration, max(gap, 0.0))
-            if gap < min_dur:
+            if gap <= 0:
                 tight += 1
+            elif gap < duration:
+                # No room: end where the next cue starts, never overlap.
+                duration = gap
+            else:
+                # A pause. Linger into it so short pauses do not flash the
+                # screen blank, but never more than LAYOUT_GAP_FILL_S beyond
+                # the reading time - a real pause stays blank.
+                duration = min(gap, needed + gap_fill, max_dur)
 
         if duration < needed - 1e-6:
             over_target += 1

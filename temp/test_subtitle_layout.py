@@ -121,7 +121,7 @@ class TestPacking(unittest.TestCase):
         self.assertGreater(len(out), 1)
         for cue in out:
             self.assertLessEqual(len(cue["text"].split()),
-                                 L.LAYOUT_MERGE_CEILING_WORDS)
+                                 L.LAYOUT_CEILING_WORDS)
 
     def test_start_comes_from_the_first_word_time(self):
         # A cue must not appear before the word it shows is spoken.
@@ -163,7 +163,7 @@ if __name__ == "__main__":
                 out, _ = L.layout_cues(read_capture(path))
                 for cue in out:
                     self.assertLessEqual(len(cue["text"].split()),
-                                         L.LAYOUT_MERGE_CEILING_WORDS, cue["text"])
+                                         L.LAYOUT_CEILING_WORDS, cue["text"])
 
     def test_boundaries_are_sentence_aligned(self):
         # The point of the stage: most cues end at a sentence end, where the
