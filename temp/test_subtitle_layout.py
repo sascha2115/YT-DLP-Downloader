@@ -98,6 +98,29 @@ class TestLayoutInvariants(unittest.TestCase):
                     self.assertLessEqual(cue["end"] - cue["start"],
                                          L.LAYOUT_MAX_DUR + 1e-6, cue["text"])
 
+class TestTargetsOverride(unittest.TestCase):
+    """The per-run `targets` hook must actually reach the helpers."""
+
+    def test_targets_override_is_honored(self):
+        # The constants are import-time defaults, so a per-run override has to
+        # go through layout_cues(targets=...). This is the hook a future
+        # subtitle-pace preference would use; without it the tuning guide in
+        # subtitle_layout would only be reachable by editing source.
+        cues = read_capture(CAPTURES[0])
+        base, _ = L.layout_cues(cues)
+        tight, _ = L.layout_cues(cues, targets={
+            "target_words": 8, "ceiling_words": 10,
+        })
+        self.assertGreater(len(tight), len(base), "smaller subtitles, more cues")
+        self.assertLess(
+            max(len(c["text"].split()) for c in tight),
+            max(len(c["text"].split()) for c in base),
+            "a smaller word budget must not produce larger cues",
+        )
+        # The override must not leak into the module.
+        self.assertEqual(len(L.layout_cues(cues)[0]), len(base))
+
+
 class TestPacking(unittest.TestCase):
     """The rules, on inputs small enough to reason about by hand."""
 

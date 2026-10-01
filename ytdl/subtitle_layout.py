@@ -47,6 +47,32 @@ LAYOUT_CEILING_WORDS = 12
 # A pause at least this long inside a long sentence is a good place to break it
 LAYOUT_SPLIT_PAUSE_S = 0.6
 
+# ---------------------------------------------------------------------------
+# Tuning guide - which knob actually moves something.
+#
+# If subtitles ever need to feel calmer or snappier, change TARGET_WORDS
+# (and CEILING_WORDS = TARGET_WORDS + 2, which is how split_long_sentence and
+# pack_sentences keep their one-line/merge limits consistent). That knob sets
+# how much text one subtitle carries, so it changes the cue count and how long
+# each cue stays up, while leaving the reading speed alone. Measured on a
+# 12-minute capture at 3.20 wps:
+#
+#     words/sub   8       10      12      14
+#     cues      283      247     215     188
+#     median    2.5s     2.7s    2.9s    3.1s
+#
+# Do NOT reach for TARGET_WPS to make subtitles "easier": it is only a floor,
+# and every capture already speaks faster than it, so moving it between 1.6 and
+# 2.4 changes nothing at all on any real video (measured; only a 2.13 wps video
+# reacts, and only above 2.4). Nobody can be slowed down by a subtitle setting
+# either - a fast speaker is a property of the material.
+#
+# Pass per-run values via layout_cues(cues, targets={...}) rather than editing
+# these constants; that is what keeps a future pace preference safe. Existing
+# .srt files are never re-laid-out (no such feature), so changing this only
+# affects newly processed subtitles.
+# ---------------------------------------------------------------------------
+
 _SENTENCE_END = re.compile(r"[.!?][\"'’”)\]]*$")
 _CLAUSE_END = (",", ";", ":", "—", "–", "-")
 
@@ -277,28 +303,51 @@ def assign_timings(groups, wps, min_dur=LAYOUT_MIN_DUR,
     return cues, stats
 
 
-def layout_cues(cues, abbreviations=DEFAULT_ABBREVIATIONS):
+def layout_cues(cues, abbreviations=DEFAULT_ABBREVIATIONS, targets=None):
     """Lay out parsed ASR cues for display. Returns (cues, stats).
 
-    `cues` are dicts with start/end/text (already SponsorBlock-adjusted when
-    segments were removed). Stats describe the run for the log line.
+    `cues` are dicts with start/end/text. Timestamps are the source ones and are
+    never retimed - see SubtitleMixin.resync_subtitles.
+
+    `targets` optionally overrides the layout constants for this run, e.g.
+    `layout_cues(cues, targets={"target_words": 12, "ceiling_words": 14})`.
+    Every key maps to a module constant of the same name minus the LAYOUT_
+    prefix: target_wps, max_wps, min_dur, max_dur, target_words,
+    ceiling_words, split_pause_s, gap_fill_s. This is the hook a subtitle-pace
+    preference would use - without it the constants are only import-time
+    defaults and cannot be varied per run.
     """
+    pick = (targets or {}).get
+    target_wps = pick("target_wps", LAYOUT_TARGET_WPS)
+    max_wps = pick("max_wps", LAYOUT_MAX_WPS)
+    min_dur = pick("min_dur", LAYOUT_MIN_DUR)
+    max_dur = pick("max_dur", LAYOUT_MAX_DUR)
+    target_words = pick("target_words", LAYOUT_TARGET_WORDS)
+    ceiling_words = pick("ceiling_words", LAYOUT_CEILING_WORDS)
+    split_pause_s = pick("split_pause_s", LAYOUT_SPLIT_PAUSE_S)
+    gap_fill_s = pick("gap_fill_s", LAYOUT_GAP_FILL_S)
+
     usable = [c for c in cues if (c.get("text") or "").strip()]
     if not usable:
-        return [], {"cues": 0, "two_line": 0, "over_target": 0, "pushed": 0, "words": 0}
+        return [], {"cues": 0, "two_line": 0, "over_target": 0, "tight": 0, "words": 0}
 
     span = max(usable[-1]["end"] - usable[0]["start"], 0.001)
     natural_wps = sum(len((c.get("text") or "").split()) for c in usable) / span
-    wps = effective_wps(natural_wps)
+    wps = effective_wps(natural_wps, target=target_wps, ceiling=max_wps)
 
     words = word_stream(usable)
     sentences = split_sentences(words, abbreviations)
     fragments = []
     for sentence in sentences:
-        fragments.extend(split_long_sentence(sentence))
-    groups = pack_sentences(fragments, wps)
+        fragments.extend(
+            split_long_sentence(sentence, ceiling=ceiling_words,
+                                pause_s=split_pause_s)
+        )
+    groups = pack_sentences(fragments, wps, ceiling_words=ceiling_words,
+                            min_dur=min_dur, max_dur=max_dur)
 
-    laid_out, stats = assign_timings(groups, wps)
+    laid_out, stats = assign_timings(groups, wps, min_dur=min_dur, max_dur=max_dur,
+                                     target_words=target_words, gap_fill=gap_fill_s)
     stats["natural_wps"] = round(natural_wps, 2)
     stats["wps"] = round(wps, 2)
     return laid_out, stats

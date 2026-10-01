@@ -188,13 +188,14 @@ def format_srt_time(seconds):
 def format_subtitle_stats(cues_in, cues_out, counters=None, name=None):
     """One-line summary of a subtitle layout run.
 
-    "Title.srt: 417 in → 152 out · 147 two-line · 3.2 wps · 84 over target"
+    "Title.srt: 2957 in → 1132 out · 1114 two-line · 3.28 wps · 638 fast-paced"
 
     "in → out" and the two-line count always describe what the run produced.
     `counters` may carry wps (the rate the video was laid out at, so a viewer
-    can tell a dense video from a packing failure), over_target (cues that could
-    not be given their full reading time), and the loss counters. Everything
-    except the two-line count is omitted when it is zero or missing.
+    can tell a dense video from a packing failure) and `fast-paced` (cues that
+    could not be given their full reading time, because the speaker is faster
+    than a comfortable reader - a fact about the material, not a fault).
+    Everything except the two-line count is omitted when it is zero or missing.
 
     Pure formatter (no Qt, no filesystem): the counts are taken where the layout
     runs, this only renders them.
@@ -204,7 +205,7 @@ def format_subtitle_stats(cues_in, cues_out, counters=None, name=None):
              f"{counters.get('two_line', 0)} two-line"]
     labels = (
         ("wps", "wps"),
-        ("over_target", "over target"),
+        ("over_target", "fast-paced"),
         ("no_text", "no text"),
         ("too_short", "too short"),
         ("dropped", "dropped"),

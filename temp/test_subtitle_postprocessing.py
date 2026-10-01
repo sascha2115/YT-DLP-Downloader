@@ -46,12 +46,13 @@ class TestFormatSubtitleStats(unittest.TestCase):
     def test_rate_and_overshoot_are_reported(self):
         # The layout reports the rate it used and how many cues could not be
         # given their reading time, so a dense video is distinguishable from a
-        # packing failure.
+        # packing failure. "fast-paced" is deliberately not worded like a fault:
+        # it is a fact about the speaker, not something the run got wrong.
         self.assertEqual(
             format_subtitle_stats(417, 152, {
                 "two_line": 147, "wps": 3.2, "over_target": 84,
             }),
-            "417 in → 152 out · 147 two-line · 3.2 wps · 84 over target",
+            "417 in → 152 out · 147 two-line · 3.2 wps · 84 fast-paced",
         )
 
     def test_name_prefix_identifies_the_file(self):
