@@ -76,7 +76,7 @@ for lang, srt_path, sub_type in downloaded_subs:
     print(f"detected: {lang} ({sub_type}) -> {os.path.basename(srt_path)}")
     if h._subtitle_needs_resync(sub_type):
         # Same call run_download makes: output == input path -> in-place
-        h._resync_subtitle_for_language(lang, srt_path, [])
+        h._resync_subtitle_for_language(lang, srt_path)
     else:
         print("  → keeping original format (site needs no resync)")
 

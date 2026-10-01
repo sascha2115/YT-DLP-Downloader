@@ -192,7 +192,7 @@ class TestResyncWritesTheSameName(unittest.TestCase):
 
     def test_resync_target_is_the_bare_name(self):
         h, d = self._harness("Title.srt", {"en": "auto"})
-        h._resync_subtitle_for_language("en", os.path.join(d, "Title.srt"), [], bare=True)
+        h._resync_subtitle_for_language("en", os.path.join(d, "Title.srt"), bare=True)
         self.assertEqual(os.listdir(d), ["Title.srt"])
         with open(os.path.join(d, "Title.srt"), encoding="utf-8") as fh:
             merged = fh.read()
@@ -202,7 +202,7 @@ class TestResyncWritesTheSameName(unittest.TestCase):
 
     def test_resync_without_bare_keeps_the_code(self):
         h, d = self._harness("Title.en.srt", {"en": "real"})
-        h._resync_subtitle_for_language("en", os.path.join(d, "Title.en.srt"), [])
+        h._resync_subtitle_for_language("en", os.path.join(d, "Title.en.srt"))
         self.assertEqual(os.listdir(d), ["Title.en.srt"])
 
 

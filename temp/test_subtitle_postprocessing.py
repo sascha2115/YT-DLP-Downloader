@@ -4,7 +4,6 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -139,7 +138,7 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             path = os.path.join(temp_dir, "Title.en.srt")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("1\n00:00:00,000 --> 00:00:02,000\nHallo Welt.\n\n")
-            self.assertTrue(self.gui.resync_subtitles(path, [], path))
+            self.assertTrue(self.gui.resync_subtitles(path, path))
             with open(path, encoding="utf-8") as f:
                 content = f.read()
             self.assertTrue(content.endswith("\n"))
@@ -153,42 +152,12 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(original)
 
-            result = self.gui.resync_subtitles(path, [], path)
+            result = self.gui.resync_subtitles(path, path)
 
             self.assertFalse(result)
             with open(path, encoding="utf-8") as f:
                 self.assertEqual(f.read(), original)
             self.assertFalse(os.path.exists(path + ".tmp"))
-
-    def test_no_segment_path_skips_time_map_and_preserves_timestamps(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            source = os.path.join(temp_dir, "Title.a.en.srt")
-            output = os.path.join(temp_dir, "Title.en.srt")
-            with open(source, "w", encoding="utf-8") as f:
-                f.write(
-                    "1\n00:00:00,000 --> 00:00:01,500\n"
-                    "Hallo Welt. Das ist ein deutlich zu kurzes Fenster\n"
-                    "für diese ganze Menge an Wörtern hier.\n\n"
-                )
-
-            with mock.patch.object(
-                self.gui,
-                "_build_time_map",
-                side_effect=AssertionError("time map should not be built"),
-            ):
-                result = self.gui.resync_subtitles(source, [], output)
-
-            self.assertTrue(result)
-            with open(output, encoding="utf-8") as f:
-                content = f.read()
-            # The cue text survives and the SponsorBlock time map was skipped.
-            # Its duration is NOT the source one: the layout derives it from the
-            # word count (see ytdl/subtitle_layout.py). A one-second window is
-            # too small to show that - the derived duration floors at
-            # LAYOUT_MIN_DUR - so this uses a source window far too short for
-            # the text it carries.
-            self.assertIn("Hallo Welt.", content)
-            self.assertNotIn("00:00:00,000 --> 00:00:01,500", content)
 
     def test_summary_reports_what_the_layout_did(self):
         # The summary must describe the run that actually happened, so the
@@ -208,7 +177,7 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                     fh.write(
                         f"{i}\n{format_srt_time(start)} --> {format_srt_time(end)}\n{text}\n\n"
                     )
-            self.assertTrue(self.gui.resync_subtitles(path, [], path))
+            self.assertTrue(self.gui.resync_subtitles(path, path))
 
             expected, _ = layout_cues(
                 [{"start": s, "end": e, "text": t} for s, e, t in source_cues]
@@ -234,7 +203,7 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                     "Hello\r\n\r\n"
                 )
 
-            result = self.gui.resync_subtitles(source, [], output)
+            result = self.gui.resync_subtitles(source, output)
 
             self.assertTrue(result)
             self.assertTrue(os.path.isfile(output))

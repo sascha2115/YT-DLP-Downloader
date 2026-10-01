@@ -294,7 +294,7 @@ class SubtitleMixin:
         site = self.video_state.get("site", DEFAULT_SITE)
         return site_resyncs_auto_subs(site)
 
-    def _resync_subtitle_for_language(self, lang, srt_path, removed_segments, bare=False):
+    def _resync_subtitle_for_language(self, lang, srt_path, bare=False):
         if not os.path.exists(srt_path):
             self.signals.append_output.emit(f"No srt file: {srt_path}")
             return
@@ -306,16 +306,23 @@ class SubtitleMixin:
         # If output_srt is different from srt_path (e.g. srt_path was .a.en.srt),
         # we process it into the final name.
         # If they are the same, we overwrite it (safe because resync_subtitles reads into memory).
-        self.resync_subtitles(srt_path, removed_segments, output_srt)
+        self.resync_subtitles(srt_path, output_srt)
 
-    def resync_subtitles(self, srt_path, removed_segments, output_path):
+    def resync_subtitles(self, srt_path, output_path):
+        """Lay out a downloaded subtitle file and write it to output_path.
+
+        Timestamps are kept in the source file's own timeline. This app never
+        cuts the media - SponsorBlock segments are marked and written to an
+        .edl for the player to jump - so an EDL-skipping player looks
+        subtitles up by current media time, which after a jump is still the
+        original time. Subtitles of an earlier version were retimed into an
+        edited timeline to match a physically cut video; that workflow was
+        dropped because cutting is only clean at keyframes, and the EDL route
+        needs no re-encode at all.
+        """
         if not os.path.exists(srt_path):
             logger.warning(f"Subtitle file not found: {srt_path}")
             return False
-
-        has_segments = bool(removed_segments)
-        if has_segments:
-            self.signals.append_output.emit("Resyncing subtitles...")
 
         try:
             with open(srt_path, "r", encoding="utf-8") as f:
@@ -352,8 +359,7 @@ class SubtitleMixin:
 
             max_time = max(max_time, end_sec)
 
-            # Store subtitle data with original times
-            # Convert any multi-line subtitle block into a single line
+            # Convert any multi-line subtitle block into a single line.
             # This is crucial for the 2-line merging logic later
             raw_text = "\n".join(lines[2:])
             # Filter out ">>" artifacts often found in auto-generated captions
@@ -364,9 +370,7 @@ class SubtitleMixin:
             text = " ".join(clean_text.split())
 
             if text:
-                subtitles.append(
-                    {"original_start": start_sec, "original_end": end_sec, "text": text}
-                )
+                subtitles.append({"start": start_sec, "end": end_sec, "text": text})
             else:
                 # A block that held nothing but artifacts or stage directions
                 # ("[musik]", ">>"), which _strip_nonspoken_brackets removes on
@@ -381,36 +385,11 @@ class SubtitleMixin:
             )
             return False
 
-        # Build consistent time mapping only when SponsorBlock segments exist.
-        # With no removed segments, timestamp adjustment is an identity operation.
-        if has_segments:
-            logger.debug(f"Building time map for {max_time:.2f}s of content...")
-            time_map = self._build_time_map(removed_segments, max_time)
-            adjusted_subtitles = []
-            for sub in subtitles:
-                new_start = self._adjust_timestamp_with_map(
-                    sub["original_start"], time_map, removed_segments
-                )
-                new_end = self._adjust_timestamp_with_map(
-                    sub["original_end"], time_map, removed_segments
-                )
-                adjusted_subtitles.append(
-                    {"start": new_start, "end": new_end, "text": sub["text"]}
-                )
-        else:
-            adjusted_subtitles = [
-                {
-                    "start": sub["original_start"],
-                    "end": sub["original_end"],
-                    "text": sub["text"],
-                }
-                for sub in subtitles
-            ]
-
-        # Skip subtitles that fall entirely within removed segments or are too short/empty.
+        # Drop cues with no usable duration. Timestamps are the source ones -
+        # see the docstring for why they are never retimed.
         adjusted_subtitles = [
             sub
-            for sub in adjusted_subtitles
+            for sub in subtitles
             if sub["start"] >= 0
             and sub["end"] > sub["start"]
             and sub["end"] - sub["start"] >= 0.15
@@ -460,10 +439,7 @@ class SubtitleMixin:
                 pass
             raise
 
-        final_msg = (
-            "Subtitles resynced and merged." if has_segments else "Subtitles merged."
-        )
-        self.signals.append_output.emit(f"💬 {final_msg}")
+        self.signals.append_output.emit("💬 Subtitles merged.")
 
         # What the layout actually did, per file. A whole video's subtitles can
         # be skipped by the gate upstream (or merged into nothing) without a
@@ -518,70 +494,6 @@ class SubtitleMixin:
             f"⚠️ {len(dropped)} subtitle line(s) could not be timed and were "
             f"dropped from {name}{suffix}"
         )
-
-    def _calculate_time_adjustment(self, timestamp, removed_segments):
-        # Calculates the cumulative duration of all removed segments that occur BEFORE the given timestamp
-        adjustment = 0
-
-        for segment in removed_segments:
-            seg_start = segment["start"]
-            seg_end = segment["end"]
-            seg_duration = seg_end - seg_start
-
-            if timestamp <= seg_start:
-                # Timestamp is before this segment starts, no more adjustments needed
-                break
-            if timestamp >= seg_end:
-                # Timestamp is after this segment ends, subtract the full segment duration
-                adjustment += seg_duration
-            else:
-                # Timestamp falls within a removed segment
-                # This shouldn't happen if segments were properly removed, but handle it
-                # Subtract only the portion before the timestamp
-                adjustment += timestamp - seg_start
-                break
-
-        return adjustment
-
-    def _build_time_map(self, removed_segments, max_time):
-        # creates a lookup that can be used to ensure consistent time adjustmentsacross all subtitles, preventing drift
-        time_map = {}
-
-        # Check if we have a drift correction factor
-        drift_factor = (
-            removed_segments[0].get("drift_factor", 1.0) if removed_segments else 1.0
-        )
-
-        # Sample every 0.1 seconds for precise mapping
-        for original_time in range(0, int(max_time * 10) + 1):
-            original_sec = original_time / 10.0
-            adjustment = self._calculate_time_adjustment(original_sec, removed_segments)
-
-            # Apply drift correction to the adjustment
-            adjusted_sec = original_sec - (adjustment * drift_factor)
-            time_map[original_sec] = adjusted_sec
-
-        return time_map
-
-    def _adjust_timestamp_with_map(self, timestamp, time_map, removed_segments):
-        # Find the closest mapped time
-        rounded = round(timestamp * 10) / 10
-
-        if rounded in time_map:
-            return time_map[rounded]
-
-        # If exact match not found, interpolate
-        lower = int(timestamp * 10) / 10
-        upper = lower + 0.1
-
-        if lower in time_map and upper in time_map:
-            # Linear interpolation
-            ratio = (timestamp - lower) / 0.1
-            adjusted = time_map[lower] + ratio * (time_map[upper] - time_map[lower])
-            return adjusted
-
-        # Fallback to direct calculation
-        return timestamp - self._calculate_time_adjustment(timestamp, removed_segments)
 
     def _strip_nonspoken_brackets(self, text: str) -> str:
         """

@@ -634,7 +634,7 @@ class DownloadMixin:
                             else:
                                 self._emit("append_output", f"  → {lang} (auto): merging into 2-line format")
                                 self._resync_subtitle_for_language(
-                                    lang, srt_path, [], bare=bare_name
+                                    lang, srt_path, bare=bare_name
                                 )
                     else:
                         self._emit("append_output", "👉 No subtitles were downloaded.")
