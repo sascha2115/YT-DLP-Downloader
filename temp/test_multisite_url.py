@@ -373,11 +373,20 @@ class TestOdyseeIdRegex(unittest.TestCase):
         self.assertTrue(app.site_resyncs_auto_subs(""))
 
     def test_supported_sites_label(self):
-        # Info-panel header line: "Supported: <labels...>"
+        # Info-panel header line: "Supported: <labels...>". ARD and ZDF share
+        # one entry there - two profiles, one broadcaster family.
         self.assertEqual(
             app.SUPPORTED_SITES_LABEL,
-            "YouTube, Rumble, Odysee, ARD Mediathek, ZDF Mediathek",
+            "YouTube, Rumble, Odysee, ARD/ZDF Mediathek",
         )
+
+    def test_short_label_does_not_leak_into_per_site_messages(self):
+        # The shortening is for the list only. A message about one ZDF URL has
+        # to name ZDF, not "ARD/ZDF".
+        self.assertEqual(app.SUPPORTED_SITES["ard"]["label"], "ARD Mediathek")
+        self.assertEqual(app.SUPPORTED_SITES["zdf"]["label"], "ZDF Mediathek")
+        for key in ("youtube", "rumble", "odysee"):
+            self.assertNotIn("short_label", app.SUPPORTED_SITES[key])
 
     def test_header_shows_supported_sites(self):
         # Both header call sites (init_ui in ytdl/ui_build.py + clear_output

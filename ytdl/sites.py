@@ -85,6 +85,9 @@ SUPPORTED_SITES = {
     },
     "ard": {
         "label": "ARD Mediathek",
+        # Only for the supported-sites LIST; per-site messages still say
+        # "ARD Mediathek" (see _site_list_label).
+        "short_label": "ARD/ZDF Mediathek",
         "domains": ("ardmediathek.de",),
         "sponsorblock": False,  # SponsorBlock is YouTube-only
         "js_runtime": False,  # the ARD extractor needs no JS runtime
@@ -102,6 +105,7 @@ SUPPORTED_SITES = {
     },
     "zdf": {
         "label": "ZDF Mediathek",
+        "short_label": "ARD/ZDF Mediathek",
         "domains": ("zdf.de", "zdfheute.de", "logo.de"),
         "sponsorblock": False,  # SponsorBlock is YouTube-only
         "js_runtime": False,  # the ZDF extractor needs no JS runtime
@@ -123,9 +127,24 @@ SUPPORTED_SITES = {
 # Default site profile for unknown domains (yt-dlp may still support them)
 DEFAULT_SITE = "youtube"
 
+def _site_list_label(profile):
+    """Name to use when a site is listed next to its siblings.
+
+    ARD and ZDF are two extractor profiles but one broadcaster family, so the
+    header line says "ARD/ZDF Mediathek" once instead of spending a comma and
+    twelve characters on a duplicate "Mediathek". Per-site messages keep using
+    the full `label` - "Subtitles: Not available on Odysee" has no siblings to
+    disambiguate it from, and a message about one ZDF URL should name ZDF.
+    """
+    return profile.get("short_label") or profile["label"]
+
+
 # Human-readable site list for the info panel header, e.g.
-# "YouTube, Rumble, Odysee, ARD Mediathek, ZDF Mediathek"
-SUPPORTED_SITES_LABEL = ", ".join(p["label"] for p in SUPPORTED_SITES.values())
+# "YouTube, Rumble, Odysee, ARD/ZDF Mediathek". Names are de-duplicated in
+# profile order, so two profiles that share a name (ARD + ZDF) are listed once.
+SUPPORTED_SITES_LABEL = ", ".join(dict.fromkeys(
+    _site_list_label(profile) for profile in SUPPORTED_SITES.values()
+))
 
 # Alternation of every known site domain - used by normalize_url() to spot
 # schemeless tokens like "zdf.de/video/...". Built from the profiles so a
