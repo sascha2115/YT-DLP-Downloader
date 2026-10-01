@@ -391,6 +391,68 @@ class TestOdyseeIdRegex(unittest.TestCase):
         self.assertEqual(count, 2)
 
 
+class TestFormatChoiceLine(unittest.TestCase):
+    """The panel must name what a download actually asks for.
+
+    Nothing else on screen says whether audio is included: "Video only" and
+    "Video + Audio" sit side by side and produce files that differ only in
+    whether a viewer can hear anything.
+    """
+
+    class Harness(app.DownloadMixin, app.SubtitleMixin):
+        get_selected_sb_categories = app.YTDLPDownloaderGUI.get_selected_sb_categories
+
+        def __init__(self, media_type):
+            self.video_state = {
+                "media_type": media_type, "quality": "best", "video_format": "best",
+                "audio_format": "best", "video_codec": "best",
+                "base_filename": "test_video", "site": "youtube",
+            }
+            self.yt_dlp_bin, self.ffmpeg_bin, self.deno_bin = "yt-dlp", None, None
+            self.title_entry = SimpleNamespace(text=lambda: "Test Title")
+            self.sb_all_checkbox = SimpleNamespace(isChecked=lambda: False)
+            self.sb_checkbox_map = {}
+
+        get_clean_url = lambda self: "https://www.youtube.com/watch?v=x"  # noqa: E731
+        get_output_dir = lambda self: "/tmp/dl"   # noqa: E731
+        update_video_state = app.YTDLPDownloaderGUI.update_video_state
+
+    def _line(self, media_type):
+        h = self.Harness(media_type)
+        cmd = h.build_command(selected_langs=None)
+        return h.describe_format_choice(cmd, media_type)
+
+    def test_video_mode_says_audio_is_included(self):
+        line = self._line("video")
+        self.assertIn("Video + Audio", line)
+        self.assertIn("bestaudio", line)
+
+    def test_video_only_mode_says_so(self):
+        line = self._line("video_only")
+        self.assertIn("Video only", line)
+        self.assertNotIn("bestaudio", line)
+
+    def test_audio_only_mode_names_the_container(self):
+        h = self.Harness("audio")
+        h.video_state["audio_format"] = "m4a"
+        cmd = h.build_command(selected_langs=None)
+        line = h.describe_format_choice(cmd, "audio")
+        self.assertIn("Audio only", line)
+        self.assertIn("m4a", line)
+
+    def test_subtitles_only_says_no_media(self):
+        line = self._line("subtitles")
+        self.assertIn("Subtitles only", line)
+        self.assertIn("no media download", line)
+
+    def test_the_line_quotes_the_real_command(self):
+        # It must be read out of the command, not rebuilt from state, or it
+        # can describe a request that was never made.
+        h = self.Harness("video")
+        cmd = h.build_command(selected_langs=None)
+        self.assertIn(cmd[cmd.index("-f") + 1], h.describe_format_choice(cmd, "video"))
+
+
 class TestBuildCommandAudio(unittest.TestCase):
     """Pin the audio postprocessor flags produced by build_command()."""
 
@@ -489,6 +551,14 @@ class TestBuildCommandAudio(unittest.TestCase):
         cmd = h.build_command(selected_langs=None)
         idx = cmd.index("-f")
         self.assertEqual(cmd[idx + 1], "bestvideo*[height<=480]+bestaudio/best")
+
+    def test_video_mode_includes_audio_and_video_only_does_not(self):
+        # The trap behind "the app downloaded no audio": the media type alone
+        # decides it, and the two formats differ only by "+bestaudio".
+        with_audio = self._cmd(media_type="video")
+        without = self._cmd(media_type="video_only")
+        self.assertIn("bestaudio", with_audio[with_audio.index("-f") + 1])
+        self.assertNotIn("bestaudio", without[without.index("-f") + 1])
 
     def test_deno_passed_for_youtube(self):
         h = self.Harness(audio_fmt="m4a")

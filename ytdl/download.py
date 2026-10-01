@@ -438,6 +438,30 @@ class DownloadMixin:
         cmd.append(url)
         return cmd
 
+    def describe_format_choice(self, cmd, media_type):
+        """One line naming what this download actually asks yt-dlp for.
+
+        Read out of the command that is about to run, never out of video_state
+        alone, so it cannot drift from the real request. It exists because the
+        media type silently decides whether audio is fetched at all - "Video
+        only" asks for bestvideo*/best, with no audio track - and nothing else
+        on screen says which of the two was chosen.
+        """
+        labels = {
+            "video": "Video + Audio",
+            "video_only": "Video only",
+            "audio": "Audio only",
+            "subtitles": "Subtitles only",
+        }
+        parts = [labels.get(media_type, str(media_type))]
+        if "-f" in cmd:
+            parts.append(cmd[cmd.index("-f") + 1])
+        elif "-x" in cmd:
+            parts.append(f"extract {cmd[cmd.index('--audio-format') + 1]}")
+        else:
+            parts.append("no media download")
+        return "▶ " + " · ".join(parts)
+
     def run_download(self, cmd, selected_langs):
         success = False
         had_download_progress = False
@@ -447,6 +471,12 @@ class DownloadMixin:
         try:
             if self.simulate_download_error:
                 raise RuntimeError("Simulated download error (testing flag enabled)")
+            # Say what is being requested before anything is fetched: the
+            # media type decides whether audio comes along, and that decision
+            # was previously invisible.
+            self._emit("append_output", self.describe_format_choice(
+                cmd, self.video_state.get("media_type", "video")
+            ))
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
