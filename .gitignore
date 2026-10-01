@@ -13,6 +13,12 @@ venv/
 build/
 dist/
 
+# Downloaded media: local library, hundreds of MB, never committed
+media/
+
+# CMake artifacts from yt-dlp's deno JS challenge solver
+.build/
+
 # Editor tooling artifacts
 .groupedtimelineinclude
 
