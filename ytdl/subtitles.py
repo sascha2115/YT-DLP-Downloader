@@ -7,9 +7,37 @@ import logging
 import os
 import re
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
-from ytdl.utils import SUBTITLE_LANG_ALIASES, canonical_subtitle_lang, format_srt_time, parse_srt_time
+from ytdl.utils import (
+    SUBTITLE_LANG_ALIASES,
+    canonical_subtitle_lang,
+    format_srt_time,
+    format_subtitle_stats,
+    parse_srt_time,
+)
 
 logger = logging.getLogger(__name__)
+
+# ----------------------------------------------------------------------------------------------------
+# Display-layout thresholds
+# ----------------------------------------------------------------------------------------------------
+# Three passes plus the wrapper judge "does this text fit on a line?" and "are
+# these two cues the same event?", so the thresholds live here instead of being
+# repeated in three signatures. These are the values the pipeline has always
+# used: hoisted, NOT retuned - the written file must come out unchanged.
+#
+# _smart_wrap keeps its own 42-char default on purpose: it is a generic helper,
+# and its one call site passes MAX_LINE_CHARS deliberately.
+MAX_LINE_CHARS = 50
+# Pairing two cues into one two-line event. Both merge passes must agree on
+# these, so they share one definition.
+MAX_MERGE_GAP_S = 1.0
+MAX_CUE_DURATION_S = 6.0
+# Independent knobs of the boundary pass. PAUSE_THRESHOLD_S happens to equal
+# MAX_MERGE_GAP_S, but it answers a different question ("is this a long pause?"
+# vs "do these cues belong together"), so the two are not merged into one.
+PAUSE_THRESHOLD_S = 1.0
+MAX_TAIL_WORDS = 3
+MIN_WORDS_KEEP = 3
 
 
 class SubtitleMixin:
@@ -325,6 +353,7 @@ class SubtitleMixin:
         blocks = re.split(r"\n\s*\n", normalized_content.strip())
         subtitles = []
         max_time = 0
+        no_text_cues = 0
 
         # First pass: collect all subtitles and find max time
         for block in blocks:
@@ -359,6 +388,12 @@ class SubtitleMixin:
                 subtitles.append(
                     {"original_start": start_sec, "original_end": end_sec, "text": text}
                 )
+            else:
+                # A block that held nothing but artifacts or stage directions
+                # ("[musik]", ">>"), which _strip_nonspoken_brackets removes on
+                # purpose. Counted so the summary reconciles with the cue count
+                # in the file the user can open.
+                no_text_cues += 1
 
         if not subtitles:
             logger.warning("No valid subtitle cues found in %s", srt_path)
@@ -404,8 +439,14 @@ class SubtitleMixin:
 
         logger.debug(f"Adjusted {len(adjusted_subtitles)} subtitle cues")
 
+        # The 0.15s floor is the first of two places that can drop a cue, and
+        # it does so silently - counted here for the summary line below.
+        too_short_cues = len(subtitles) - len(adjusted_subtitles)
+
         # Merge choppy cues, optimize around pauses/sentences, build 2-line display
-        merged_subtitles = self._format_subtitles_for_display(adjusted_subtitles)
+        merged_subtitles, dropped_cues = self._format_subtitles_for_display(
+            adjusted_subtitles
+        )
 
         # Write merged and resynced subtitles
         if not merged_subtitles:
@@ -441,6 +482,26 @@ class SubtitleMixin:
             "Subtitles resynced and merged." if has_segments else "Subtitles merged."
         )
         self.signals.append_output.emit(f"💬 {final_msg}")
+
+        # What the layout actually did, per file. A whole video's subtitles can
+        # be skipped by the gate upstream (or merged into nothing) without a
+        # single word of this showing up anywhere else in the panel, so the
+        # counts are reported next to the file they belong to.
+        two_line_cues = sum(
+            1 for sub in merged_subtitles if "\n" in (sub.get("text") or "")
+        )
+        self.signals.append_output.emit(
+            "  📊 "
+            + format_subtitle_stats(
+                len(adjusted_subtitles),
+                len(merged_subtitles),
+                two_line=two_line_cues,
+                no_text=no_text_cues,
+                too_short=too_short_cues,
+                dropped=dropped_cues,
+                name=os.path.basename(output_path),
+            )
+        )
         return True
 
     def _calculate_time_adjustment(self, timestamp, removed_segments):
@@ -595,9 +656,9 @@ class SubtitleMixin:
     def _merge_choppy_subtitle_cues(
         self,
         subtitles,
-        max_line_chars: int = 50,
-        max_gap_s: float = 1.0,
-        max_duration_s: float = 6.0,
+        max_line_chars: int = MAX_LINE_CHARS,
+        max_gap_s: float = MAX_MERGE_GAP_S,
+        max_duration_s: float = MAX_CUE_DURATION_S,
     ):
         """Pair rapid consecutive cues into one two-line subtitle event."""
         if not subtitles:
@@ -646,9 +707,9 @@ class SubtitleMixin:
     def _optimize_subtitle_pause_boundaries(
         self,
         subtitles,
-        pause_threshold_s: float = 1.0,
-        max_tail_words: int = 3,
-        min_words_keep: int = 3,
+        pause_threshold_s: float = PAUSE_THRESHOLD_S,
+        max_tail_words: int = MAX_TAIL_WORDS,
+        min_words_keep: int = MIN_WORDS_KEEP,
     ):
         """
         Move loose words off the end of a subtitle so pauses and sentence breaks read cleanly.
@@ -713,9 +774,9 @@ class SubtitleMixin:
     def _merge_subtitle_continuations(
         self,
         subtitles,
-        max_line_chars: int = 50,
-        max_gap_s: float = 1.0,
-        max_duration_s: float = 6.0,
+        max_line_chars: int = MAX_LINE_CHARS,
+        max_gap_s: float = MAX_MERGE_GAP_S,
+        max_duration_s: float = MAX_CUE_DURATION_S,
     ):
         """Re-merge short continuation cues that the boundary pass left as separate one-liners."""
         if not subtitles:
@@ -756,7 +817,7 @@ class SubtitleMixin:
 
         return merged
 
-    def _wrap_subtitle_text(self, text: str, max_chars: int = 50) -> str:
+    def _wrap_subtitle_text(self, text: str, max_chars: int = MAX_LINE_CHARS) -> str:
         flat = self._flatten_subtitle_text(text)
         if not flat:
             return ""
@@ -799,9 +860,15 @@ class SubtitleMixin:
         2. Shift loose words across pauses / sentence ends
         3. Merge same-sentence continuations again
         4. Wrap long single lines and fix timestamp overlaps
+
+        Returns (cues, dropped): the cues to write, and how many the final
+        overlap fix discarded as degenerate or out-of-order. That count is
+        reported rather than swallowed - unlike the passes above it, which only
+        ever move text between neighbours, this is the one step where a cue's
+        text can be lost.
         """
         if not subtitles:
-            return []
+            return ([], 0)
 
         subs = self._merge_choppy_subtitle_cues(subtitles)
         subs = self._optimize_subtitle_pause_boundaries(subs)
@@ -813,7 +880,8 @@ class SubtitleMixin:
             if wrapped:
                 formatted.append({**sub, "text": wrapped})
 
-        return self._fix_subtitle_time_overlaps(formatted)
+        fixed = self._fix_subtitle_time_overlaps(formatted)
+        return fixed, len(formatted) - len(fixed)
 
     _SUBTITLE_SENTENCE_ABBREVS = frozenset(
         {

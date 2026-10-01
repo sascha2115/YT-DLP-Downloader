@@ -180,3 +180,32 @@ def format_srt_time(seconds):
     ms = int((seconds % 1) * 1000)
 
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+# ----------------------------------------------------------------------------------------------------
+# Describe what a subtitle layout run did
+# ----------------------------------------------------------------------------------------------------
+def format_subtitle_stats(
+    cues_in, cues_out, two_line=0, no_text=0, too_short=0, dropped=0, name=None
+):
+    """One-line summary of a subtitle layout run.
+
+    "Title.srt: 2957 in → 1787 out · 1028 two-line · 8 no text · 9 too short"
+
+    Only "in → out" and the two-line count are unconditional: they describe what
+    the run produced. The three loss counters appear when non-zero, and between
+    them they account for every block that did not survive as a cue, so the
+    numbers reconcile with the cue count in the file the user can open.
+
+    Pure formatter (no Qt, no filesystem): the counts are taken where the
+    layout runs, this only renders them.
+    """
+    parts = [f"{cues_in} in → {cues_out} out", f"{two_line} two-line"]
+    if no_text:
+        parts.append(f"{no_text} no text")
+    if too_short:
+        parts.append(f"{too_short} too short")
+    if dropped:
+        parts.append(f"{dropped} dropped")
+    summary = " · ".join(parts)
+    return f"{name}: {summary}" if name else summary
