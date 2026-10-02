@@ -16,13 +16,11 @@ SponsorBlock is YouTube-only and is skipped automatically for other sites; Odyse
   Linux: `~/.config/YT‑DLP Downloader`)
 - Built‑in packaging instructions using `pyinstaller`
 
-## Prerequisites
-| Item | Installation |
-| To install via pip | pip install -r requirements.txt |
-| External binaries (macOS) | brew install yt-dlp ffmpeg deno |
-| External binaries (Linux) | pip install yt-dlp · distro package for ffmpeg · deno installer script |
+## Requirements
 
-> The external binaries are not bundled by PyInstaller: `yt-dlp` (pip or distro package), `ffmpeg` **and** `ffprobe` (distro `ffmpeg` package provides both; the startup check lists all three), and `deno` (optional but recommended — passed to yt-dlp as a JS runtime for YouTube extraction; the app runs without it and does not warn if it is absent). All required binaries are checked at startup; a `pip`-installed `yt-dlp` in the Python that launches the app is detected as well.
+- **Python 3.10+** (3.11+ recommended)
+- **Python packages** — `pip install -r requirements.txt`
+- **External binaries** — `yt-dlp`, `ffmpeg` (which also provides `ffprobe`) and `deno` (optional but recommended, passed to yt-dlp as a JS runtime for YouTube). These are installed separately and never bundled into the packaged app; all required ones are checked at startup.
 
 ## Installation
 ```bash
@@ -30,7 +28,7 @@ SponsorBlock is YouTube-only and is skipped automatically for other sites; Odyse
 pip install -r requirements.txt
 ```
 
-> 📖 **Full step-by-step guide for a new machine (macOS & Linux): see [setup.md](setup.md)** — system packages, external binaries, venv, packaging, and troubleshooting.
+> 📖 **Full step-by-step guide for a new machine (macOS & Linux): see [setup.md](setup.md)** — per-OS installs (Homebrew vs. distro packages, the xcb/X11 libraries Linux needs), venv, packaging, and troubleshooting.
 
 ## Running the GUI
 ```bash

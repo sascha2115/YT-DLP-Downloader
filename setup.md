@@ -17,6 +17,8 @@ The app is a PyQt6 GUI around `yt-dlp` with SponsorBlock support. It needs three
 
 > **Why Python 3.10+?** The code uses PEP 604 unions (`X | None`) in type annotations, which are evaluated at import time. Older interpreters fail with a `TypeError` at startup. Check with `python3 --version`.
 
+> **Why `deno`?** Optional but strongly recommended — the app passes it to yt-dlp as a JavaScript runtime (`--js-runtimes`) for YouTube's challenge/extractor scripts. Without it the app still runs; it simply does not warn about the missing runtime. `ffprobe` comes with the `ffmpeg` package and is used alongside it.
+
 ## 1. Get the source
 
 ```bash
