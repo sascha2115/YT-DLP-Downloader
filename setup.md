@@ -216,6 +216,7 @@ All directories are created automatically on first run. Preferences are edited v
   ```
   `[default]` pulls in the recommended optional dependencies. Roll back to stable any time with `python3 -m pip install -U "yt-dlp[default]"` (drop `--pre`), or go bleeding-edge master with `python3 -m pip install --force-reinstall "yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"`.
   Make sure you upgrade the copy the app actually uses (`which -a yt-dlp`; resolution order see the "Binary not found" bullet above) and restart the app afterwards.
+- **The site says a video is "not available" but yt-dlp might still fetch it** — on ARD/ZDF the web player's geo/rights notice is a separate client-side check, and a video the browser refuses to play has been observed downloading fine through the app. Extraction only fails when the player API returns no formats at all; when it does, the reason (e.g. geoblocking, an age/FSK restriction) is printed in the app's output panel.
 - **`qt.qpa.plugin: could not load xcb`** — install the system libs from §3.1; on Wayland see §3.4.
 - **`error: externally-managed-environment`** from pip — you are outside a venv; redo §2.3 / §3.3.
 - **No dock badge/progress on Linux** — expected: dock-tile integration is macOS-only; progress is shown in the main window on all platforms.
