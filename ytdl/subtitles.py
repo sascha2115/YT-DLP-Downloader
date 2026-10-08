@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
+from ytdl.preferences import subtitle_layout_targets
 from ytdl.subtitle_layout import layout_cues
 from ytdl.utils import (
     SUBTITLE_LANG_ALIASES,
@@ -579,7 +580,8 @@ class SubtitleMixin:
             return ([], {})
 
         laid_out, stats = layout_cues(
-            subtitles, abbreviations=self._SUBTITLE_SENTENCE_ABBREVS
+            subtitles, abbreviations=self._SUBTITLE_SENTENCE_ABBREVS,
+            targets=subtitle_layout_targets()
         )
         # Final guard only: layout_cues already produces a monotonic,
         # non-overlapping sequence, so this drops nothing in practice - it is

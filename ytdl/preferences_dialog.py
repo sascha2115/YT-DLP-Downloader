@@ -23,6 +23,15 @@ class PreferencesDialogMixin:
         path_label.setWordWrap(True)
         layout.addWidget(path_label)
 
+        hint_label = QLabel(
+            "<small>subtitle_words_per_cue: how many words one subtitle "
+            f"carries ({prefs.SUBTITLE_WORDS_MIN}-{prefs.SUBTITLE_WORDS_MAX}, "
+            f"default {prefs.SUBTITLE_WORDS_DEFAULT}). Lower values split "
+            "subtitles sooner.</small>"
+        )
+        hint_label.setWordWrap(True)
+        layout.addWidget(hint_label)
+
         # Text editor for JSON
         text_edit = QTextEdit()
         text_edit.setStyleSheet("""
@@ -39,7 +48,11 @@ class PreferencesDialogMixin:
                 with open(prefs.PREFERENCES_FILE, "r", encoding="utf-8") as f:
                     content = f.read()
             else:
-                content = json.dumps({"channel_name_map": {}}, indent=2)
+                content = json.dumps(
+                    {"channel_name_map": {},
+                     "subtitle_words_per_cue": prefs.SUBTITLE_WORDS_DEFAULT},
+                    indent=2,
+                )
         except Exception as e:
             content = f"Error loading preferences: {e}"
 
@@ -73,6 +86,17 @@ class PreferencesDialogMixin:
                 parsed["channel_name_map"] = {}
             if not isinstance(parsed["channel_name_map"], dict):
                 raise ValueError("channel_name_map must be a JSON object")
+
+            if "subtitle_words_per_cue" in parsed:
+                words = parsed["subtitle_words_per_cue"]
+                if isinstance(words, bool) or not isinstance(words, int):
+                    raise ValueError(
+                        "subtitle_words_per_cue must be a whole number")
+                if not prefs.SUBTITLE_WORDS_MIN <= words <= prefs.SUBTITLE_WORDS_MAX:
+                    raise ValueError(
+                        f"subtitle_words_per_cue must be between "
+                        f"{prefs.SUBTITLE_WORDS_MIN} and "
+                        f"{prefs.SUBTITLE_WORDS_MAX}")
 
             # Write to file
             os.makedirs(prefs.PREFERENCES_DIR, exist_ok=True)

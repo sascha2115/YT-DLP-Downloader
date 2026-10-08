@@ -42,8 +42,8 @@ LAYOUT_MAX_DUR = 7.0
 # past the time it needs to be read. Fills the ~0.5s flicker between cues (40%
 # of transitions were blank) without leaving stale text through a real pause.
 LAYOUT_GAP_FILL_S = 1.5
-LAYOUT_TARGET_WORDS = 10
-LAYOUT_CEILING_WORDS = 12
+LAYOUT_TARGET_WORDS = 8
+LAYOUT_CEILING_WORDS = 10
 # A pause at least this long inside a long sentence is a good place to break it
 LAYOUT_SPLIT_PAUSE_S = 0.6
 
@@ -52,7 +52,8 @@ LAYOUT_SPLIT_PAUSE_S = 0.6
 #
 # If subtitles ever need to feel calmer or snappier, change TARGET_WORDS
 # (and CEILING_WORDS = TARGET_WORDS + 2, which is how split_long_sentence and
-# pack_sentences keep their one-line/merge limits consistent). That knob sets
+# pack_sentences keep their one-line/merge limits consistent). 8 is the
+# default (and the preference default). That knob sets
 # how much text one subtitle carries, so it changes the cue count and how long
 # each cue stays up, while leaving the reading speed alone. Measured on a
 # 12-minute capture at 3.20 wps:

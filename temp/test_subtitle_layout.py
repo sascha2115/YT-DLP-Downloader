@@ -103,13 +103,13 @@ class TestTargetsOverride(unittest.TestCase):
 
     def test_targets_override_is_honored(self):
         # The constants are import-time defaults, so a per-run override has to
-        # go through layout_cues(targets=...). This is the hook a future
-        # subtitle-pace preference would use; without it the tuning guide in
+        # go through layout_cues(targets=...). This is the hook the
+        # subtitle-pace preference uses; without it the tuning guide in
         # subtitle_layout would only be reachable by editing source.
         cues = read_capture(CAPTURES[0])
         base, _ = L.layout_cues(cues)
         tight, _ = L.layout_cues(cues, targets={
-            "target_words": 8, "ceiling_words": 10,
+            "target_words": 6, "ceiling_words": 8,
         })
         self.assertGreater(len(tight), len(base), "smaller subtitles, more cues")
         self.assertLess(

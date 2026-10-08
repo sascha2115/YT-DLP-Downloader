@@ -13,7 +13,8 @@ SponsorBlock is YouTube-only and is skipped automatically for other sites; Odyse
 - **Cancel** a running download from the button or `Esc`; closing the window cancels too
 - Progress shown in the dock icon and the main window (dock icon on macOS only)
 - Simple preferences file (macOS: `~/Library/Application Support/YT‑DLP Downloader`,
-  Linux: `~/.config/YT‑DLP Downloader`)
+  Linux: `~/.config/YT‑DLP Downloader`) — channel name mapping and
+  subtitle pace (`subtitle_words_per_cue`, 6–16, default 8)
 - Built‑in packaging instructions using `pyinstaller`
 
 ## Requirements
@@ -76,6 +77,11 @@ The tests replay captured yt-dlp output through the real parser and run the real
 download methods against a fake process — no Qt event loop and no network required.
 A headless construction check is available as `python3 temp/smoke_gui.py`.
 (`temp/test_dock_progress.py` is a manual dock-icon demo script, not a test.)
+
+## Changelog
+
+Release history lives in [CHANGELOG.md](CHANGELOG.md) — what changed in
+each version, and which changes affect files already on disk.
 
 ## Disclaimer
 
