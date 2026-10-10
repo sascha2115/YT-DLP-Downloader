@@ -24,11 +24,10 @@ class PreferencesDialogMixin:
         layout.addWidget(path_label)
 
         hint_label = QLabel(
-            "<small>subtitle_words_per_cue: how many words one subtitle "
-            f"carries ({prefs.SUBTITLE_WORDS_MIN}-{prefs.SUBTITLE_WORDS_MAX}, "
-            f"default {prefs.SUBTITLE_WORDS_DEFAULT}). Lower values split "
-            "subtitles sooner. Not currently in use — subtitles follow the "
-            "captions' own lines.</small>"
+            "<small>strip_bracketed_soundcues: true or false (default "
+            f"{'true' if prefs.STRIP_BRACKETED_SOUNDCUES_DEFAULT else 'false'}). "
+            "Removes bracketed sound cues such as [laughter], [snorts] and "
+            "[musik] from subtitles; false keeps them.</small>"
         )
         hint_label.setWordWrap(True)
         layout.addWidget(hint_label)
@@ -51,7 +50,8 @@ class PreferencesDialogMixin:
             else:
                 content = json.dumps(
                     {"channel_name_map": {},
-                     "subtitle_words_per_cue": prefs.SUBTITLE_WORDS_DEFAULT},
+                     "strip_bracketed_soundcues":
+                         prefs.STRIP_BRACKETED_SOUNDCUES_DEFAULT},
                     indent=2,
                 )
         except Exception as e:
@@ -88,16 +88,10 @@ class PreferencesDialogMixin:
             if not isinstance(parsed["channel_name_map"], dict):
                 raise ValueError("channel_name_map must be a JSON object")
 
-            if "subtitle_words_per_cue" in parsed:
-                words = parsed["subtitle_words_per_cue"]
-                if isinstance(words, bool) or not isinstance(words, int):
+            if "strip_bracketed_soundcues" in parsed:
+                if not isinstance(parsed["strip_bracketed_soundcues"], bool):
                     raise ValueError(
-                        "subtitle_words_per_cue must be a whole number")
-                if not prefs.SUBTITLE_WORDS_MIN <= words <= prefs.SUBTITLE_WORDS_MAX:
-                    raise ValueError(
-                        f"subtitle_words_per_cue must be between "
-                        f"{prefs.SUBTITLE_WORDS_MIN} and "
-                        f"{prefs.SUBTITLE_WORDS_MAX}")
+                        "strip_bracketed_soundcues must be true or false")
 
             # Write to file
             os.makedirs(prefs.PREFERENCES_DIR, exist_ok=True)

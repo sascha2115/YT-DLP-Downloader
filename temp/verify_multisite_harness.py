@@ -14,31 +14,31 @@ class Harness:
         self.video_state = {"url": "", "video_id": "", "site": "youtube"}
 
     extract_video_id = app.YTDLPDownloaderGUI.extract_video_id
-    is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
-    is_youtube_url = app.YTDLPDownloaderGUI.is_youtube_url
 
 
 h = Harness()
 
 # Rumble URL: supported, ID extracted, site recorded
-vid = h.extract_video_id("https://rumble.com/v6abcde-some-title.html")
+rumble = "https://rumble.com/v6abcde-some-title.html"
+vid = h.extract_video_id(rumble)
 print(
     "rumble id:", vid,
     "| site:", h.video_state["site"],
-    "| supported:", h.is_supported_url("https://rumble.com/v6abcde-some-title.html"),
-    "| is_youtube:", h.is_youtube_url("https://rumble.com/v6abcde-some-title.html"),
+    "| supported:", app.is_known_site(rumble),
+    "| is_youtube:", app.detect_site(rumble) == "youtube",
 )
 assert vid == "v6abcde", vid
 assert h.video_state["site"] == "rumble", h.video_state
-assert h.is_supported_url("https://rumble.com/v6abcde-some-title.html")
-assert not h.is_youtube_url("https://rumble.com/v6abcde-some-title.html")
+assert app.is_known_site(rumble)
+assert app.detect_site(rumble) != "youtube"
 
 # Switch to a YouTube URL: ID + site must follow
-vid = h.extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+youtube = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+vid = h.extract_video_id(youtube)
 print(
     "youtube id:", vid,
     "| site:", h.video_state["site"],
-    "| is_youtube:", h.is_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+    "| is_youtube:", app.detect_site(youtube) == "youtube",
 )
 assert vid == "dQw4w9WgXcQ", vid
 assert h.video_state["site"] == "youtube", h.video_state

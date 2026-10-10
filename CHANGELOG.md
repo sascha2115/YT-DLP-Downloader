@@ -27,6 +27,44 @@ disagree, this file is right.
 ---
 
 
+## 1.4.3 — 2026-10-10
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.3) · tag `v1.4.3`
+
+No **⚠ Changed on disk** marker this time: both changes default to exactly
+what the previous version already did, so nothing on disk differs unless
+you opt in.
+
+- **Bracketed sound cues are now optional.** `[laughter]`, `[snorts]`,
+  `[music]` and similar have always been removed from automatic
+  captions; there is now a preference to keep them, for anyone who
+  wants the captions exactly as YouTube's ASR emitted them:
+
+      { "strip_bracketed_soundcues": false }
+
+  A JSON `true`/`false`, default **`true`**, so nothing changes
+  unless you set it. Editable in the Preferences dialog alongside the
+  other keys, which now explains it. Affects newly processed
+  subtitles only.
+
+  Two things it deliberately does not touch: the `>>` speaker marker
+  is still always removed (it is an ASR artifact, not authored text),
+  and hand-written subtitle tracks are left completely alone, as
+  before — they are not re-laid-out at all.
+
+- **The unused subtitle-pace setting is gone.** `subtitle_words_per_cue`
+  and the sentence-aware layout it controlled were both removed, together
+  with the leftovers that only served them (`_SUBTITLE_SENTENCE_ABBREVS`
+  and `_flatten_subtitle_text`). Nothing had read any of it since 1.4.2
+  switched subtitles to the captions' own lines — it is now simply ignored
+  if it is still in your `preferences.json`, like any other key the app
+  does not know. No other behaviour changes.
+
+- **Cleanup.** Two URL helpers that nothing called any more —
+  `is_supported_url()` and `is_youtube_url()` — were removed. Input is
+  gated by `url_rejection_reason()`, which is unchanged, so unsupported
+  and malformed URLs are still rejected before yt-dlp runs.
+
 ## 1.4.2 — 2026-10-10
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.2) · tag `v1.4.2`

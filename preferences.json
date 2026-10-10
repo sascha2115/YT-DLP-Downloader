@@ -1,5 +1,5 @@
 {
-  "subtitle_words_per_cue": 8,
+  "strip_bracketed_soundcues": true,
   "channel_name_map": {
     "PowerfulJRE": "Joe Rogan",
     "{ungeskriptet} by Ben": "Ungeskriptet",

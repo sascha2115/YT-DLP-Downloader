@@ -25,14 +25,35 @@ else:
     )
 PREFERENCES_FILE = os.path.join(PREFERENCES_DIR, "preferences.json")
 
-# Subtitle pace preference: how many words one subtitle carries.
-# The layout ceiling is derived from it (target + 2), so the two can
-# never drift apart. Reading speed (words/sec) is deliberately NOT a
-# preference - it is only a floor and every real video already speaks
-# above it, so the setting would change nothing.
-SUBTITLE_WORDS_MIN = 6
-SUBTITLE_WORDS_MAX = 16
-SUBTITLE_WORDS_DEFAULT = 8
+# Strip bracketed sound cues ("[laughter]", "[snorts]", "[musik]") from
+# subtitles. Default on: automatic captions have always had them removed, so
+# turning this off is a way to see the raw ASR text, not a change of behaviour.
+STRIP_BRACKETED_SOUNDCUES_DEFAULT = True
+
+
+def strip_bracketed_soundcues(prefs_dict=None):
+    """Whether to remove bracketed sound cues like "[laughter]" from subtitles.
+
+    Reads `strip_bracketed_soundcues` from the live preferences at call time and
+    always answers with a real bool. An absent key, or one that is not a JSON
+    true/false (a string, a number, a list), falls back to
+    `STRIP_BRACKETED_SOUNDCUES_DEFAULT` - on - so a malformed file cannot
+    silently switch the behaviour; a wrong-typed value is logged. Pass a dict to
+    test a specific state.
+    """
+    source = preferences if prefs_dict is None else prefs_dict
+    raw = (source or {}).get("strip_bracketed_soundcues")
+    if isinstance(raw, bool):
+        return raw
+    if raw is not None:
+        logger.warning(
+            "strip_bracketed_soundcues is %s, not true or false — using %s",
+            type(raw).__name__,
+            "on" if STRIP_BRACKETED_SOUNDCUES_DEFAULT else "off",
+        )
+    # Absent, or unusable: fall back to the default, coerced so the answer is
+    # always a real bool even if the constant itself were mistyped.
+    return bool(STRIP_BRACKETED_SOUNDCUES_DEFAULT)
 
 
 def load_preferences():
@@ -40,7 +61,7 @@ def load_preferences():
     Linux: ~/.config/)."""
     default_preferences = {
         "channel_name_map": {},
-        "subtitle_words_per_cue": SUBTITLE_WORDS_DEFAULT,
+        "strip_bracketed_soundcues": STRIP_BRACKETED_SOUNDCUES_DEFAULT,
     }
 
     try:
@@ -59,36 +80,6 @@ def load_preferences():
     except Exception as e:
         logger.error(f"Error loading preferences: {e}")
         return default_preferences
-
-
-def subtitle_layout_targets(prefs_dict=None):
-    """Map the subtitle pace preference onto layout_cues() targets.
-
-    `subtitle_words_per_cue` (6-16, default 10) is the user-facing
-    knob: how many words one subtitle carries. Lower values split
-    subtitles sooner, so the next cue starts earlier. Returns {} when
-    the preference is unset or invalid, so the layout module's own
-    defaults apply. Pass a dict to test a specific state; without one
-    the live in-memory `preferences` are read at call time (module
-    bindings go stale after apply_preferences()).
-    """
-    source = preferences if prefs_dict is None else prefs_dict
-    raw = (source or {}).get("subtitle_words_per_cue")
-    if raw is None:
-        return {}
-    if isinstance(raw, bool) or not isinstance(raw, int):
-        logger.warning(
-            "subtitle_words_per_cue is %s, not a whole number — using default",
-            type(raw).__name__,
-        )
-        return {}
-    if not SUBTITLE_WORDS_MIN <= raw <= SUBTITLE_WORDS_MAX:
-        logger.warning(
-            "subtitle_words_per_cue %d is outside %d-%d — clamping",
-            raw, SUBTITLE_WORDS_MIN, SUBTITLE_WORDS_MAX,
-        )
-        raw = min(max(raw, SUBTITLE_WORDS_MIN), SUBTITLE_WORDS_MAX)
-    return {"target_words": raw, "ceiling_words": raw + 2}
 
 
 def apply_preferences(parsed):

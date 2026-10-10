@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
+from ytdl.preferences import strip_bracketed_soundcues
 from ytdl.subtitle_layout import rolling_cues
 from ytdl.utils import (
     SUBTITLE_LANG_ALIASES,
@@ -341,6 +342,10 @@ class SubtitleMixin:
         max_time = 0
         no_text_cues = 0
 
+        # One decision per file, so a run can never come out half-stripped if
+        # the preference is saved while this file is being processed.
+        strip_soundcues = strip_bracketed_soundcues()
+
         # First pass: collect all subtitles and find max time
         for block in blocks:
             lines = block.split("\n")
@@ -364,8 +369,11 @@ class SubtitleMixin:
             raw_text = "\n".join(lines[2:])
             # Filter out ">>" artifacts often found in auto-generated captions
             clean_text = re.sub(r'^>>\s*', '', raw_text, flags=re.MULTILINE).strip()
-            # Remove non-spoken tokens in square brackets, e.g. [laughter], [snorts]
-            clean_text = self._strip_nonspoken_brackets(clean_text)
+            # Remove non-spoken tokens in square brackets, e.g. [laughter],
+            # [snorts]. Controlled by the strip_bracketed_soundcues preference;
+            # off keeps them, so a block that is nothing but cues still has text.
+            if strip_soundcues:
+                clean_text = self._strip_nonspoken_brackets(clean_text)
             # Replace all newlines and extra whitespace with a single space
             text = " ".join(clean_text.split())
 
@@ -373,9 +381,9 @@ class SubtitleMixin:
                 subtitles.append({"start": start_sec, "end": end_sec, "text": text})
             else:
                 # A block that held nothing but artifacts or stage directions
-                # ("[musik]", ">>"), which _strip_nonspoken_brackets removes on
-                # purpose. Counted so the summary reconciles with the cue count
-                # in the file the user can open.
+                # (">>", or "[musik]" when the strip preference is on, which
+                # removes it on purpose). Counted so the summary reconciles with
+                # the cue count in the file the user can open.
                 no_text_cues += 1
 
         if not subtitles:
@@ -510,9 +518,6 @@ class SubtitleMixin:
         cleaned = " ".join(cleaned.split())
         return cleaned.strip()
 
-    def _flatten_subtitle_text(self, text: str) -> str:
-        return " ".join((text or "").replace("\n", " ").split())
-
     def _fix_subtitle_time_overlaps(self, subtitles):
         """Make the cue sequence monotonic and non-overlapping, without losing text.
 
@@ -588,10 +593,3 @@ class SubtitleMixin:
         stats["dropped"] = len(dropped)
         stats["dropped_cues"] = dropped
         return fixed, stats
-
-    _SUBTITLE_SENTENCE_ABBREVS = frozenset(
-        {
-            "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st",
-            "vs", "etc", "e.g", "i.e",
-        }
-    )

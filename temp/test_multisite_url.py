@@ -700,7 +700,6 @@ class TestProcessAndSetUrl(unittest.TestCase):
             self.signals = app.SignalEmitter()
 
         _process_and_set_url = app.YTDLPDownloaderGUI._process_and_set_url
-        is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
         url_rejection_reason = app.YTDLPDownloaderGUI.url_rejection_reason
 
     def test_garbage_clipboard_never_reaches_url_field(self):
@@ -777,7 +776,6 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
             self.video_state = {"is_fetching_info": False}
 
         fetch_video_info = app.YTDLPDownloaderGUI.fetch_video_info
-        is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
         url_rejection_reason = app.YTDLPDownloaderGUI.url_rejection_reason
         extract_video_id = app.YTDLPDownloaderGUI.extract_video_id
 
@@ -895,7 +893,6 @@ class TestGermanMediathekUrlGate(unittest.TestCase):
 
     class Harness:
         url_rejection_reason = app.YTDLPDownloaderGUI.url_rejection_reason
-        is_supported_url = app.YTDLPDownloaderGUI.is_supported_url
 
     CHANNEL_MSG = (
         "Channel/playlist URLs are not supported — "

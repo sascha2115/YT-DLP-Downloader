@@ -71,7 +71,7 @@ class TestNoTextIsEverLost(unittest.TestCase):
     """
 
     def test_no_capture_loses_a_cue(self):
-        from temp.test_subtitle_layout import CAPTURES, read_capture
+        from temp.test_subtitle_rolling import CAPTURES, read_capture
 
         self.assertTrue(CAPTURES, "no subtitle captures found")
         for path in CAPTURES:

@@ -14,8 +14,9 @@ SponsorBlock is YouTube-only and is skipped automatically for other sites; Odyse
 - Progress shown in the dock icon and the main window (dock icon on macOS only)
 - Simple preferences file (macOS: `~/Library/Application Support/YT‑DLP Downloader`,
   Linux: `~/.config/YT‑DLP Downloader`) — channel name mapping and
-  subtitle pace (`subtitle_words_per_cue`, 6–16, default 8; retained but
-  not currently in use — subtitles follow the captions' own lines)
+  bracketed sound cues (`strip_bracketed_soundcues`, `true`/`false`,
+  default `true` — removes `[laughter]`, `[snorts]`, `[musik]` and the
+  like from subtitles; `false` keeps them)
 - Built‑in packaging instructions using `pyinstaller`
 
 ## Requirements

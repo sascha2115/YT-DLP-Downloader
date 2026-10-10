@@ -34,7 +34,7 @@ def bind_all(h):
         if callable(attr):
             setattr(h, name, types.MethodType(attr, h))
         else:
-            # Class-level data (e.g. _SUBTITLE_SENTENCE_ABBREVS)
+            # Class-level data (non-callable attributes)
             setattr(h, name, attr)
     # Public helpers the chain needs (get_full_path/get_output_dir stay
     # harness-provided so paths point at the replay directory)

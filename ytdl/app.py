@@ -455,21 +455,6 @@ class YTDLPDownloaderGUI(
     # Clicked Browse Button
     # ----------------------------------------------------------------------------------------------------
 
-    # ----------------------------------------------------------------------------------------------------
-    # Check if the URL is a valid YouTube URL
-    # ----------------------------------------------------------------------------------------------------
-    def is_youtube_url(self, url):
-        return detect_site(url) == "youtube" and self.extract_video_id(url) is not None
-
-    # ----------------------------------------------------------------------------------------------------
-    # Check if the URL belongs to a supported site (YouTube, Rumble, ...)
-    # ----------------------------------------------------------------------------------------------------
-    def is_supported_url(self, url):
-        # Strict domain gate: only hostnames with a SUPPORTED_SITES profile
-        # are accepted (unknown domains would only fail inside yt-dlp's
-        # generic extractor).
-        return is_known_site(url)
-
     def url_rejection_reason(self, url):
         """
         None when the URL may be handed to yt-dlp, otherwise a user-facing
