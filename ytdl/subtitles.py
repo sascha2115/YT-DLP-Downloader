@@ -7,8 +7,7 @@ import logging
 import os
 import re
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
-from ytdl.preferences import subtitle_layout_targets
-from ytdl.subtitle_layout import layout_cues
+from ytdl.subtitle_layout import rolling_cues
 from ytdl.utils import (
     SUBTITLE_LANG_ALIASES,
     canonical_subtitle_lang,
@@ -446,6 +445,9 @@ class SubtitleMixin:
         # be skipped by the gate upstream (or merged into nothing) without a
         # single word of this showing up anywhere else in the panel, so the
         # counts are reported next to the file they belong to.
+        #
+        # The rolling stage keeps the ASR's windows, so in == out and there is no
+        # reading-speed figure to report: the durations are the ASR's own gaps.
         two_line_cues = sum(
             1 for sub in merged_subtitles if "\n" in (sub.get("text") or "")
         )
@@ -456,8 +458,6 @@ class SubtitleMixin:
                 len(merged_subtitles),
                 counters={
                     "two_line": two_line_cues,
-                    "wps": layout_stats.get("wps"),
-                    "over_target": layout_stats.get("over_target", 0),
                     "no_text": no_text_cues,
                     "too_short": too_short_cues,
                     "dropped": layout_stats.get("dropped", 0),
@@ -563,13 +563,13 @@ class SubtitleMixin:
         return fixed, dropped
 
     def _format_subtitles_for_display(self, subtitles):
-        """Lay out parsed cues for display: sentence-aligned, two lines, timed.
+        """Lay out parsed cues for display: the YouTube player's look, two lines.
 
-        Delegates to ytdl.subtitle_layout (pure, no Qt) and returns
-        (cues, stats). See that module for the rules; the short version is that
-        a cue ends at a sentence end whenever it fits the word ceiling and the
-        available time, and its duration comes from the word count rather than
-        being inherited from the ASR.
+        Delegates to ytdl.subtitle_layout.rolling_cues (pure, no Qt) and returns
+        (cues, stats). The ASR's own windows stay the cues, each starting at its
+        own exact timestamp, and each cue carries the finished window above the
+        new one - shown whole instead of rolling in word by word. See that
+        function for the rules and for why the finished line is repeated.
 
         `stats["dropped"]` counts the cues the final overlap guard could not
         place at all, and `stats["dropped_cues"]` carries them so the caller can
@@ -579,13 +579,11 @@ class SubtitleMixin:
         if not subtitles:
             return ([], {})
 
-        laid_out, stats = layout_cues(
-            subtitles, abbreviations=self._SUBTITLE_SENTENCE_ABBREVS,
-            targets=subtitle_layout_targets()
-        )
-        # Final guard only: layout_cues already produces a monotonic,
-        # non-overlapping sequence, so this drops nothing in practice - it is
-        # here so a future change cannot write an overlapping or lossy file.
+        laid_out, stats = rolling_cues(subtitles)
+        # Final guard only: rolling_cues already produces a monotonic,
+        # non-overlapping sequence (a cue ends where the next window opens), so
+        # this drops nothing in practice - it is here so a future change cannot
+        # write an overlapping or lossy file.
         fixed, dropped = self._fix_subtitle_time_overlaps(laid_out)
         stats["dropped"] = len(dropped)
         stats["dropped_cues"] = dropped

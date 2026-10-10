@@ -27,7 +27,8 @@ class PreferencesDialogMixin:
             "<small>subtitle_words_per_cue: how many words one subtitle "
             f"carries ({prefs.SUBTITLE_WORDS_MIN}-{prefs.SUBTITLE_WORDS_MAX}, "
             f"default {prefs.SUBTITLE_WORDS_DEFAULT}). Lower values split "
-            "subtitles sooner.</small>"
+            "subtitles sooner. Not currently in use — subtitles follow the "
+            "captions' own lines.</small>"
         )
         hint_label.setWordWrap(True)
         layout.addWidget(hint_label)

@@ -8,7 +8,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main as app  # noqa: E402
-from ytdl.subtitle_layout import layout_cues  # noqa: E402
+from ytdl.subtitle_layout import rolling_cues  # noqa: E402
 from ytdl.utils import format_srt_time, format_subtitle_stats  # noqa: E402
 
 
@@ -180,7 +180,7 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                     )
             self.assertTrue(self.gui.resync_subtitles(path, path))
 
-            expected, _ = layout_cues(
+            expected, _ = rolling_cues(
                 [{"start": s, "end": e, "text": t} for s, e, t in source_cues]
             )
             stats = [
@@ -192,7 +192,7 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             line = stats[0]
             self.assertIn(f"4 in → {len(expected)} out", line)
             self.assertIn("Title.en.srt", line)
-            self.assertIn("wps", line)
+            self.assertIn("two-line", line)
 
     def test_valid_crlf_srt_is_processed(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,24 +1,29 @@
-"""Subtitle display layout: turn ASR cues into readable, sentence-aligned cues.
+"""Subtitle display layout: turn ASR cues into what a viewer should read.
 
-Pure logic - no Qt, no filesystem. `layout_cues()` is the whole stage and every
-helper is a module-level function, so the behaviour can be tested without the
-app (see temp/test_subtitle_layout.py and the six real captures
-temp/subtitle-capture-*.srt).
+Pure logic - no Qt, no filesystem. Two stages live here, both module-level
+functions so the behaviour can be tested without the app (see
+temp/test_subtitle_rolling.py, temp/test_subtitle_layout.py and the seven real
+captures temp/subtitle-capture-*.srt):
 
-What it replaces: three heuristic passes (pair choppy cues -> shift words across
-pauses -> pair again). Those produced two-line cues whose line break was a
-character midpoint and whose boundaries were inherited from the ASR's
-time-based chunking, so ~75% of subtitles ended mid-sentence - they closed
-wherever a 50-character budget happened to fall.
+  rolling_cues()   - the stage the app uses. Groups the ASR's own windows in
+                     twos, one window per line, so two caption lines show at once
+                     exactly as the YouTube player shows them - shown whole
+                     instead of rolling in word by word. Nothing is repeated
+                     and nothing is re-cut.
 
-The rule here is a compromise, in this order:
-  1. a cue ends at a sentence end whenever one fits the shape and the time;
-  2. a sentence too long for the shape is broken at a pause or clause mark;
-  3. a cue never overlaps the next one, and never shows for less than
-     LAYOUT_MIN_DUR.
-Timing: starts stay on the ASR grid (the source cue that carries the first
-word), durations come from the word count at the effective reading speed. That
-is the one thing the old pipeline never did - it inherited the ASR's durations.
+  layout_cues()    - the sentence-aware stage (shipped as v1.4.0, no longer
+                     called by the app). Re-packs the word stream into
+                     sentence-aligned cues with durations from a reading-speed
+                     model. Kept and tested as the alternative; see the
+                     "Subtitle display layout" section of AGENTS.md.
+
+Why the ASR file needs no re-packing: the captions already ARE the display.
+Each window is a short phrase, every window overlaps the next, and the file has
+no line breaks at all - the two lines a viewer sees are two consecutive
+windows. So rolling_cues() groups those windows in twos and changes nothing
+else; the older sentence-aware stage threw the ASR's boundaries away and rebuilt
+them, which fixed sentence alignment at the cost of no longer matching the
+player.
 """
 
 import re
@@ -26,7 +31,7 @@ import re
 # Display-layout targets.
 #
 # Sized in WORDS, not characters: sentence length is stable across languages and
-# channels (median 9-12 words across six real captures) while character counts
+# channels (median 8-12 words across the real captures) while character counts
 # swing with the language alone (11.7 vs 18.8 chars/sec at the same word rate).
 #
 # Reading speed is a property of a reader, NOT of the video, so TARGET_WPS is a
@@ -44,6 +49,10 @@ LAYOUT_MAX_DUR = 7.0
 LAYOUT_GAP_FILL_S = 1.5
 LAYOUT_TARGET_WORDS = 8
 LAYOUT_CEILING_WORDS = 10
+# A fragment smaller than this cannot be merged back into the previous
+# cue (the word ceiling blocks the merge), so split_long_sentence
+# rebalances the cut instead of leaving a one-word orphan.
+LAYOUT_MIN_FRAGMENT_WORDS = 3
 # A pause at least this long inside a long sentence is a good place to break it
 LAYOUT_SPLIT_PAUSE_S = 0.6
 
@@ -140,12 +149,18 @@ def split_sentences(words, abbreviations=DEFAULT_ABBREVIATIONS):
 
 
 def split_long_sentence(sentence, ceiling=LAYOUT_CEILING_WORDS,
-                        pause_s=LAYOUT_SPLIT_PAUSE_S):
+                        pause_s=LAYOUT_SPLIT_PAUSE_S,
+                        min_fragment_words=LAYOUT_MIN_FRAGMENT_WORDS):
     """Break a sentence that cannot fit the shape into fragments.
 
     Only ~70% of sentences fit two lines, so this path is the exception, not the
     rule: prefer a real pause, then clause punctuation, and only then fall back
     to the hard ceiling.
+
+    A hard-ceiling cut can leave a one-word remainder ("...take care of" /
+    "them.") that no cue can absorb - merging it back would exceed the word
+    ceiling - so words move from the previous fragment until the remainder is
+    a readable cue, or until the previous fragment would starve.
     """
     if len(sentence) <= ceiling:
         return [sentence]
@@ -166,6 +181,15 @@ def split_long_sentence(sentence, ceiling=LAYOUT_CEILING_WORDS,
         current = current[cut:]
     if current:
         fragments.append(current)
+
+    for index in range(len(fragments) - 1):
+        shortfall = min_fragment_words - len(fragments[index + 1])
+        donor = len(fragments[index]) - shortfall
+        if shortfall > 0 and donor >= min_fragment_words:
+            fragments[index + 1] = (
+                fragments[index][donor:] + fragments[index + 1]
+            )
+            fragments[index] = fragments[index][:donor]
     return fragments
 
 
@@ -314,9 +338,9 @@ def layout_cues(cues, abbreviations=DEFAULT_ABBREVIATIONS, targets=None):
     `layout_cues(cues, targets={"target_words": 12, "ceiling_words": 14})`.
     Every key maps to a module constant of the same name minus the LAYOUT_
     prefix: target_wps, max_wps, min_dur, max_dur, target_words,
-    ceiling_words, split_pause_s, gap_fill_s. This is the hook a subtitle-pace
-    preference would use - without it the constants are only import-time
-    defaults and cannot be varied per run.
+    ceiling_words, split_pause_s, gap_fill_s, min_fragment_words. This is
+    the hook a subtitle-pace preference would use - without it the
+    constants are only import-time defaults and cannot be varied per run.
     """
     pick = (targets or {}).get
     target_wps = pick("target_wps", LAYOUT_TARGET_WPS)
@@ -327,6 +351,8 @@ def layout_cues(cues, abbreviations=DEFAULT_ABBREVIATIONS, targets=None):
     ceiling_words = pick("ceiling_words", LAYOUT_CEILING_WORDS)
     split_pause_s = pick("split_pause_s", LAYOUT_SPLIT_PAUSE_S)
     gap_fill_s = pick("gap_fill_s", LAYOUT_GAP_FILL_S)
+    min_fragment_words = pick("min_fragment_words",
+                              LAYOUT_MIN_FRAGMENT_WORDS)
 
     usable = [c for c in cues if (c.get("text") or "").strip()]
     if not usable:
@@ -342,7 +368,8 @@ def layout_cues(cues, abbreviations=DEFAULT_ABBREVIATIONS, targets=None):
     for sentence in sentences:
         fragments.extend(
             split_long_sentence(sentence, ceiling=ceiling_words,
-                                pause_s=split_pause_s)
+                                pause_s=split_pause_s,
+                                min_fragment_words=min_fragment_words)
         )
     groups = pack_sentences(fragments, wps, ceiling_words=ceiling_words,
                             min_dur=min_dur, max_dur=max_dur)
@@ -351,4 +378,101 @@ def layout_cues(cues, abbreviations=DEFAULT_ABBREVIATIONS, targets=None):
                                      target_words=target_words, gap_fill=gap_fill_s)
     stats["natural_wps"] = round(natural_wps, 2)
     stats["wps"] = round(wps, 2)
+    return laid_out, stats
+
+
+# ---------------------------------------------------------------------------
+# Rolling layout: the YouTube player's own look.
+#
+# The ASR file is already the display, and it needs only one change: pairing.
+# Each window is a short phrase, every window overlaps the next (100% of pairs on
+# the real captures, median 1.6s), and the downloaded file has NO line breaks at
+# all (0 of 2398 cues across seven captures) - because in the YouTube player the
+# two lines a viewer sees are two consecutive windows, the finished one on top
+# and the next one rolling in underneath.
+#
+# So the display is rebuilt by grouping the windows in twos: two consecutive
+# ASR windows become one two-line cue, shown whole. Nothing is repeated - each
+# window appears exactly once, on the line it occupies in the player:
+#
+#     SET 1   the Peruvian skulls and                  <- window 1
+#             No, before I thought Oh, go ahead.       <- window 2
+#     SET 2   Sorry.                                   <- window 3
+#             No, go ahead.                            <- window 4
+#
+# A cue starts at its FIRST window's own timestamp - verbatim from the source
+# file, not an interpolated word time and not delayed for reading speed - so the
+# top line appears exactly when YouTube's would. It ends where the NEXT set
+# starts, which is that set's first window, so cues never overlap and the screen
+# changes at a moment the ASR itself marks.
+#
+# No reading-speed model is involved: durations are the ASR's own gaps, so a fast
+# speaker gets short cues and a real pause stays blank - the same trade the
+# player makes.
+#
+# Each window's text is written verbatim on its own line - NEVER re-wrapped. A
+# long window stays a long line, exactly as YouTube shows it; a player that wants
+# to fit it wraps it itself, and second-guessing that here would make the file
+# differ from the captions for no gain.
+# ---------------------------------------------------------------------------
+ROLLING_MIN_DUR = 0.2
+# How many consecutive ASR windows share one cue. 2 is the player's look: the
+# finished line on top, the new one below.
+ROLLING_WINDOWS_PER_CUE = 2
+
+
+def rolling_cues(cues, windows_per_cue=ROLLING_WINDOWS_PER_CUE,
+                 min_dur=ROLLING_MIN_DUR):
+    """Group ASR windows into the two-line cues the YouTube player shows.
+
+    Returns (cues, stats). `windows_per_cue` consecutive source windows become
+    one cue (2 by default), each window on its own line and shown whole - never
+    repeated, never merged with another window's words, and never re-wrapped.
+
+    `start` is the group's FIRST window's own timestamp, verbatim from the
+    source file, so the top line appears exactly when YouTube's would. `end` is
+    the next group's first window, so cues never overlap and the display changes
+    at an instant the ASR itself marks. The last group has no successor and keeps
+    its own last window's end.
+
+    A window longer than one line stays one long line: that is what the ASR says
+    and what the player shows.
+    """
+    usable = [c for c in cues if (c.get("text") or "").strip()]
+    if not usable:
+        return [], {"cues": 0, "two_line": 0, "windows": 0}
+
+    laid_out = []
+    step = max(1, windows_per_cue)
+    for index in range(0, len(usable), step):
+        group = usable[index:index + step]
+        start = group[0].get("start") or 0.0
+
+        # Ends where the next group opens: the next window the ASR starts. The
+        # last group has no successor, so it keeps its own end - with a floor, so
+        # a zero-length source window still displays.
+        if index + step < len(usable):
+            end = usable[index + step].get("start") or start
+        else:
+            end = group[-1].get("end") or start
+        if end <= start:
+            end = start + min_dur
+
+        # One window per line, text verbatim. Whitespace is normalised (the ASR
+        # emits stray double spaces and trailing blanks) but nothing is split.
+        lines = [" ".join((w.get("text") or "").split()) for w in group]
+
+        laid_out.append({
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": end - start,
+            "words": sum(len(line.split()) for line in lines),
+            "text": "\n".join(lines),
+        })
+
+    stats = {
+        "cues": len(laid_out),
+        "two_line": sum(1 for c in laid_out if "\n" in c["text"]),
+        "windows": len(usable),
+    }
     return laid_out, stats

@@ -27,6 +27,44 @@ disagree, this file is right.
 ---
 
 
+## 1.4.2 — 2026-10-10
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.2) · tag `v1.4.2`
+
+### ⚠ Changed on disk — subtitles match the YouTube player again
+
+- Subtitles are laid out from the captions' **own lines**, two at a time,
+  instead of being regrouped into sentence-aligned cues:
+
+      LINE 1: the Peruvian skulls and
+      LINE 2: No, before I thought Oh, go ahead.
+
+  Nothing is repeated and nothing is re-cut — every caption line appears
+  exactly once, on the line it occupies in the player — and a long line is
+  left exactly as long as the captions make it rather than being wrapped.
+  The top line of each pair starts at exactly the time the caption file
+  gives it, so it appears when YouTube's would.
+- This **reverses the 1.4.0 layout**, which broke subtitles at sentence
+  ends (75% mid-sentence → 20–44%). Copying the player means a subtitle can
+  end mid-sentence again — the captions' lines are phrases, not sentences —
+  and that is the trade. `layout_cues()` and the `subtitle_words_per_cue`
+  preference from 1.4.1 are both still in the code and still tested, so the
+  sentence-aware layout is one call site away if it is ever wanted back;
+  the preference has **no effect** on new downloads until then, and the
+  Preferences dialog now says so.
+- Affects newly processed subtitles only; existing `.srt` files are never
+  re-laid-out.
+
+### Also
+
+- **No more one-word subtitles from a cut.** In the sentence-aware layout,
+  a sentence one word over the word ceiling used to be cut as a full cue
+  plus a single-word cue ("…take care of" / "them.") that no packing rule
+  could merge back. The cut is now rebalanced so the tail carries at least
+  three words (the 11-word sentence splits 8+3, not 10+1). A subtitle that
+  is genuinely a one-word sentence ("Yeah.", "Mhm.") still stands alone —
+  that is what was said.
+
 ## 1.4.1 — 2026-10-08
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.1) · tag `v1.4.1`
