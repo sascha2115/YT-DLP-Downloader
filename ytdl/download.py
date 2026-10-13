@@ -362,29 +362,50 @@ class DownloadMixin:
                     ]
                 )
         elif media_type in ["video", "video_only"]:
-            # Build common video filters
-            format_parts = [
-                f"[height<={int(quality)}]" if quality != "best" else "",
-                f"[vcodec*={video_codec}]" if video_codec != "best" else "",
-            ]
-            video_format_filter = "".join(p for p in format_parts if p)
+            # Map UI codec names to yt-dlp's actual codec prefixes
+            codec_map = {
+                "h264": "avc1",
+                "vp9": "vp9",
+                "av1": "av01",
+            }
+            filter_codec = codec_map.get(video_codec, video_codec)
+
+            # If all three are "best", use simple "-f best" (single muxed stream,
+            # no merge needed). This is the yt-dlp-recommended default.
+            all_best = (quality == "best" and video_codec == "best" and audio_fmt == "best")
 
             if media_type == "video":
-                # "bestvideo*" rather than strict "bestvideo": muxed HLS
-                # formats (Rumble) report unknown codecs, which strict
-                # bestvideo skips - leaving only Rumble's tiny video-only
-                # timeline strip (180p) as the "best" video stream. bv*
-                # allows video+audio combinations, so the site's real
-                # streams are eligible (the merge still uses the separate
-                # bestaudio track when one exists).
-                format_string = f"bestvideo*{video_format_filter}+bestaudio/best"
-                cmd.extend(["-f", format_string])
+                if all_best:
+                    cmd.extend(["-f", "best"])
+                else:
+                    # "bestvideo*" rather than strict "bestvideo": muxed HLS
+                    # formats (Rumble) report unknown codecs, which strict
+                    # bestvideo skips - leaving only Rumble's tiny video-only
+                    # timeline strip (180p) as the "best" video stream. bv*
+                    # allows video+audio combinations, so the site's real
+                    # streams are eligible (the merge still uses the separate
+                    # bestaudio track when one exists).
+                    format_parts = [
+                        f"[height<={int(quality)}]" if quality != "best" else "",
+                        f"[vcodec*={filter_codec}]" if video_codec != "best" else "",
+                    ]
+                    video_format_filter = "".join(p for p in format_parts if p)
+                    format_string = f"bestvideo*{video_format_filter}+bestaudio/best"
+                    cmd.extend(["-f", format_string])
                 if video_fmt != "best":
                     cmd.extend(["--merge-output-format", video_fmt])
 
             elif media_type == "video_only":
-                format_string = f"bestvideo{video_format_filter}/best"
-                cmd.extend(["-f", format_string])
+                if all_best:
+                    cmd.extend(["-f", "bestvideo"])
+                else:
+                    format_parts = [
+                        f"[height<={int(quality)}]" if quality != "best" else "",
+                        f"[vcodec*={filter_codec}]" if video_codec != "best" else "",
+                    ]
+                    video_format_filter = "".join(p for p in format_parts if p)
+                    format_string = f"bestvideo{video_format_filter}/best"
+                    cmd.extend(["-f", format_string])
                 if video_fmt != "best":
                     cmd.extend(["--recode-video", video_fmt])
 

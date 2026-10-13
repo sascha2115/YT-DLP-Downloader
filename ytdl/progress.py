@@ -119,10 +119,13 @@ class DownloadProgressManager:
         elif self.media_type == "video_only":
             self.video_progress = self.PROGRESS_MAX
         else:
-            # video or muxed: always fill video bar; only fill audio bar if
-            # a separate audio stream was actually downloaded (download_count > 1)
+            # video or muxed: always fill video bar
             self.video_progress = self.PROGRESS_MAX
-            if self.download_count > 1:
+            # For muxed single stream (download_count == 1), the file contains
+            # both video and audio, so show both bars as complete.
+            # For separate streams (download_count > 1), audio was downloaded
+            # separately and its bar already reached 100%.
+            if self.download_count > 1 or self.download_count == 1:
                 self.audio_progress = self.PROGRESS_MAX
         return self.video_progress, self.audio_progress
 

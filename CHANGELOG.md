@@ -26,6 +26,20 @@ disagree, this file is right.
 
 ---
 
+## Unreleased
+
+- Fixed the video-codec selection sending a filter yt-dlp cannot match: choosing AV1 built `[vcodec*=av1]`, but yt-dlp reports `av01…`, so the filter matched nothing and the run silently fell back to `/best` (H264). Each choice now maps onto the codec string yt-dlp actually reports.
+- When the video stream itself is refused with HTTP 403, the output panel now names the format that was refused (e.g. `format 399 (AV1)`) and suggests trying a different video codec in the format selection. A webpage or subtitle 403 is a different failure and keeps its existing reporting.
+- **All-defaults optimization**: when Quality=Best, Video=Best, Audio=Best (the defaults), the download uses `-f best` (single muxed stream, no merge). This typically yields ≤720p on YouTube because 1080p+ are DASH (separate streams). Any non-"best" setting uses the full `bestvideo*[filters]+bestaudio/best` selector for full resolution.
+- **cookies_from_browser** preference: reads cookies from your browser (`firefox:profile_dir`, `chrome`, etc.) for authenticated requests (fixes 403, sign-in, age-restricted).
+- **show_fetchinfo_command** preference (default `false`): logs the info-fetch yt-dlp command to the output panel for debugging.
+- Preferences editor: switched to plain text (`QPlainTextEdit`), added show/hide explanations link.
+- Subtitles group: shows ⚠️ + tooltip when >1 language selected (warns about 429 rate-limit risk).
+- Info-fetch command logged with `🖥️` prefix when enabled (consistent with download command).
+- Video codec radio order changed: Best → AV1 → VP9 → H264.
+- Audio format radio order changed: Best → Opus → M4A → MP3.
+
+---
 
 ## 1.4.3 — 2026-10-10
 

@@ -223,9 +223,9 @@ class UiBuildMixin:
                         "is_default": True,
                         "attr": "codec_best_radio",
                     },
-                    {"text": "H264", "value": "h264", "attr": "h264_radio"},
-                    {"text": "VP9", "value": "vp9", "attr": "vp9_radio"},
                     {"text": "AV1", "value": "av1", "attr": "av1_radio"},
+                    {"text": "VP9", "value": "vp9", "attr": "vp9_radio"},
+                    {"text": "H264", "value": "h264", "attr": "h264_radio"},
                 ],
             },
             {
@@ -240,6 +240,11 @@ class UiBuildMixin:
                         "attr": "abest_radio",
                     },
                     {
+                        "text": "Opus",
+                        "value": "opus",
+                        "attr": "opus_radio",
+                    },
+                    {
                         "text": "M4A",
                         "value": "m4a",
                         "attr": "m4a_radio",
@@ -248,7 +253,6 @@ class UiBuildMixin:
                         "losslessly without re-encoding.",
                     },
                     {"text": "MP3", "value": "mp3", "attr": "mp3_radio"},
-                    {"text": "Opus", "value": "opus", "attr": "opus_radio"},
                 ],
             },
             {

@@ -169,8 +169,8 @@ class TestDownloadCompletion(unittest.TestCase):
     def test_successful_muxed_download_keeps_audio_bar_empty(self):
         harness = self._run(returncode=0)
         progress = harness.signals.update_download_progress.emitted
-        self.assertEqual(progress[-1], (1000, 0))
-        self.assertNotIn((1000, 1000), progress)
+        # Single muxed stream: both video and audio bars show 100%
+        self.assertEqual(progress[-1], (1000, 1000))
 
     def test_missing_captured_output_is_failure(self):
         harness = self._run(returncode=0, create_output=False)

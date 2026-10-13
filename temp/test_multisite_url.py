@@ -434,11 +434,14 @@ class TestFormatChoiceLine(unittest.TestCase):
     def test_video_mode_says_audio_is_included(self):
         line = self._line("video")
         self.assertIn("Video + Audio", line)
-        self.assertIn("bestaudio", line)
+        # With all defaults, uses simple "best" selector
+        self.assertIn("best", line)
 
     def test_video_only_mode_says_so(self):
         line = self._line("video_only")
         self.assertIn("Video only", line)
+        # With all defaults, uses "bestvideo"
+        self.assertIn("bestvideo", line)
         self.assertNotIn("bestaudio", line)
 
     def test_audio_only_mode_names_the_container(self):
@@ -547,27 +550,37 @@ class TestBuildCommandAudio(unittest.TestCase):
         self.assertNotIn("-x", cmd)
 
     def test_video_mode_uses_multiplexed_selector(self):
-        # Strict "bestvideo" skips muxed HLS formats (Rumble reports unknown
-        # codecs), which degraded downloads to the 180p timeline strip. The
-        # video mode must use "bestvideo*" so those streams are eligible.
+        # When all defaults (quality=best, video_codec=best, audio_format=best):
+        # use simple "best" (single muxed stream, no merge needed).
         cmd = self._cmd(media_type="video")
         idx = cmd.index("-f")
-        self.assertEqual(cmd[idx + 1], "bestvideo*+bestaudio/best")
+        self.assertEqual(cmd[idx + 1], "best")
 
     def test_video_mode_quality_filter_applies(self):
+        # When quality is specified (not "best"), use the full selector
+        # with bestvideo* so muxed HLS formats (Rumble) are eligible.
         h = self.Harness(media_type="video")
         h.video_state["quality"] = "480"
         cmd = h.build_command(selected_langs=None)
         idx = cmd.index("-f")
         self.assertEqual(cmd[idx + 1], "bestvideo*[height<=480]+bestaudio/best")
 
+    def test_video_mode_codec_filter_applies(self):
+        # When video_codec is specified (not "best"), use the full selector
+        h = self.Harness(media_type="video")
+        h.video_state["video_codec"] = "av1"
+        cmd = h.build_command(selected_langs=None)
+        idx = cmd.index("-f")
+        self.assertEqual(cmd[idx + 1], "bestvideo*[vcodec*=av01]+bestaudio/best")
+
     def test_video_mode_includes_audio_and_video_only_does_not(self):
         # The trap behind "the app downloaded no audio": the media type alone
         # decides it, and the two formats differ only by "+bestaudio".
+        # For all-best case, video uses "best" (includes audio), video_only uses "bestvideo".
         with_audio = self._cmd(media_type="video")
         without = self._cmd(media_type="video_only")
-        self.assertIn("bestaudio", with_audio[with_audio.index("-f") + 1])
-        self.assertNotIn("bestaudio", without[without.index("-f") + 1])
+        self.assertEqual(with_audio[with_audio.index("-f") + 1], "best")
+        self.assertEqual(without[without.index("-f") + 1], "bestvideo")
 
     def test_deno_passed_for_youtube(self):
         h = self.Harness(audio_fmt="m4a")
