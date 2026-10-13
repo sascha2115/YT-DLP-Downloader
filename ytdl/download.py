@@ -741,8 +741,9 @@ class DownloadMixin:
                 logger.info(f"SponsorBlock removed: {', '.join(segment_info)}")
 
             # Log the result
+            url = self.get_clean_url() if hasattr(self, "get_clean_url") else "unknown"
             logger.info(
-                f"Download {'succeeded' if success else 'cancelled' if cancelled else 'failed'}"
+                f"Download {'succeeded' if success else 'cancelled' if cancelled else 'failed'}: {url}"
             )
 
             # Clean up state and UI in a single batch to avoid cascading updates.
