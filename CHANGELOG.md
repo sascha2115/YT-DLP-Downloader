@@ -26,7 +26,21 @@ disagree, this file is right.
 
 ---
 
-## Unreleased
+## 1.4.5 — 2026-10-13
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.5) · tag `v1.4.5`
+
+- **Subtitle/preference messages now shown in UI output panel** (previously only in log file):
+  - "No valid subtitle cues found; keeping the original file"
+  - "Removed superseded subtitle: Title.srt"
+  - "strip_bracketed_soundcues is <type>, not true or false — using on" (preferences dialog also validates on save)
+  - "Could not read subtitle information for this video"
+
+---
+
+## 1.4.4 — 2026-10-13
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.4) · tag `v1.4.4`
 
 - Fixed the video-codec selection sending a filter yt-dlp cannot match: choosing AV1 built `[vcodec*=av1]`, but yt-dlp reports `av01…`, so the filter matched nothing and the run silently fell back to `/best` (H264). Each choice now maps onto the codec string yt-dlp actually reports.
 - When the video stream itself is refused with HTTP 403, the output panel now names the format that was refused (e.g. `format 399 (AV1)`) and suggests trying a different video codec in the format selection. A webpage or subtitle 403 is a different failure and keeps its existing reporting.
@@ -38,10 +52,7 @@ disagree, this file is right.
 - Info-fetch command logged with `🖥️` prefix when enabled (consistent with download command).
 - Video codec radio order changed: Best → AV1 → VP9 → H264.
 - Audio format radio order changed: Best → Opus → M4A → MP3.
-
----
-
-## 1.4.3 — 2026-10-10
+- Single muxed stream: both video and audio progress bars show 100% at completion.
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.3) · tag `v1.4.3`
 
