@@ -232,6 +232,11 @@ class InfoFetchMixin:
             ):
                 cmd.extend(["--js-runtimes", f"deno:{self.deno_bin}"])
 
+            # Cookies from browser (for authenticated requests: 403, sign-in, age-restricted)
+            cookie_browser = prefs.preferences.get("cookies_from_browser", "")
+            if cookie_browser:
+                cmd.extend(["--cookies-from-browser", cookie_browser])
+
             cmd.extend(
                 [
                     "--print-json",
@@ -241,6 +246,11 @@ class InfoFetchMixin:
                     url,
                 ]
             )
+            # Log the info-fetch command if enabled (disabled by default)
+            if prefs.preferences.get("show_fetchinfo_command", False):
+                self.signals.append_output.emit(
+                    f"\n🖥️ {' '.join(str(item) for item in cmd if item)}"
+                )
             result = self._run_info_command(cmd, info_timeout)
             if result.returncode == 0 and result.stdout.strip():
                 json_data = json.loads(result.stdout.strip())

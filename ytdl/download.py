@@ -16,6 +16,7 @@ import threading
 from datetime import datetime
 
 from ytdl.config import DEFAULT_OUTPUT_DIR
+from ytdl import preferences as prefs
 from ytdl.progress import DownloadProgressManager, RE_ALREADY, RE_AUDIO, RE_CONVERT, RE_DEST, RE_MERGE, RE_SLEEP, SUBTITLE_EXTENSIONS
 from ytdl.sites import DEFAULT_SITE, SUPPORTED_SITES, site_wants_js_runtime
 from ytdl.utils import format_duration, format_filesize, sanitize_title
@@ -316,6 +317,11 @@ class DownloadMixin:
             and site_wants_js_runtime(self.video_state.get("site", DEFAULT_SITE))
         ):
             cmd.extend(["--js-runtimes", f"deno:{self.deno_bin}"])
+
+        # Cookies from browser (for authenticated requests: 403, sign-in, age-restricted)
+        cookie_browser = prefs.preferences.get("cookies_from_browser", "")
+        if cookie_browser:
+            cmd.extend(["--cookies-from-browser", cookie_browser])
 
         # Media Type and Format Logic
         media_type = self.video_state["media_type"]

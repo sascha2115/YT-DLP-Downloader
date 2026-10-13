@@ -439,6 +439,7 @@ class UiHarness:
     _update_subtitle_checkboxes = app.YTDLPDownloaderGUI._update_subtitle_checkboxes
     _auto_select_subtitles = app.YTDLPDownloaderGUI._auto_select_subtitles
     _set_ui_enabled_state = app.YTDLPDownloaderGUI._set_ui_enabled_state
+    _update_subtitle_warning = app.YTDLPDownloaderGUI._update_subtitle_warning
 
     def __init__(self, media_type="video"):
         self.video_state = {"media_type": media_type, "available_subtitles": {}}

@@ -30,6 +30,25 @@ PREFERENCES_FILE = os.path.join(PREFERENCES_DIR, "preferences.json")
 # turning this off is a way to see the raw ASR text, not a change of behaviour.
 STRIP_BRACKETED_SOUNDCUES_DEFAULT = True
 
+# Cookies from browser: one of "brave", "chrome", "chromium", "edge",
+# "firefox", "opera", "safari", "vivaldi", "whale", or "firefox:profile"
+# (yt-dlp's BROWSER:PROFILE form). Default off.
+VALID_COOKIE_BROWSERS = (
+    "brave", "chrome", "chromium", "edge", "firefox",
+    "opera", "safari", "vivaldi", "whale",
+)
+
+
+def validate_cookies_from_browser(value):
+    """Validate cookies_from_browser value. Returns (is_valid, error_msg)."""
+    if not isinstance(value, str):
+        return False, "must be a string"
+    # Accept browser or browser:profile (yt-dlp form)
+    browser_part = value.split(":")[0].lower()
+    if browser_part not in VALID_COOKIE_BROWSERS:
+        return False, f"unknown browser '{browser_part}' — expected one of {', '.join(VALID_COOKIE_BROWSERS)}"
+    return True, ""
+
 
 def strip_bracketed_soundcues(prefs_dict=None):
     """Whether to remove bracketed sound cues like "[laughter]" from subtitles.
@@ -62,6 +81,8 @@ def load_preferences():
     default_preferences = {
         "channel_name_map": {},
         "strip_bracketed_soundcues": STRIP_BRACKETED_SOUNDCUES_DEFAULT,
+        "cookies_from_browser": "",
+        "show_fetchinfo_command": False,
     }
 
     try:
@@ -94,6 +115,12 @@ def apply_preferences(parsed):
     if not isinstance(CHANNEL_NAME_MAP, dict):
         logger.warning("channel_name_map is not an object — resetting to empty map")
         CHANNEL_NAME_MAP = {}
+    # Validate cookies_from_browser if present
+    if "cookies_from_browser" in parsed:
+        valid, err = validate_cookies_from_browser(parsed["cookies_from_browser"])
+        if not valid and parsed["cookies_from_browser"]:
+            logger.warning("cookies_from_browser %s — ignoring", err)
+            preferences["cookies_from_browser"] = ""
 
 
 # Loaded once at import time

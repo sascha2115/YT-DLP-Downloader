@@ -24,6 +24,22 @@ class SubtitleMixin:
     def get_selected_subtitle_codes(self):
         return [code for code, cb in self.subtitle_checkboxes.items() if cb.isChecked()]
 
+    def _update_subtitle_warning(self):
+        """Update the Subtitles group box title with a warning if >1 language selected."""
+        group_box = getattr(self, "subtitle_group_box", None)
+        if group_box is None:
+            return
+        checked = sum(1 for cb in self.subtitle_checkboxes.values() if cb.isChecked())
+        if checked > 1:
+            group_box.setTitle("Subtitles ⚠️")
+            group_box.setToolTip(
+                "Multiple subtitles cause more YouTube API requests<br>"
+                "and could cause a 429 error: too many requests."
+            )
+        else:
+            group_box.setTitle("Subtitles")
+            group_box.setToolTip("")
+
     def _update_subtitle_checkboxes(self, _lang_input):
         # The language the site reported is not needed for the labels: availability
         # comes from video_state["available_subtitles"], keyed by UI language code.
@@ -55,6 +71,7 @@ class SubtitleMixin:
         # button applies via _auto_select_subtitles()).
         if self.video_state.get("media_type") == "subtitles":
             self._auto_select_subtitles()
+        self._update_subtitle_warning()
 
     def _auto_select_subtitles(self):
         # Identify types
@@ -77,6 +94,7 @@ class SubtitleMixin:
             # Check all available (non-none) ones
             for code, cb in self.subtitle_checkboxes.items():
                 cb.setChecked(code in available_codes)
+        self._update_subtitle_warning()
 
     def _subtitle_lang_patterns(self, selected_langs):
         """

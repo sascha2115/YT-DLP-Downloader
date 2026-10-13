@@ -178,6 +178,8 @@ python3 -m unittest temp.test_subtitle_progress -v
 python3 main.py --simulate-download-error
 ```
 
+> **⚠ Rate limiting warning:** The unit tests above replay captured fixtures and make **no network requests**. However, some scripts in `temp/` (e.g. `replay_odysee_info.py`, `replay_url_gate.py`, `smoke_gui.py`) invoke yt-dlp against YouTube directly. Run those **sparingly** — repeated runs in a short window will trigger HTTP 429 (Too Many Requests) and/or "Sign in to confirm you're not a bot". If you must run live fetches, space them out and/or set `cookies_from_browser` in preferences to use an authenticated session. **For Firefox, use the full profile directory name** (e.g. `firefox:1abc2def.default-release`), not just `default-release` — yt-dlp looks for the exact directory.
+
 On startup the app checks for `yt-dlp`, `ffmpeg`, and `ffprobe` and prints
 `🚩 Error: Missing Dependencies: …` in its output pane if anything is absent.
 `deno` is optional — the app runs without it, but passing it to yt-dlp improves

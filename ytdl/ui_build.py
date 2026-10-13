@@ -282,7 +282,8 @@ class UiBuildMixin:
             group_boxes_hlayout.addWidget(group_box)
 
         # Subtitles Group
-        subtitle_group_box = QGroupBox("Subtitles")
+        self.subtitle_group_box = QGroupBox("Subtitles")
+        subtitle_group_box = self.subtitle_group_box
         subtitle_layout = QVBoxLayout()
         subtitle_layout.setContentsMargins(15, 0, 20, 0)
         # Language Checkboxes
@@ -296,6 +297,7 @@ class UiBuildMixin:
             # Start unchecked — subtitle selection is manual; an info fetch
             # only updates labels/availability (see _update_subtitle_checkboxes)
             cb.setChecked(False)
+            cb.stateChanged.connect(self._update_subtitle_warning)
             subtitle_layout.addWidget(cb)
             self.subtitle_checkboxes[code] = cb
         subtitle_group_box.setLayout(subtitle_layout)
