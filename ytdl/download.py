@@ -495,15 +495,22 @@ class DownloadMixin:
         progress_manager = None
         completed_progress = None
         removed_sb_segments = []
+        # Capture output lines for logging on failure
+        captured_output = []
         try:
             if self.simulate_download_error:
                 raise RuntimeError("Simulated download error (testing flag enabled)")
             # Say what is being requested before anything is fetched: the
             # media type decides whether audio comes along, and that decision
             # was previously invisible.
-            self._emit("append_output", self.describe_format_choice(
+            format_line = self.describe_format_choice(
                 cmd, self.video_state.get("media_type", "video")
-            ))
+            )
+            self._emit("append_output", format_line)
+            captured_output.append(format_line)
+            # Capture the command for error logging
+            cmd_line = "🖥️ " + " ".join(str(item) for item in cmd if item)
+            captured_output.append(cmd_line)
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -541,6 +548,12 @@ class DownloadMixin:
                 # universal newlines already splits them, but strip any
                 # leading "\r" so the line reliably starts with "[download]".
                 line = line.lstrip("\r").rstrip()
+                # Capture error-relevant lines for logging on failure
+                if line and not line.startswith("[download]") and not line.startswith("["):
+                    # Skip progress lines, but capture other output
+                    pass
+                if any(keyword in line.lower() for keyword in ("error", "warning", "http", "403", "404", "sign in", "geo", "unavailable", "private", "members")):
+                    captured_output.append(line)
                 state = self._parse_download_output(line, state)
 
             process.wait()
@@ -701,10 +714,15 @@ class DownloadMixin:
                     self._emit("append_output",
                         f"🚩 yt-dlp process failed with exit code {exit_code}"
                     )
+                    # Log captured error-relevant output for debugging
+                    if captured_output:
+                        logger.error("Download failed — captured output:\n" + "\n".join(captured_output))
 
         except Exception as e:
             self._emit("append_output", f"🚩 An unexpected error occurred: {e}")
             logger.error(f"Download failed with exception: {e}")
+            if captured_output:
+                logger.error("Download failed — captured output:\n" + "\n".join(captured_output))
         finally:
             # Drop the process handle so a later cancel cannot reach a stale
             # PID, and capture the verdict before the flag is reset.

@@ -44,6 +44,7 @@ class NamingHarness(app.SubtitleMixin, app.DownloadMixin):
         self.signals = SimpleNamespace(
             append_output=SimpleNamespace(emit=lambda *_args: None)
         )
+        self._shutting_down = False
 
     get_output_dir = lambda self: self._out_dir  # noqa: E731
 

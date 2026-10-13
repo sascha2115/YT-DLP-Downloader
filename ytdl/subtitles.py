@@ -296,7 +296,7 @@ class SubtitleMixin:
             except OSError as e:
                 logger.warning(f"Could not remove superseded subtitle {path}: {e}")
                 continue
-            logger.info(f"Removed superseded language-less subtitle: {path}")
+            self._emit("append_output", f"  → removed superseded subtitle: {os.path.basename(path)}")
             removed = path
         return removed
 
@@ -405,7 +405,6 @@ class SubtitleMixin:
                 no_text_cues += 1
 
         if not subtitles:
-            logger.warning("No valid subtitle cues found in %s", srt_path)
             self.signals.append_output.emit(
                 "⚠️ No valid subtitle cues found; keeping the original file"
             )

@@ -488,7 +488,6 @@ class InfoFetchMixin:
                         # json.JSONDecodeError is not listed on purpose: the
                         # subs_dict/autos_dict inputs were already decoded from
                         # json_data above, so no JSON parsing happens here.
-                        logger.warning(f"Error parsing subtitle info: {e}")
                         self.signals.append_output.emit(
                             "⚠️ Could not read subtitle information for this video"
                         )
