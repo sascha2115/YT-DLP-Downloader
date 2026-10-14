@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.13 — 2026-10-14
+
+- **The SponsorBlock bar no longer shows a previous video's segments after you switch URLs.** The info fetch releases the UI first, so you can paste a new URL and start a second fetch while the first SponsorBlock request is still in flight. The lookup thread now re-checks the *current* video id before painting, so a response for a superseded video is discarded instead of being drawn over the new video's bar (and its output lines landing out of order). The id/site/duration are also snapshotted before the completion signal, so the thread never reads a video_state that has already been replaced.
+
+---
+
 ## 1.4.12 — 2026-10-14
 
 - **Closing the window during a download no longer crashes the process.** Worker-thread UI notifications — info-fetch progress, SponsorBlock lookup, thumbnail generation, the download's own output lines, and the post-download subtitle resync — all route through `_emit()`, which drops them once the window is closing. Previously the resync worker's "No srt file" line still emitted directly, so a close mid-resync could hit the dying signal object and abort the interpreter with no traceback.

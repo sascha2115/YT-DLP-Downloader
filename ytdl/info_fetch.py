@@ -544,6 +544,16 @@ class InfoFetchMixin:
         # must never gate readiness (it used to run inline, delaying this
         # signal by up to ~49s on a failing API). The description summary moves
         # here too, so it no longer rides on the SponsorBlock code path.
+        # Capture the snapshot BEFORE releasing the UI. The completion signal
+        # re-enables the Download/Info buttons, so a user can paste a new URL
+        # and start a second fetch while the first SponsorBlock request is
+        # still in flight. The lookup thread must therefore not read
+        # video_state later — it gets the id/site/duration it was started for,
+        # and discards its result when the current video no longer matches.
+        snapshot_id = self.video_state.get("video_id", "")
+        snapshot_site = self.video_state.get("site", DEFAULT_SITE)
+        snapshot_duration = self.video_state.get("duration_sec", 0)
+
         self._emit_description_summary()
         self._emit("title_fetch_complete", error_status)
 
@@ -552,9 +562,9 @@ class InfoFetchMixin:
             # request to its own thread, and that thread must not read
             # video_state later, when a new URL may already have replaced it.
             self.check_sponsorblock(
-                video_id=self.video_state.get("video_id", ""),
-                site=self.video_state.get("site", DEFAULT_SITE),
-                duration_sec=self.video_state.get("duration_sec", 0),
+                video_id=snapshot_id,
+                site=snapshot_site,
+                duration_sec=snapshot_duration,
             )
 
     def _dump_ytdlp_error_output(self, headline, stdout=None, stderr=None, max_lines=40):
@@ -713,18 +723,27 @@ class InfoFetchMixin:
 
         thread = threading.Thread(
             target=self._fetch_sponsorblock_segments,
-            args=(video_id, all_categories, duration_sec),
+            args=(video_id, all_categories, duration_sec, video_id),
             name="sponsorblock-lookup",
             daemon=True,
         )
         thread.start()
 
-    def _fetch_sponsorblock_segments(self, video_id, all_categories, duration):
+    def _fetch_sponsorblock_segments(
+        self, video_id, all_categories, duration, snapshot_video_id
+    ):
         """Query the SponsorBlock API for one video id (YouTube only).
 
         Runs on its own daemon thread, so a slow or failing endpoint delays
         only the progress bar — never the metadata hand-off. Every result is
         published through queued signals, so the UI updates on the main thread.
+
+        ``snapshot_video_id`` is the id this lookup was started for. Before
+        painting anything the thread re-checks the *current* video id, because
+        the user can paste a new URL and start a second fetch while this
+        request is still in flight. A response for a superseded video is
+        discarded — otherwise the previous video's bar would be drawn over the
+        new one's (and its output lines would land out of order).
         """
         try:
             # Build the API URL with query parameters
@@ -738,6 +757,16 @@ class InfoFetchMixin:
                     params=payload,
                     timeout=SPONSORBLOCK_TIMEOUT_SECONDS,
                 )
+
+                # Staleness check: the user may have pasted a new URL and
+                # started a second fetch while this request was in flight. A
+                # response for a superseded video must not paint the new
+                # video's bar or drop its output lines out of order — drop it
+                # silently. The current id is read here, on the worker, not
+                # from the snapshot, so a fetch that *did* replace this one is
+                # what actually gates the result.
+                if self.video_state.get("video_id", "") != snapshot_video_id:
+                    return
 
                 if response.status_code == 200:
                     segments = response.json()

@@ -355,5 +355,85 @@ class TestSponsorBlockFailureIsNotAFetchError(unittest.TestCase):
         )
 
 
+class TestSponsorBlockResultIsDiscardedWhenVideoChanges(unittest.TestCase):
+    """A response for a superseded video must not overwrite the new one's bar.
+
+    title_fetch_complete releases the UI first, so a user can paste a new URL
+    and start a second fetch while the first SponsorBlock request is still in
+    flight. The lookup thread now re-checks the *current* video id before
+    painting, so the old result is dropped instead of being drawn over the new
+    video — and its output lines don't land out of order.
+    """
+
+    def setUp(self):
+        self.gate = threading.Event()  # starts blocked
+        self.events = []
+        self.harness = Harness(events=self.events)
+
+    def _fetch_in_background(self, stub):
+        worker = threading.Thread(
+            target=run_fetch, args=(self.harness, stub), daemon=True
+        )
+        worker.start()
+        emitted = wait_for(lambda: bool(self.harness.completions()))
+        return worker, emitted
+
+    def test_response_for_a_superseded_video_is_not_painted(self):
+        stub = RecordingRequests(
+            self.gate,
+            result=SimpleNamespace(
+                status_code=200,
+                json=lambda: [
+                    {"category": "sponsor", "segment": [1, 2], "title": "S"}
+                ],
+            ),
+            events=self.events,
+        )
+        worker, emitted = self._fetch_in_background(stub)
+        self.assertTrue(emitted)
+
+        # The first fetch is still in flight; the user pastes a new URL.
+        self.harness.video_state["video_id"] = "new-video-after-the-fetch"
+        self.gate.set()  # release the blocked API call
+        worker.join(timeout=5)
+        join_sponsorblock_threads()
+
+        # The bar and the "segments available" line belong to the OLD video.
+        # They must not be emitted at all.
+        self.assertEqual(
+            self.harness.signals.update_sb_bar.emitted,
+            [],
+            "a superseded SponsorBlock result must not paint the new video's bar",
+        )
+        self.assertNotIn(
+            "sponsorblock_request", self.harness.output_lines()
+        )
+        self.assertTrue(stub.calls, "the request was still issued")
+
+    def test_response_for_the_current_video_is_painted(self):
+        # Same flow, but the video id is NOT changed: the result lands.
+        stub = RecordingRequests(
+            self.gate,
+            result=SimpleNamespace(
+                status_code=200,
+                json=lambda: [
+                    {"category": "sponsor", "segment": [1, 2], "title": "S"}
+                ],
+            ),
+            events=self.events,
+        )
+        worker, emitted = self._fetch_in_background(stub)
+        self.assertTrue(emitted)
+        self.gate.set()
+        worker.join(timeout=5)
+        join_sponsorblock_threads()
+
+        self.assertEqual(len(self.harness.signals.update_sb_bar.emitted), 1)
+        self.assertIn(
+            "SponsorBlock: 1 segment(s) available",
+            "\n".join(self.harness.output_lines()),
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
