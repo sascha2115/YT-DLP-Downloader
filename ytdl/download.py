@@ -717,6 +717,11 @@ class DownloadMixin:
                     # Log captured error-relevant output for debugging
                     if captured_output:
                         logger.error("Download failed — captured output:\n" + "\n".join(captured_output))
+                    # Attempt to create metadata sidecar files (.edl, .nfo)
+                    # even when the media download failed: yt-dlp writes
+                    # .info.json and the info-fetch already retrieved all
+                    # metadata (title, description, SponsorBlock segments).
+                    self._try_create_sidecar_files()
 
         except Exception as e:
             self._emit("append_output", f"🚩 An unexpected error occurred: {e}")
@@ -1174,6 +1179,43 @@ class DownloadMixin:
             gc.collect()
 
         return metadata
+
+    def _try_create_sidecar_files(self):
+        """Attempt to create .edl and .nfo files even when the media download failed.
+
+        yt-dlp writes .info.json before downloading, so even if the video/audio
+        download fails we have all the data needed (title, description, and
+        SponsorBlock segments). The metadata sidecars are still useful: media
+        center apps can display them, and the user can retry the download
+        without re-fetching metadata.
+        """
+        base_filename = self.video_state.get("base_filename", "")
+        if not base_filename:
+            return
+
+        # Construct the expected video path (we know the extension yt-dlp would
+        # have used from the format selection).
+        video_path = self.get_full_path(".mp4")
+        if not video_path:
+            return
+
+        # Warn the user that the media file is missing
+        self._emit("append_output",
+            "⚠️ Media download failed, but metadata files are still available."
+        )
+
+        # Create NFO (uses video_state metadata only, no file dependency)
+        self.create_nfo_file(video_path)
+
+        # Create EDL (reads SponsorBlock segments from .info.json)
+        # Only if the user has selected SB categories
+        sb_categories = self.get_selected_sb_categories()
+        if sb_categories:
+            self.create_edl_file(video_path)
+        else:
+            self._emit("append_output",
+                "  → skipped EDL (no SponsorBlock categories selected)"
+            )
 
     def create_nfo_file(self, video_path):
         if not video_path:
