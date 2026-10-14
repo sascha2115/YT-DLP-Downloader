@@ -626,6 +626,12 @@ class DownloadMixin:
         # analysis) must not be reported as a media failure or rewrite the
         # sidecars the success path already wrote.
         media_downloaded = False
+        # True once the requested subtitle file(s) are confirmed on disk, so
+        # the except branch can tell "the SRT landed" apart from "it failed".
+        # media_downloaded is only set inside the non-subtitle path, so a
+        # subtitle-only job needs its own flag or a post-download exception
+        # after the SRT was written is still reported as a failure.
+        subtitles_downloaded = False
         try:
             if self.simulate_download_error:
                 raise RuntimeError("Simulated download error (testing flag enabled)")
@@ -832,6 +838,18 @@ class DownloadMixin:
                     else:
                         self._emit("append_output", "👉 No subtitles were downloaded.")
 
+                    # The requested SRT(s) are on disk: a later exception
+                    # (cleanup, superseded-bare removal, analysis) is not a
+                    # subtitle failure. media_downloaded is only set on the
+                    # non-subtitle path, so a subtitle-only job needs its own
+                    # flag — without it a post-download exception after the
+                    # SRT was written is still reported as "Subtitles only
+                    # failed".
+                    if downloaded_subs and all(
+                        os.path.isfile(path) for _lang, path, _t in downloaded_subs
+                    ):
+                        subtitles_downloaded = True
+
                 # Create EDL and NFO files BEFORE cleanup deletes the .info.json
                 # Skip if we only downloaded subtitles
                 if state["merged_filename"] and self.video_state.get("media_type") != "subtitles":
@@ -917,7 +935,9 @@ class DownloadMixin:
                 not self._cancelled
                 and not sidecars_attempted
             ):
-                self._finalize_failure_sidecars(cmd, media_downloaded)
+                self._finalize_failure_sidecars(
+                    cmd, media_downloaded, subtitles_downloaded
+                )
         finally:
             # Drop the process handle so a later cancel cannot reach a stale
             # PID, and capture the verdict before the flag is reset.
@@ -1370,33 +1390,25 @@ class DownloadMixin:
 
         return metadata
 
-    def _finalize_failure_sidecars(self, cmd, media_downloaded=False):
+    def _finalize_failure_sidecars(self, cmd, media_downloaded=False, subtitles_downloaded=False):
         """Run the failure-sidecar step exactly once, regardless of how the
         run failed.
 
         yt-dlp writes .info.json before downloading, so even a nonzero exit
         or a Python exception raised after that point has all the metadata
-        needed (title, description, SponsorBlock segments). The media-type
-        gate and the "no video sidecars" message live here so the nonzero-exit
-        branch and the except branch behave identically. Cancellation is
-        excluded by the caller, and `sidecars_attempted` ensures this is never
-        invoked twice for one run.
-
-        `media_downloaded` is True when the media file is already on disk -
-        an exception that lands here from post-download work (subtitle
-        resync, metadata caching, analysis, ...) is then not a media
-        failure. The wording therefore depends on it first: a job whose
-        media landed says "post-processing failed", a job whose media did
-        not land names the requested operation. Sidecar *attempting* still
-        depends on media_type alone (an .edl/.nfo describes a video
-        episode), so for a video job whose media landed but whose sidecars
-        were not yet written (the exception happened before EDL/NFO
-        creation) the sidecars are still attempted. Cancellation is excluded
-        by the caller, and `sidecars_attempted` ensures this is never
-        invoked twice for one run.
+        needed (title, description, SponsorBlock segments). The wording
+        depends on what already landed: a job whose media landed says
+        "post-processing failed", a job whose SRT landed says the same, and
+        a job whose requested output did not land names the requested
+        operation. Sidecar *attempting* still depends on media_type alone (an
+        .edl/.nfo describes a video episode), so for a video job whose media
+        landed but whose sidecars were not yet written (the exception happened
+        before EDL/NFO creation) the sidecars are still attempted. Cancellation
+        is excluded by the caller, and `sidecars_attempted` ensures this is
+        never invoked twice for one run.
         """
         media_type = self.video_state.get("media_type", "video")
-        if media_downloaded:
+        if media_downloaded or subtitles_downloaded:
             self._emit("append_output",
                 "⚠️ Post-download processing failed; the media file is on disk."
             )

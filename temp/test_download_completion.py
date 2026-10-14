@@ -58,7 +58,7 @@ class _Process:
 
 
 class _DownloadHarness(app.DownloadMixin):
-    def __init__(self, base_path, media_type="video", fail_metadata=False):
+    def __init__(self, base_path, media_type="video", fail_metadata=False, fail_cleanup=False):
         self.video_state = {
             "media_type": media_type,
             "is_download_running": True,
@@ -68,6 +68,7 @@ class _DownloadHarness(app.DownloadMixin):
         self.cached_video_metadata = None
         self.base_path = base_path
         self.fail_metadata = fail_metadata
+        self.fail_cleanup = fail_cleanup
         self.direct_clear_dock_calls = 0
         self.sidecar_attempts = 0
         self.video_state["base_filename"] = "Title"
@@ -103,7 +104,36 @@ class _DownloadHarness(app.DownloadMixin):
         self.sidecar_attempts += 1
 
     def cleanup_files(self, _selected_langs):
+        if self.fail_cleanup:
+            raise RuntimeError("cleanup boom")
+
+    def get_output_dir(self):
+        return self.base_path
+
+    # The subtitle pipeline is not exercised by these tests; stub it so a
+    # subtitle-only run reaches cleanup_files() and the failure message can
+    # be observed. The stub returns one SRT that exists on disk, so the run
+    # records subtitles_downloaded = True before cleanup raises.
+    def _find_downloaded_subtitles(self, selected_langs):
+        return [(selected_langs[0], self.base_path + ".srt", "real")]
+
+    def _uses_bare_subtitle_name(self, subtitle_count=1):
+        return subtitle_count == 1
+
+    def _normalize_subtitle_names(self, downloaded_subs, bare=False):
+        return downloaded_subs
+
+    def _subtitle_output_path(self, lang, extension=".srt", bare=False):
+        return self.base_path + extension
+
+    def _subtitle_needs_resync(self, _sub_type):
+        return False
+
+    def _resync_subtitle_for_language(self, _lang, _srt_path, bare=False):
         pass
+
+    def _remove_superseded_bare_subtitle(self):
+        return None
 
     def clearDockProgress(self):
         self.direct_clear_dock_calls += 1
@@ -114,6 +144,7 @@ class TestDownloadCompletion(unittest.TestCase):
         self,
         returncode,
         fail_metadata=False,
+        fail_cleanup=False,
         create_output=True,
         include_destination=True,
         media_type="video",
@@ -140,6 +171,7 @@ class TestDownloadCompletion(unittest.TestCase):
                 base_path,
                 media_type=media_type,
                 fail_metadata=fail_metadata,
+                fail_cleanup=fail_cleanup,
             )
             if cancelled:
                 # Simulates the user pressing Cancel mid-download: the flag is
@@ -351,6 +383,46 @@ class TestDownloadCompletion(unittest.TestCase):
             returncode=0, fail_metadata=True, media_type="subtitles"
         )
         self.assertEqual(harness.sidecar_attempts, 0)
+
+    def test_subtitle_exception_after_srt_written_says_on_disk(self):
+        # The gap the audio test does not cover: for a subtitle-only job,
+        # media_downloaded is never set (it lives inside the non-subtitle
+        # path), so a post-download exception after the SRT was written was
+        # still reported as "Subtitles only failed". Track subtitle output
+        # completion separately so the failure line names the post-download
+        # failure when the SRT is on disk.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            # The stubbed subtitle pipeline reports this path as found; it
+            # must actually exist for subtitles_downloaded to be set.
+            with open(base_path + ".srt", "w") as output:
+                output.write("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _DownloadHarness(
+                base_path, media_type="subtitles", fail_cleanup=True
+            )
+            process = _Process(lines, 0)
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                harness.run_download(["yt-dlp"], ["en"])
+            output_lines = self._output_lines(harness)
+            self.assertTrue(
+                any("cleanup boom" in line for line in output_lines),
+                output_lines,
+            )
+            self.assertTrue(
+                any("media file is on disk" in line for line in output_lines),
+                output_lines,
+            )
+            self.assertFalse(
+                any("no video sidecars" in line for line in output_lines),
+                output_lines,
+            )
 
     def test_cancelled_run_never_attempts_sidecars(self):
         # A user stop is not a failure; nothing to finalize.

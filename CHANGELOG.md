@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.11 — 2026-10-14
+
+- **A post-download exception no longer reports a subtitle-only job as failed when the SRT is on disk.** `media_downloaded` was only set inside the non-subtitle path, so a subtitle-only run whose SRT was written still said "▶ Subtitles only · no media download failed; no video sidecars to generate" when cleanup or later post-download work raised. Subtitle output completion is now tracked separately (`subtitles_downloaded`), so the failure line says "Post-download processing failed; the media file is on disk" instead.
+
+---
+
 ## 1.4.10 — 2026-10-14
 
 - **Raw yt-dlp output lines are now redacted before they reach the failure log.** Previously only the command line was redacted, so an ERROR line echoing the URL yt-dlp actually fetched could carry a query string with a session token into the log. Every captured line is now masked through `_redact_line()`.
