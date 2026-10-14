@@ -1,10 +1,13 @@
 {
+  "cookies_from_browser": "",
   "strip_bracketed_soundcues": true,
+  "show_fetchinfo_command": false,
   "channel_name_map": {
     "PowerfulJRE": "Joe Rogan",
     "{ungeskriptet} by Ben": "Ungeskriptet",
     "Shawn Ryan Show": "Shawn Ryan",
-    "FAIR TALK": "Auf Augenhöhe",
+    "Tucker Carlson Network": "Tucker Carlson",
+    "FAIR TALK": "Fair Talk",
     "REALTALK MEDIA": "B-Lash",
     "The Diary Of A CEO": "The Diary of a CEO",
     "Nuoviso Files": "Stoner frank und frei",
@@ -13,6 +16,7 @@
     "ExoMagazinTV": "ExoMagazin",
     "REAL. by Jens Lehrich": "Jens Lehrich",
     "ROCA PROJECT": "Roca Project",
-    "mym by Simo": "Meet Your Mentor"
+    "mym by Simo": "Meet Your Mentor",
+    "Dr. Mayim Bialik": "Mayim Bialik"
   }
 }

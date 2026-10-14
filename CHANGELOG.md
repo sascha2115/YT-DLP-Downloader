@@ -26,6 +26,15 @@ disagree, this file is right.
 
 ---
 
+## 1.4.6 — 2026-10-14
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.6) · tag `v1.4.6`
+
+- **Subs button**: new button below "Log" opens a file dialog to select an SRT file. The file is then processed in-place through our subtitle pipeline (2-line paired-window layout matching YouTube's player, bracket stripping per preference). Tooltip: "Convert SRT into more readable format".
+- Updated reference preferences.json with `cookies_from_browser` and `show_fetchinfo_command` keys.
+
+---
+
 ## 1.4.5 — 2026-10-13
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.5) · tag `v1.4.5`
