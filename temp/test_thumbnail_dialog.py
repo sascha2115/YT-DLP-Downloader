@@ -151,6 +151,34 @@ class TestThumbnailDialogMetadata(unittest.TestCase):
             "a superseded thumbnail response must not construct a dialog",
         )
 
+    def test_the_flight_guard_is_reset_even_if_the_emit_raises(self):
+        """A failed delivery must not leave the Info button unclickable.
+
+        The emit sat outside the worker's try block, so a raise there would
+        skip the result and leave _fetching_thumbnail stuck — no later click
+        could fetch again. It now sits inside a try/finally that resets the
+        guard on every exit path.
+        """
+        h = self._harness("https://example.com/a.png", "Description of video A")
+
+        class _BrokenSignal(_Signal):
+            def emit(self, *args):
+                raise RuntimeError("boom")
+
+        h.thumbnail_ready = _BrokenSignal()
+        with mock.patch.object(ui_build.requests, "get", side_effect=h._requests_get):
+            open_thumbnail_dialog(h)
+            self.gate.set()
+            # Poll until the worker has finished and reset the guard.
+            for _ in range(400):
+                if not h._fetching_thumbnail:
+                    break
+                time.sleep(0.005)
+        self.assertFalse(
+            h._fetching_thumbnail,
+            "the flight guard must be reset on every exit path",
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

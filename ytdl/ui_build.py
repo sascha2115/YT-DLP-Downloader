@@ -682,25 +682,31 @@ class UiBuildMixin:
 
         def _fetch_and_show():
             try:
-                response = requests.get(snapshot_url, timeout=10)
-                response.raise_for_status()
-                image_data = response.content
-            except Exception as e:
-                # Worker thread: route through _emit() so a close in flight
-                # cannot emit into a destroyed QObject.
-                self._emit("append_output", f"🚩 Error loading thumbnail: {e}")
+                try:
+                    response = requests.get(snapshot_url, timeout=10)
+                    response.raise_for_status()
+                    image_data = response.content
+                except Exception as e:
+                    # Worker thread: route through _emit() so a close in flight
+                    # cannot emit into a destroyed QObject.
+                    self._emit("append_output", f"🚩 Error loading thumbnail: {e}")
+                    return
+                # Deliver bytes to the main thread via a queued signal — the only
+                # safe way to trigger Qt widget construction from a worker
+                # thread. (QTimer.singleShot from a plain threading.Thread has
+                # no event loop and is silently dropped by Qt 6.) _emit()
+                # guards it too, so a close in flight cannot deliver into a
+                # destroyed window. The description and URL travel with the
+                # image so the dialog cannot mix metadata from two different
+                # videos.
+                self._emit(
+                    "thumbnail_ready", image_data, snapshot_description, snapshot_url
+                )
+            finally:
+                # Reset the flight guard on every exit path, including a raise
+                # from the emit itself. Without this, a failed delivery would
+                # leave the button unclickable for the rest of the session.
                 self._fetching_thumbnail = False
-                return
-            # Deliver bytes to the main thread via a queued signal — the only
-            # safe way to trigger Qt widget construction from a worker thread.
-            # (QTimer.singleShot from a plain threading.Thread has no event
-            # loop and is silently dropped by Qt 6.) _emit() guards it too,
-            # so a close in flight cannot deliver into a destroyed window.
-            # The description travels with the image so the dialog cannot mix
-            # metadata from two different videos.
-            self._emit(
-                "thumbnail_ready", image_data, snapshot_description, snapshot_url
-            )
 
         threading.Thread(target=_fetch_and_show, daemon=True).start()
 

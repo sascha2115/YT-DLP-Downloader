@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.18 — 2026-10-14
+
+- **The thumbnail signal and its use now agree on argument count.** `thumbnail_ready` was declared with two args (bytes, str) but the worker emitted three (image, description, url) and the receiver expected all three. A mismatched emit can raise a PyQt argument-count error, and because it sat outside the worker's try block the result would not be shown and `_fetching_thumbnail` would not be reset — leaving the Info button unclickable for the rest of the session. The signal now declares all three, and the emit sits inside a `try/finally` that resets the flight guard on every exit path, including a raise from the emit itself.
+
+---
+
 ## 1.4.17 — 2026-10-14
 
 - **The thumbnail dialog no longer mixes metadata across videos.** `open_thumbnail_dialog()` fetches the image on a daemon worker thread, so by the time it arrives the user may have switched videos. The worker used to capture only the URL; `_show_thumbnail_dialog()` then read the description from live `video_state`, pairing an old image with a new video's description. The description is now captured with the URL at click time and travels on the `thumbnail_ready` signal, and the receiver re-checks the URL against the current one before constructing the dialog — a response for a superseded video is dropped instead of being shown over the new video's metadata.
