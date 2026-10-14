@@ -1409,8 +1409,16 @@ class DownloadMixin:
         """
         media_type = self.video_state.get("media_type", "video")
         if media_downloaded or subtitles_downloaded:
+            # The message names what actually landed: "the media file" for a
+            # video/audio job, "the requested subtitle" for a subtitle-only
+            # job. Saying "the media file is on disk" for an SRT-only run is
+            # inaccurate — the media was never requested, let alone downloaded.
+            if subtitles_downloaded and not media_downloaded:
+                landed = "the requested subtitle is on disk"
+            else:
+                landed = "the media file is on disk"
             self._emit("append_output",
-                "⚠️ Post-download processing failed; the media file is on disk."
+                f"⚠️ Post-download processing failed; {landed}."
             )
             # Video sidecars may still be unwritten at this point (the
             # exception can land before EDL/NFO creation), so do not return

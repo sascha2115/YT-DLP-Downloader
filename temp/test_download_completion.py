@@ -415,7 +415,14 @@ class TestDownloadCompletion(unittest.TestCase):
                 any("cleanup boom" in line for line in output_lines),
                 output_lines,
             )
+            # The message names what actually landed. For a subtitle-only job
+            # the media was never requested, so it must not say "the media
+            # file is on disk" — say "the requested subtitle is on disk".
             self.assertTrue(
+                any("requested subtitle is on disk" in line for line in output_lines),
+                output_lines,
+            )
+            self.assertFalse(
                 any("media file is on disk" in line for line in output_lines),
                 output_lines,
             )
