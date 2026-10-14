@@ -433,6 +433,15 @@ class UiBuildMixin:
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.clicked.connect(self.cancel_download)
         self.cancel_button.hide()
+
+        # Subs Button (standalone SRT processing)
+        self.subs_button = QPushButton("Subs")
+        self.subs_button.setToolTip("Convert SRT into more readable format")
+        self.subs_button.setToolTip("Convert SRT into more readable format — 2-line paired-window layout matching YouTube's player");
+        self.subs_button.setObjectName("subsButton")
+        self.subs_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.subs_button.clicked.connect(self.open_subtitle_file_dialog)
+
         download_hlayout = QHBoxLayout()
         download_hlayout.setSpacing(8)
         self.download_busy_indicator = BusySpinner(size=24)
@@ -442,6 +451,7 @@ class UiBuildMixin:
         self.download_busy_indicator.hide()
         download_hlayout.addWidget(self.download_button, 1)
         download_hlayout.addWidget(self.cancel_button, 0)
+        download_hlayout.addWidget(self.subs_button, 0)
         download_hlayout.addWidget(
             self.download_busy_indicator, 0, Qt.AlignmentFlag.AlignVCenter
         )

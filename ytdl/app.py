@@ -45,7 +45,7 @@ else:
     NSMakeRect = None
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtWidgets import QApplication, QFileDialog, QMainWindow
 
 # ----------------------------------------------------------------------------------------------------
 # Support modules (extracted from this file; see ytdl/sites.py, description.py,
@@ -654,6 +654,36 @@ class YTDLPDownloaderGUI(
         # 1) before the first download progress arrives, and
         # 2) during post-processing steps (after audio download), where keeping the
         #    progress bars visible is useful context.
+
+    # ----------------------------------------------------------------------------------------------------
+    # Subs Button
+    # ----------------------------------------------------------------------------------------------------
+    def open_subtitle_file_dialog(self):
+        """Open a file dialog to select an SRT file and process it."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select SRT file",
+            "",
+            "SubRip files (*.srt);;All files (*)",
+        )
+        if not file_path:
+            return
+
+        srt_path = file_path
+        self._emit("append_output", f"🔄 Processing subtitle file: {os.path.basename(srt_path)}")
+        self._set_ui_enabled_state(False)
+
+        try:
+            result = self.resync_subtitles(srt_path, srt_path)
+            if result:
+                self._emit("append_output", f"✅ Saved: {os.path.basename(srt_path)}")
+            else:
+                self._emit("append_output", "⚠️ No changes made")
+        except Exception as e:
+            self._emit("append_output", f"🚩 Error processing subtitle: {e}")
+            logger.error(f"Subtitle processing error: {e}")
+        finally:
+            self._set_ui_enabled_state(True)
 
     # ----------------------------------------------------------------------------------------------------
     # Start download
