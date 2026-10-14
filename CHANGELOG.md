@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.14 — 2026-10-14
+
+- **SponsorBlock results for a superseded video are now discarded at two points, not one.** The lookup thread re-checks the *current* video id before emitting, but Qt may queue that signal while the main thread is busy, so a late delivery can still repaint a bar a newer fetch already cleared. Each info fetch now bumps a **generation token** carried on the `update_sb_bar` signal, and the main-thread receiver compares it before painting — so a delivery for an older generation is dropped there even though it was emitted. The token also covers a second fetch of the *same* video, where an id check alone would let an older request publish after a newer one. Both guards gate every emission from the lookup thread, including the error lines, so a failing lookup for a superseded video never reaches the log either.
+
+---
+
 ## 1.4.13 — 2026-10-14
 
 - **The SponsorBlock bar no longer shows a previous video's segments after you switch URLs.** The info fetch releases the UI first, so you can paste a new URL and start a second fetch while the first SponsorBlock request is still in flight. The lookup thread now re-checks the *current* video id before painting, so a response for a superseded video is discarded instead of being drawn over the new video's bar (and its output lines landing out of order). The id/site/duration are also snapshotted before the completion signal, so the thread never reads a video_state that has already been replaced.

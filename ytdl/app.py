@@ -232,6 +232,16 @@ class YTDLPDownloaderGUI(
         # atomic and a stale read is harmless here.
         self._proc = None
         self._cancelled = False
+        # SponsorBlock lookup generation. Each info fetch bumps this counter, so a
+        # SponsorBlock response that was queued before a URL change (or before a
+        # second fetch of the same video) can be discarded in the main-thread
+        # receiver: the worker checks the video id before emitting, but Qt may
+        # queue the signal while the main thread is busy, so a late delivery can
+        # still repaint a bar that a newer fetch already cleared. The token is
+        # bumped on the main thread and read back on the main thread, so the
+        # comparison is decisive regardless of how the worker and the event loop
+        # interleave. A plain int assignment is atomic; a stale read is harmless.
+        self._sb_generation = 0
         # Set by closeEvent(): once the window is closing, the download worker
         # must not emit UI signals, because the SignalEmitter they belong to is
         # being destroyed with it.
@@ -822,8 +832,21 @@ class YTDLPDownloaderGUI(
         """Show the cancel control only while a download is actually running."""
         self.cancel_button.setVisible(bool(visible))
 
-    def _set_sb_bar_segments(self, segments, duration):
-        """Slot for signals.update_sb_bar (sb_bar exists only after init_ui)."""
+    def _set_sb_bar_segments(self, segments, duration, generation):
+        """Slot for signals.update_sb_bar (sb_bar exists only after init_ui).
+
+        The generation token is checked here, on the main thread, because the
+        worker already checked the video id before emitting — but Qt may queue
+        that signal while the main thread is busy, so a late delivery can still
+        repaint a bar that a newer fetch already cleared. The token is bumped
+        on the main thread at the start of each info fetch and read back here,
+        so the comparison is decisive regardless of how the worker and the
+        event loop interleave, and it also covers a second fetch of the *same*
+        video, where an id check alone would let an older request publish after
+        a newer one.
+        """
+        if generation != self._sb_generation:
+            return
         self.sb_bar.set_segments(segments, duration)
 
     def set_download_button_status(self, status: str):

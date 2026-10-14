@@ -133,6 +133,11 @@ class Harness(app.InfoFetchMixin):
         self.deno_bin = None
         self.sb_calls = []
         self.description_summaries = []
+        # SponsorBlock lookup generation: the real window bumps this on every
+        # info fetch and the main-thread receiver compares it. The harness
+        # starts at 0 so a response carrying the first fetch's token (1) is
+        # accepted.
+        self._sb_generation = 0
         # The real class routes worker emissions through DownloadMixin._emit,
         # which guards on _shutting_down. This harness inherits only
         # InfoFetchMixin, so provide a forwarding shim — the tests have no
@@ -432,6 +437,49 @@ class TestSponsorBlockResultIsDiscardedWhenVideoChanges(unittest.TestCase):
         self.assertIn(
             "SponsorBlock: 1 segment(s) available",
             "\n".join(self.harness.output_lines()),
+        )
+
+    def test_a_queued_response_for_a_stale_generation_is_dropped_at_the_receiver(self):
+        """The receiver re-checks the token, so a late delivery is not painted.
+
+        The worker checks the video id before emitting, but Qt may queue that
+        signal while the main thread is busy — so a response that passed the
+        worker's check can still arrive after a newer fetch already cleared the
+        bar. The generation token is checked again in the main-thread slot, so
+        a delivery for an older generation is dropped there even though it was
+        emitted.
+        """
+        # Drive the receiver directly: the real slot lives on the assembled
+        # GUI, so bind the real implementation to a fake bar.
+        from ytdl.app import YTDLPDownloaderGUI
+
+        painted = []
+
+        class _Bar:
+            def set_segments(self, segments, duration):
+                painted.append((segments, duration))
+
+        receiver = YTDLPDownloaderGUI._set_sb_bar_segments
+        self.harness.sb_bar = _Bar()
+        receiver(
+            self.harness,
+            [{"category": "sponsor"}],
+            100.0,
+            self.harness._sb_generation,
+        )
+        self.assertEqual(len(painted), 1, "the current generation must paint")
+
+        # A newer fetch bumps the token; the old response now carries a stale
+        # generation and must be dropped even though it was emitted.
+        self.harness._sb_generation += 1
+        receiver(
+            self.harness,
+            [{"category": "sponsor"}],
+            100.0,
+            self.harness._sb_generation - 1,
+        )
+        self.assertEqual(
+            len(painted), 1, "a stale generation must not repaint the bar"
         )
 
 
