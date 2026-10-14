@@ -337,6 +337,44 @@ class TestSponsorBlockGateStaysSynchronous(unittest.TestCase):
             "Could not extract video ID", "\n".join(self.harness.output_lines())
         )
 
+    def test_gate_messages_carry_the_generation_and_are_dropped_when_stale(self):
+        """The site-unsupported and missing-id messages go through sb_log.
+
+        check_sponsorblock() runs after title_fetch_complete, so a URL change
+        can happen before those queued messages are displayed. They therefore
+        carry the generation like the lookup's other lines, and the
+        main-thread receiver drops a stale one the same way.
+        """
+        from ytdl.app import YTDLPDownloaderGUI
+
+        written = []
+
+        class _H:
+            _sb_generation = 0
+
+            def append_output_text(self, text):
+                written.append(text)
+
+        receiver = YTDLPDownloaderGUI._append_sb_log
+        gen = self.harness._sb_generation
+        self.harness._sb_generation = gen
+        self.harness.check_sponsorblock(video_id="", site="youtube", sb_generation=gen)
+        self.assertEqual(
+            self.harness.signals.sb_log.emitted,
+            [("SponsorBlock: Could not extract video ID from URL", gen)],
+        )
+
+        # A newer fetch bumps the token; the queued message now carries a
+        # stale generation and must be dropped at the receiver.
+        gen += 1
+        self.harness._sb_generation = gen
+        h = _H()
+        h._sb_generation = gen
+        receiver(h, "SponsorBlock: Could not extract video ID from URL", gen - 1)
+        self.assertEqual(
+            written, [], "a stale gate message must not reach the output panel"
+        )
+
     def test_lookup_uses_the_snapshot_not_later_video_state(self):
         """The lookup thread must not depend on later video_state changes."""
         stub = self._gate("snapshot-id", "youtube")

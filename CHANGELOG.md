@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.16 — 2026-10-14
+
+- **The last two SponsorBlock gate messages are generation-gated too.** The site-unsupported and missing-video-ID messages in `check_sponsorblock()` used to go through plain `append_output`. That method runs after `title_fetch_complete`, so a URL change could happen before those queued messages were displayed, letting a message for the previous video appear in the new video's log. They now go through the scoped `sb_log` signal carrying the generation, with the same main-thread receiver dropping a stale one.
+
+---
+
 ## 1.4.15 — 2026-10-14
 
 - **SponsorBlock results for a superseded video are now discarded at three points, not two.** The lookup thread re-checks the *current* video id before emitting, and the main-thread receiver compares a generation token before painting the bar — but the token used to be bumped only near the end of `get_video_info()`, so a response queued from a previous video could land after the URL changed but before the new fetch reached the bump, and its token would still match, briefly repainting the cleared bar. The generation is now bumped at the start of each fetch and again when the URL changes, before the new fetch starts, so that window is closed.

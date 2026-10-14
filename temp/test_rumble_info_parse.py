@@ -65,6 +65,9 @@ class TestRumbleInfoParse(unittest.TestCase):
         h = Harness()
         captured = []
         h.signals.append_output.connect(captured.append)
+        # SponsorBlock's own lines moved to the scoped sb_log signal; merge it
+        # back so these tests read the output as one stream.
+        h.signals.sb_log.connect(captured.append)
         results = []
         h.signals.title_fetch_complete.connect(lambda r: results.append(r))
 

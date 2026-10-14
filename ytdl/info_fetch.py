@@ -736,10 +736,18 @@ class InfoFetchMixin:
 
         if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
             # SponsorBlock is a YouTube-only database; skip cleanly on other sites
-            self._emit("append_output", "SponsorBlock: Not available for this site (YouTube only) — skipping")
+            self._emit(
+                "sb_log",
+                "SponsorBlock: Not available for this site (YouTube only) — skipping",
+                sb_generation,
+            )
             return
         if not video_id:
-            self._emit("append_output", "SponsorBlock: Could not extract video ID from URL")
+            self._emit(
+                "sb_log",
+                "SponsorBlock: Could not extract video ID from URL",
+                sb_generation,
+            )
             return
 
         thread = threading.Thread(
