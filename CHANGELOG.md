@@ -26,6 +26,23 @@ disagree, this file is right.
 
 ---
 
+## 1.4.23 — 2026-10-14
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.23) · tag `v1.4.23`
+
+- **Log output no longer masks URL query strings.** Masking every `?...` hid
+  the YouTube video ID — the one detail that identifies which download failed —
+  and truncated any captured yt-dlp line containing a `?`, which could cut an
+  error message in half. None of the supported sites' URLs carry a credential
+  (YouTube's is a public `v=` id; Rumble, Odysee, ARD and ZDF have no query
+  string), so `https://www.youtube.com/watch?v=...` now appears in full in
+  `app.log`, the output panel and the failure dump. Credential redaction is
+  unchanged: the value of `--cookies-from-browser` and the other value-taking
+  flags is still logged as `***`. If you paste `app.log` into a public issue,
+  check it first — it now contains complete URLs.
+
+---
+
 ## 1.4.22 — 2026-10-14
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.22) · tag `v1.4.22`

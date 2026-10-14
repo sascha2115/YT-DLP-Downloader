@@ -34,18 +34,23 @@ AUDIO_OUTPUT_EXTENSIONS = (".mp3", ".m4a", ".wav", ".opus", ".webm")
 # error, the last few retries, the final state) and says so out loud.
 MAX_CAPTURED_OUTPUT_LINES = 200
 
-# yt-dlp passes the URL and every extractor arg on the command line, and the
-# failure log dumps the whole command. Query strings can carry session tokens
-# and user-provided args (cookies, headers) can carry secrets, so the command
-# is redacted before it is logged - the arguments are never secrets here.
+# yt-dlp passes every argument on the command line, and the failure log dumps
+# the whole command. The arguments are not the app's secrets, but they are the
+# user's, so the command is redacted before it is logged.
 _REDACTED_ARG = "***"
-# yt-dlp accepts every sensitive flag in two shapes: "--flag value" (separate
-# arguments, the common form) and "--flag=value" (equals form, used for long
-# headers and extractor args). Both must be handled or a token slips through.
-# Flags are split by whether they take a value: --netrc is a boolean (it tells
-# yt-dlp to read ~/.netrc) and does NOT consume the next argument, so treating
-# it as value-taking would silently redact the URL that follows it and hide
-# the failed job from the log.
+# yt-dlp accepts a value-taking flag in two shapes: "--flag value" (separate
+# arguments, the common form) and "--flag=value" (the equals form, used for
+# long headers and extractor args). Both must be handled or a token slips
+# through.
+#
+# Membership here is what marks a flag as value-taking. A flag that is absent
+# consumes no argument - --netrc, for instance, only tells yt-dlp to read
+# ~/.netrc - so its successor is left alone instead of being masked.
+#
+# build_command() emits only --cookies-from-browser today; the rest are listed
+# because _redact_command() sanitizes whatever argv it is handed and cannot
+# know which flags the caller chose to pass. Add an entry when a new
+# credentialed flag reaches a command.
 _VALUE_FLAGS = {
     "--cookies",
     "--cookies-from-browser",
@@ -56,46 +61,23 @@ _VALUE_FLAGS = {
     "--password",
     "--video-password",
 }
-_BOOL_FLAGS = {
-    "--netrc",
-}
-# A query string can carry a session token or an auth code. The scheme, host
-# and path identify the failed job, so only the query is masked.
-_URL_QUERY_RE = re.compile(r"(\?[^#\s]*)")
-
-
-def _redact_url(url):
-    """Mask the query string of a URL, keeping scheme/host/path.
-
-    The URL is the one thing that identifies the failed job, so it is not
-    dropped - but its query string can carry a token, and that is masked.
-    """
-    if not url or "?" not in url:
-        return url
-    return _URL_QUERY_RE.sub("?***", url)
-
-
-def _redact_line(line):
-    """Mask URL query strings in an arbitrary output line.
-
-    Raw yt-dlp output is captured verbatim for the failure log, and those
-    lines can carry the URL yt-dlp actually fetched - including a query
-    string with a session token. The line is not otherwise inspected, so
-    every URL-shaped substring is masked here rather than only the command.
-    """
-    if not line or "?" not in line:
-        return line
-    return _URL_QUERY_RE.sub("?***", line)
 
 
 def _redact_command(cmd):
-    """Return a copy of `cmd` with the value of sensitive flags redacted.
+    """Return a copy of `cmd` with the value of value-taking flags redacted.
 
     The flag itself is kept (so the log shows what was requested) but its
     argument is replaced, so a token in a cookie, a header, an extractor arg,
-    a username, a password or a video password never reaches the log. The
-    URL is kept (it identifies the failed job) but its query string is masked,
-    since that is where a session token or auth code would live.
+    a username, a password or a video password never reaches the log.
+
+    URLs and the output template are deliberately NOT touched. A URL is the
+    only thing that identifies which job failed, and no supported site's URL
+    carries a credential: YouTube's is `watch?v=<public id>`, Rumble/Odysee/ARD
+    and ZDF have no query string at all. An earlier revision masked every
+    query string on the theory that one might hold a session token; that
+    hid the video ID of the very job the log was reporting, and truncated any
+    output line containing a "?" - which cost more debuggability than the
+    secrecy it could ever have bought was worth.
     """
     redacted = []
     skip_next = False
@@ -106,16 +88,14 @@ def _redact_command(cmd):
             continue
         # "--flag=value": the flag and its value are one argument.
         if "=" in item:
-            flag, _sep, value = item.partition("=")
+            flag, _sep, _value = item.partition("=")
             if flag in _VALUE_FLAGS:
                 redacted.append(f"{flag}={_REDACTED_ARG}")
                 continue
         redacted.append(item)
         if item in _VALUE_FLAGS:
             skip_next = True
-    # Positional arguments are URLs or the output template; only URLs carry a
-    # query string worth masking.
-    return [_redact_url(arg) if "://" in arg else arg for arg in redacted]
+    return redacted
 
 
 def _format_captured_output(captured_output, truncated):
@@ -371,7 +351,7 @@ class DownloadMixin:
         url = self.video_state.get("clean_url", "")
         logger.info(f"{channel}")
         logger.info(f"{base_name}")
-        logger.info(f"{_redact_url(url)}")
+        logger.info(f"{url}")
 
         # Clear cached metadata at start of new download
         self.cached_video_metadata = None
@@ -613,12 +593,10 @@ class DownloadMixin:
         removed_sb_segments = []
         # Capture output lines for logging on failure
         captured_output = []
-        # Every captured line is run through _redact_line() before it is
-        # stored: raw yt-dlp output can carry the URL it actually fetched,
-        # and that URL's query string can hold a session token. The command
-        # line is redacted separately through _redact_command(); the two
-        # cover different surfaces (what yt-dlp printed vs. what we asked
-        # for), and neither alone is enough.
+        # Lines are stored exactly as they were printed, because the point of
+        # this capture is to show what yt-dlp actually said. Only the command
+        # line is redacted, separately, through _redact_command() - that is the
+        # one place a credential of ours (a browser cookie path) can appear.
         # Set when the bounded tail drops earlier lines, so the failure log
         # can say so instead of presenting a truncated capture as complete.
         captured_output_truncated = False
@@ -649,13 +627,13 @@ class DownloadMixin:
                 cmd, self.video_state.get("media_type", "video")
             )
             self._emit("append_output", format_line)
-            captured_output.append(_redact_line(format_line))
+            captured_output.append(format_line)
             # Capture the command for error logging, redacting any argument
             # that could carry a secret (cookies, headers, password, ...).
             cmd_line = "🖥️ " + " ".join(
                 str(item) for item in _redact_command(cmd) if item
             )
-            captured_output.append(_redact_line(cmd_line))
+            captured_output.append(cmd_line)
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -705,11 +683,7 @@ class DownloadMixin:
                         "sign in", "geo", "unavailable", "private", "members",
                     )
                 ):
-                    # Redact before storing: yt-dlp echoes the URL it
-                    # actually fetched, and its query string can carry a
-                    # session token. The raw line still reaches the parser
-                    # below, so progress parsing is unaffected.
-                    captured_output.append(_redact_line(line))
+                    captured_output.append(line)
                     if len(captured_output) > MAX_CAPTURED_OUTPUT_LINES:
                         captured_output = captured_output[
                             -MAX_CAPTURED_OUTPUT_LINES:
@@ -920,8 +894,8 @@ class DownloadMixin:
                     sidecars_attempted = True
 
         except Exception as e:
-            self._emit("append_output", f"🚩 An unexpected error occurred: {_redact_url(str(e))}")
-            logger.error(f"Download failed with exception: {_redact_url(str(e))}")
+            self._emit("append_output", f"🚩 An unexpected error occurred: {e}")
+            logger.error(f"Download failed with exception: {e}")
             if captured_output:
                 logger.error(
                     _format_captured_output(
@@ -962,7 +936,10 @@ class DownloadMixin:
                     segment_info.append(f"{category} ({start:.1f}s-{end:.1f}s)")
                 logger.info(f"SponsorBlock removed: {', '.join(segment_info)}")
 
-            # Log the result
+            # Log the result. The URL is logged whole, like every other log
+            # path: it is the only thing that identifies which job this was,
+            # and no supported site's URL carries a credential. Do not "fix"
+            # this back to masking the query string - see _redact_command().
             url = self.get_clean_url() if hasattr(self, "get_clean_url") else "unknown"
             logger.info(
                 f"Download {'succeeded' if success else 'cancelled' if cancelled else 'failed'}: {url}"

@@ -630,11 +630,9 @@ class TestCapturedErrorOutput(unittest.TestCase):
             self.assertIn("***", joined)
             self.assertNotIn("1abc.default-release", joined)
             self.assertNotIn("Bearer secret", joined)
-            # The URL identifies the failed job, so the scheme, host and path
-            # are kept - but its query string can carry a token, so that is
-            # masked.
-            self.assertIn("https://example.com/watch?", joined)
-            self.assertNotIn("v=abc", joined)
+            # The URL is kept whole: it is the only thing that identifies the
+            # failed job, and no supported site's URL carries a credential.
+            self.assertIn("https://example.com/watch?v=abc", joined)
 
     def test_equals_form_sensitive_flags_are_redacted(self):
         # yt-dlp accepts "--flag value" and "--flag=value"; only the first
@@ -665,6 +663,8 @@ class TestCapturedErrorOutput(unittest.TestCase):
             self.assertIn("--extractor-args=***", joined)
             self.assertNotIn("Bearer secret", joined)
             self.assertNotIn("abc123", joined)
+            # Only the flagged values are masked; the URL stays whole.
+            self.assertIn("https://example.com/watch?v=abc", joined)
 
     def test_non_sensitive_equals_form_flags_are_kept(self):
         # The equals form is also used for ordinary flags; those must not be
@@ -691,10 +691,12 @@ class TestCapturedErrorOutput(unittest.TestCase):
             joined = "\n".join(captured.output)
             self.assertIn("--merge-output-format=mp4", joined)
 
-    def test_raw_output_line_query_is_masked(self):
-        # Raw yt-dlp output is captured verbatim for the failure log, and
-        # those lines can carry the URL yt-dlp actually fetched - including a
-        # query string with a session token. Every captured line is masked.
+    def test_raw_output_line_is_captured_verbatim(self):
+        # Raw yt-dlp output is captured for the failure log exactly as it was
+        # printed, query string included: an ERROR line naming the URL yt-dlp
+        # actually fetched is the single most useful thing in the capture, and
+        # no supported site's URL carries a credential. Only the command's
+        # credential flags are redacted, via _redact_command().
         with tempfile.TemporaryDirectory() as temp_dir:
             base_path = os.path.join(temp_dir, "Title")
             media_path = base_path + ".mp4"
@@ -703,8 +705,7 @@ class TestCapturedErrorOutput(unittest.TestCase):
             lines = [
                 f"[download] Destination: {media_path}",
                 "[download] 100% of 1.00MiB in 00:00:01",
-                "ERROR: [youtube] X: "
-                "https://example.com/watch?v=secret_token",
+                "ERROR: [youtube] X: https://example.com/watch?v=dQw4w9WgXcQ",
             ]
             harness = _DownloadHarness(base_path, media_type="video")
             process = _Process(lines, 1)
@@ -713,13 +714,12 @@ class TestCapturedErrorOutput(unittest.TestCase):
                 with self.assertLogs("ytdl.download", level="ERROR") as captured:
                     harness.run_download(cmd, [])
             joined = "\n".join(captured.output)
-            self.assertIn("https://example.com/watch?", joined)
-            self.assertNotIn("secret_token", joined)
+            self.assertIn("https://example.com/watch?v=dQw4w9WgXcQ", joined)
 
-    def test_netrc_is_a_boolean_flag(self):
-        # --netrc tells yt-dlp to read ~/.netrc; it does NOT consume the next
-        # argument. Treating it as value-taking would redact the URL that
-        # follows it and hide the failed job from the log.
+    def test_non_value_flag_does_not_swallow_the_next_argument(self):
+        # A flag absent from _VALUE_FLAGS consumes no argument. --netrc only
+        # tells yt-dlp to read ~/.netrc, so the URL that follows it must stay
+        # in the log - masking it would hide the failed job entirely.
         with tempfile.TemporaryDirectory() as temp_dir:
             base_path = os.path.join(temp_dir, "Title")
             media_path = base_path + ".mp4"
@@ -741,9 +741,8 @@ class TestCapturedErrorOutput(unittest.TestCase):
                     harness.run_download(cmd, [])
             joined = "\n".join(captured.output)
             self.assertIn("--netrc", joined)
-            # The URL is kept (it identifies the failed job), query masked.
-            self.assertIn("https://example.com/watch?", joined)
-            self.assertNotIn("v=abc", joined)
+            # The URL is kept whole, and is not swallowed by the flag above it.
+            self.assertIn("https://example.com/watch?v=abc", joined)
 
 
 if __name__ == "__main__":

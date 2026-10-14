@@ -259,8 +259,8 @@ class InfoFetchMixin:
             )
             # Log the info-fetch command if enabled (disabled by default)
             if prefs.preferences.get("show_fetchinfo_command", False):
-                # Same redaction as the download command log: the URL's query
-                # string can carry a session token or auth code.
+                # Same redaction as the download command log: a value-taking
+                # flag (cookies, header, ...) is masked, the URL is not.
                 self._emit(
                     "append_output",
                     f"\n🖥️ {' '.join(str(item) for item in _redact_command(cmd) if item)}",
