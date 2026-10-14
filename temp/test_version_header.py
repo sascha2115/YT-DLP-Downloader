@@ -105,6 +105,71 @@ class TestGitCommitShort(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
 
 
+class TestBakedBuildCommit(unittest.TestCase):
+    """The BUILD_COMMIT file the build scripts stamp in for packaged apps."""
+
+    def setUp(self):
+        self._cache = utils._GIT_COMMIT_CACHE
+        utils._GIT_COMMIT_CACHE = None
+
+    def tearDown(self):
+        utils._GIT_COMMIT_CACHE = self._cache
+
+    def _bake(self, contents):
+        path = utils.resource_path(utils.BUILD_COMMIT_FILENAME)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(contents)
+        self.addCleanup(os.remove, path)
+
+    def test_hash_is_read_back(self):
+        # The build scripts write "git rev-parse --short HEAD" plus a newline.
+        self._bake("babb7fb\n")
+        self.assertEqual(utils._baked_build_commit(), "babb7fb")
+
+    def test_missing_file_is_empty(self):
+        # A source run has no BUILD_COMMIT; that is not an error.
+        self.assertEqual(utils._baked_build_commit(), "")
+
+    def test_non_hash_contents_are_rejected(self):
+        self._bake("not-a-hash\n")
+        self.assertEqual(utils._baked_build_commit(), "")
+
+    def test_bundle_without_git_falls_back_to_baked(self):
+        # A packaged .app has no .git, so the baked file is its only answer.
+        self._bake("babb7fb\n")
+        with mock.patch.object(utils.os.path, "isdir", return_value=False):
+            with mock.patch.object(utils.subprocess, "run") as run:
+                self.assertEqual(utils.get_git_commit_short(), "babb7fb")
+        run.assert_not_called()
+
+    def test_live_git_wins_over_baked(self):
+        # In a source run HEAD is what is executing; a stale BUILD_COMMIT left
+        # by an earlier build describes what was bundled then.
+        self._bake("babb7fb\n")
+        with mock.patch.object(
+            utils.subprocess, "run", return_value=_Result("5e20afe\n", 0)
+        ):
+            self.assertEqual(utils.get_git_commit_short(), "5e20afe")
+
+    def test_baked_answer_is_cached(self):
+        # Regression: the fallback used to be returned without being stored,
+        # so _GIT_COMMIT_CACHE stayed "" and every later call - including the
+        # one clear_output() makes - reported no commit at all.
+        self._bake("babb7fb\n")
+        with mock.patch.object(utils.os.path, "isdir", return_value=False):
+            with mock.patch.object(utils, "_baked_build_commit", return_value="babb7fb") as baked:
+                self.assertEqual(utils.get_git_commit_short(), "babb7fb")
+                self.assertEqual(utils.get_git_commit_short(), "babb7fb")
+                self.assertEqual(utils.version_header().endswith("[babb7fb]"), True)
+        self.assertEqual(baked.call_count, 1)
+
+    def test_header_shows_baked_commit(self):
+        self._bake("babb7fb\n")
+        with mock.patch.object(utils.os.path, "isdir", return_value=False):
+            header = utils.version_header()
+        self.assertEqual(header, f"YT-DLP Downloader {APP_VERSION} [babb7fb]")
+
+
 class TestVersionHeader(unittest.TestCase):
     def test_commit_is_bracketed_after_the_version(self):
         with mock.patch.object(utils, "get_git_commit_short", return_value="babb7fb"):

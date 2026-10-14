@@ -7,6 +7,8 @@ and re-exports its public names, so `main.X` keeps working as the single
 import surface for tests and tooling.
 """
 
+import logging
+import os
 import sys
 
 # pylint: disable=wildcard-import,unused-wildcard-import
@@ -14,10 +16,38 @@ import sys
 #   (see the module docstring) — the names are re-exported on purpose.
 from ytdl.app import *  # noqa: F401,F403
 from ytdl.app import YTDLPDownloaderGUI  # noqa: F401
+from ytdl.utils import get_log_dir
+
+
+def configure_logging():
+    """Point the root logger at the on-disk log, for a real application run.
+
+    Deliberately here rather than in ytdl.app: a library module must not
+    configure logging at import time. main is imported by the unit tests and
+    the replay helpers, and configuring on import meant every test run
+    appended synthetic entries to the live app.log.
+
+    Callers that are not the application (tests, helpers) simply never call
+    this, so nothing they log can reach the user's log file.
+    """
+    log_dir = get_log_dir()
+    os.makedirs(log_dir, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(message)s",
+        handlers=[
+            logging.FileHandler(os.path.join(log_dir, "app.log"), encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+        force=True,
+    )
+
 
 if __name__ == "__main__":
     from PyQt6.QtCore import QCoreApplication
     from PyQt6.QtWidgets import QApplication
+
+    configure_logging()
 
     simulate_download_error = "--simulate-download-error" in sys.argv
 

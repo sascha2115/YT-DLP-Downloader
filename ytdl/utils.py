@@ -64,15 +64,34 @@ _GIT_COMMIT_CACHE = None
 # Guard the shape, not just git's exit code: a wrapper or alias could print
 # something that is not a hash at all.
 _GIT_COMMIT_RE = re.compile(r"[0-9a-f]{7,40}")
+# A packaged bundle ships no repository, so it cannot run git. The build
+# scripts stamp the commit into this file and bundle it alongside assets/,
+# and resource_path() finds it in both a source run and a PyInstaller bundle.
+BUILD_COMMIT_FILENAME = "BUILD_COMMIT"
+
+
+def _baked_build_commit():
+    """Commit stamped in by build-macos.sh / build-linux.sh; "" if absent.
+
+    This is the only source of truth inside a packaged .app, where there is
+    no .git to ask. It is a fallback for source runs, never a replacement:
+    see get_git_commit_short() for why live git wins there.
+    """
+    try:
+        with open(resource_path(BUILD_COMMIT_FILENAME), "r", encoding="utf-8") as f:
+            commit = f.read().strip()
+    except OSError:
+        return ""
+    return commit if _GIT_COMMIT_RE.fullmatch(commit) else ""
 
 
 def get_git_commit_short():
-    """Short commit hash of the checkout this runs from; "" when unknown.
+    """Short commit hash of the running code; "" when unknown.
 
     Every failure mode collapses to "": no git binary, no .git directory (a
-    PyInstaller bundle ships no repository), a timeout, a nonzero exit or
-    output that is not a hash. The header line then shows the version alone
-    instead of the app refusing to start over a cosmetic detail.
+    PyInstaller bundle), a timeout, a nonzero exit or output that is not a
+    hash. The header line then shows the version alone instead of the app
+    refusing to start over a cosmetic detail.
     """
     global _GIT_COMMIT_CACHE
     if _GIT_COMMIT_CACHE is not None:
@@ -82,21 +101,35 @@ def get_git_commit_short():
     # negative answer and a broken git is not re-shelled on every call.
     _GIT_COMMIT_CACHE = ""
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if not os.path.isdir(os.path.join(repo_root, ".git")):
-        return _GIT_COMMIT_CACHE
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return _GIT_COMMIT_CACHE
-    if result.returncode == 0 and _GIT_COMMIT_RE.fullmatch(result.stdout.strip()):
-        _GIT_COMMIT_CACHE = result.stdout.strip()
+    if os.path.isdir(os.path.join(repo_root, ".git")):
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            result = None
+        if result is not None and result.returncode == 0:
+            commit = result.stdout.strip()
+            if _GIT_COMMIT_RE.fullmatch(commit):
+                _GIT_COMMIT_CACHE = commit
+                return _GIT_COMMIT_CACHE
+
+    # Live git is preferred over the baked file on purpose: in a source run
+    # HEAD is what is actually executing, while a BUILD_COMMIT left in the
+    # tree by an earlier build describes what was bundled then. A bundle has
+    # no .git, so it lands here and this is its only answer.
+    #
+    # The fallback must be cached like any other answer. Returning it without
+    # storing it left _GIT_COMMIT_CACHE at "", and since "" is not None the
+    # "already resolved" check above then returned that empty string on every
+    # later call - so a packaged app showed the commit in the startup header
+    # and lost it after the first clear_output().
+    _GIT_COMMIT_CACHE = _GIT_COMMIT_CACHE or _baked_build_commit()
     return _GIT_COMMIT_CACHE
 
 

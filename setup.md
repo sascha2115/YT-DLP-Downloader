@@ -84,6 +84,8 @@ pip install pyinstaller
 ```
 > `build-macos.sh` finds `pyinstaller` on its own — project venv first, then `~/.local/bin` (pip `--user` installs), then `PATH`. No venv activation needed.
 
+The build stamps the current git commit into the bundle, so the packaged app's output-panel header reads `1.5.0 [abc1234]` instead of a bare version. It writes a temporary `BUILD_COMMIT` file, bundles it, and removes it on exit — nothing is left in your working tree. A build made outside a git checkout (e.g. from an exported archive) simply reports the version alone; the build still succeeds.
+
 The bundle is **unsigned**, so the first launch may be blocked by Gatekeeper: right-click the app → *Open*, or allow it under *System Settings → Privacy & Security*.
 
 ## 3. Linux

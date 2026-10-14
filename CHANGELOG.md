@@ -26,14 +26,44 @@ disagree, this file is right.
 
 ---
 
-## Unreleased
+## 1.5.0 — 2026-10-14
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.5.0) · tag `v1.5.0`
 
 - **The output panel header now names the commit the app was built from**,
-  after the version: `YT-DLP Downloader 1.4.23 [babb7fb]`. A version can
-  cover many commits, so this ties a bug report to an exact checkout. When
-  the commit cannot be determined — a packaged `.app` bundle ships no
-  repository, or git is missing — the header shows the version alone rather
+  after the version: `YT-DLP Downloader 1.5.0 [babb7fb]`. A version can
+  cover many commits, so this ties a bug report to an exact checkout. The
+  packaged `.app` reports it too: the build scripts stamp the commit into a
+  bundled `BUILD_COMMIT` file, since a bundle ships no repository to read.
+  When no commit can be determined the header shows the version alone rather
   than failing, so nothing changes for those runs.
+- **Log output no longer masks URL query strings.** Masking every `?...` hid
+  the YouTube video ID — the one detail that identifies which download failed —
+  and truncated any captured yt-dlp line containing a `?`, which could cut an
+  error message in half. None of the supported sites' URLs carry a credential
+  (YouTube's is a public `v=` id; Rumble, Odysee, ARD and ZDF have no query
+  string), so `https://www.youtube.com/watch?v=...` now appears in full in
+  `app.log`, the output panel and the failure dump. Credential redaction is
+  unchanged: the value of `--cookies-from-browser` and the other value-taking
+  flags is still logged as `***`. If you paste `app.log` into a public issue,
+  check it first — it now contains complete URLs.
+- **Running the test suite no longer writes to `app.log`.** Logging used to be
+  configured at import time, so importing the app — which every test does —
+  pointed the logger at the live `app.log` and appended synthetic entries to
+  it (a 35-test module wrote 89 lines of `Download failed: unknown` and
+  `sidecar boom`). Logging is now set up by the launcher when the app actually
+  starts. Nothing changes for normal use; if you build or hack on the source,
+  note that `app.log` is now written only by a real run.
+
+### 🧪 Verified
+
+- The commit reaches a real bundle end to end, not just in a source run: a
+  `./build-macos.sh` build reported `1.4.23 [5e20afe]` in the output panel,
+  with `5e20afe` present in the bundle's `Resources/BUILD_COMMIT`.
+- Test isolation measured with a canary rather than inferred: a marker line
+  placed in `app.log` survived two consecutive full-suite runs unchanged,
+  with zero lines added. The same suite wrote 89 lines before the change.
+- No new lint warnings (7, all pre-existing) and 464 tests passing.
 
 ---
 

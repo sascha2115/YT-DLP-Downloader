@@ -95,19 +95,17 @@ from ytdl.subtitles import SubtitleMixin  # noqa: F401
 from ytdl.ui_build import UiBuildMixin  # noqa: F401
 
 # ----------------------------------------------------------------------------------------------------
-# Logger Setup
+# Logger
 # ----------------------------------------------------------------------------------------------------
-log_dir = get_log_dir()
-os.makedirs(log_dir, exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(message)s",
-    handlers=[
-        logging.FileHandler(os.path.join(log_dir, "app.log"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-    force=True,
-)
+# NOTE: logging is deliberately NOT configured here. ytdl.app is imported by
+# main.py, by the tests and by the replay helpers, and a library module must
+# not call logging.basicConfig() at import time: doing so wired the root
+# logger to the live ~/Library/Logs/.../app.log on every import, so simply
+# running the unit tests appended dozens of synthetic entries ("Download
+# failed: unknown", "sidecar boom") to the real log.
+#
+# Configuration belongs to the entry point, which knows it is the
+# application rather than a test. See main.py's __main__ block.
 logger = logging.getLogger(__name__)
 
 

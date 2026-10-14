@@ -13,6 +13,11 @@ venv/
 build/
 dist/
 
+# Commit stamped into the bundle by build-macos.sh / build-linux.sh. Written
+# just before pyinstaller runs and removed on exit, so it is build output and
+# must never be committed - a stale hash here would be reported as the build's.
+BUILD_COMMIT
+
 # Downloaded media: local library, hundreds of MB, never committed
 media/
 

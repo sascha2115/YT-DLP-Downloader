@@ -15,7 +15,9 @@
 #   yt-dlp, ffmpeg, deno  — e.g. sudo apt install ffmpeg; pip install yt-dlp
 #
 # NOTE: assets/ (icons + styles.qss) is bundled via --add-data; the ':' separator
-# is correct on Linux (it would be ';' on Windows).
+# is correct on Linux (it would be ';' on Windows). BUILD_COMMIT is bundled the
+# same way — the app has no .git to read inside the package, so the build stamps
+# the commit in and it appears in the output-panel header.
 
 # Locate pyinstaller: project venv first, then pip --user (~/.local/bin),
 # then PATH. The script itself runs under bash regardless of the launching
@@ -37,5 +39,19 @@ if [ -z "$PYINSTALLER" ]; then
     exit 1
 fi
 
+# Stamp the commit before pyinstaller runs, so it is collected as data, and
+# remove it afterwards so it cannot go stale in the tree. A missing hash is
+# left blank rather than failing the build: the app then reports the version
+# only, and a broken git must not block packaging.
+BUILD_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)"
+if [ -n "$BUILD_COMMIT" ]; then
+    printf '%s\n' "$BUILD_COMMIT" > BUILD_COMMIT
+    echo "Bundling commit: $BUILD_COMMIT"
+else
+    echo "warning: no git commit found — the app will report the version only"
+    : > BUILD_COMMIT
+fi
+trap 'rm -f BUILD_COMMIT' EXIT
+
 "$PYINSTALLER" --name "YT-DLP Downloader" --windowed --icon assets/AppIcon.png \
-    --add-data "assets:assets" main.py --clean --noconfirm
+    --add-data "assets:assets" --add-data "BUILD_COMMIT:." main.py --clean --noconfirm
