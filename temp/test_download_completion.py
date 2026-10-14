@@ -513,6 +513,63 @@ class TestCapturedErrorOutput(unittest.TestCase):
             self.assertIn("***", joined)
             self.assertNotIn("1abc.default-release", joined)
             self.assertNotIn("Bearer secret", joined)
-            # The URL is not a secret and is kept, so the failed job is
-            # identifiable from the log.
-            self.assertIn("https://example.com/watch?v=abc", joined)
+            # The URL identifies the failed job, so the scheme, host and path
+            # are kept - but its query string can carry a token, so that is
+            # masked.
+            self.assertIn("https://example.com/watch?", joined)
+            self.assertNotIn("v=abc", joined)
+
+    def test_equals_form_sensitive_flags_are_redacted(self):
+        # yt-dlp accepts "--flag value" and "--flag=value"; only the first
+        # shape was handled, so a long header or extractor arg passed as one
+        # token leaked its value into the log.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _DownloadHarness(base_path, media_type="video")
+            process = _Process(lines, 1)
+            cmd = [
+                "yt-dlp",
+                "--header=Authorization: Bearer secret",
+                "--extractor-args=token:abc123",
+                "https://example.com/watch?v=abc",
+            ]
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                with self.assertLogs("ytdl.download", level="ERROR") as captured:
+                    harness.run_download(cmd, [])
+            joined = "\n".join(captured.output)
+            self.assertIn("--header=***", joined)
+            self.assertIn("--extractor-args=***", joined)
+            self.assertNotIn("Bearer secret", joined)
+            self.assertNotIn("abc123", joined)
+
+    def test_non_sensitive_equals_form_flags_are_kept(self):
+        # The equals form is also used for ordinary flags; those must not be
+        # redacted, or the log would hide what was actually requested.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _DownloadHarness(base_path, media_type="video")
+            process = _Process(lines, 1)
+            cmd = [
+                "yt-dlp",
+                "--merge-output-format=mp4",
+                "https://example.com/watch?v=abc",
+            ]
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                with self.assertLogs("ytdl.download", level="ERROR") as captured:
+                    harness.run_download(cmd, [])
+            joined = "\n".join(captured.output)
+            self.assertIn("--merge-output-format=mp4", joined)

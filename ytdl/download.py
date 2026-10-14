@@ -39,6 +39,9 @@ MAX_CAPTURED_OUTPUT_LINES = 200
 # and user-provided args (cookies, headers) can carry secrets, so the command
 # is redacted before it is logged - the arguments are never secrets here.
 _REDACTED_ARG = "***"
+# yt-dlp accepts every sensitive flag in two shapes: "--flag value" (separate
+# arguments, the common form) and "--flag=value" (equals form, used for long
+# headers and extractor args). Both must be handled or a token slips through.
 _SENSITIVE_ARG_FLAGS = {
     "--cookies",
     "--cookies-from-browser",
@@ -50,16 +53,30 @@ _SENSITIVE_ARG_FLAGS = {
     "--netrc",
     "--video-password",
 }
+# A query string can carry a session token or an auth code. The scheme, host
+# and path identify the failed job, so only the query is masked.
+_URL_QUERY_RE = re.compile(r"(\?[^#\s]*)")
+
+
+def _redact_url(url):
+    """Mask the query string of a URL, keeping scheme/host/path.
+
+    The URL is the one thing that identifies the failed job, so it is not
+    dropped - but its query string can carry a token, and that is masked.
+    """
+    if not url or "?" not in url:
+        return url
+    return _URL_QUERY_RE.sub("?***", url)
 
 
 def _redact_command(cmd):
     """Return a copy of `cmd` with the value of sensitive flags redacted.
 
     The flag itself is kept (so the log shows what was requested) but its
-    argument is replaced, so a token in a cookie or a password never reaches
-    the log. Positional arguments (the URL, the output template) are left
-    alone: they are what the user asked for and are needed to identify the
-    failed job.
+    argument is replaced, so a token in a cookie, a header, an extractor arg,
+    a username, a password or a video password never reaches the log. The
+    URL is kept (it identifies the failed job) but its query string is masked,
+    since that is where a session token or auth code would live.
     """
     redacted = []
     skip_next = False
@@ -68,10 +85,18 @@ def _redact_command(cmd):
             skip_next = False
             redacted.append(_REDACTED_ARG)
             continue
+        # "--flag=value": the flag and its value are one argument.
+        if "=" in item:
+            flag, _sep, value = item.partition("=")
+            if flag in _SENSITIVE_ARG_FLAGS:
+                redacted.append(f"{flag}={_REDACTED_ARG}")
+                continue
         redacted.append(item)
         if item in _SENSITIVE_ARG_FLAGS:
             skip_next = True
-    return redacted
+    # Positional arguments are URLs or the output template; only URLs carry a
+    # query string worth masking.
+    return [_redact_url(arg) if "://" in arg else arg for arg in redacted]
 
 
 def _format_captured_output(captured_output, truncated):

@@ -26,6 +26,13 @@ disagree, this file is right.
 
 ---
 
+## 1.4.8 — 2026-10-14
+
+- **Error-log redaction now covers both flag shapes.** yt-dlp accepts `--flag value` and `--flag=value`; only the first was redacted, so a long header or extractor arg passed as one token leaked its value. Both forms are now redacted, and ordinary equals-form flags (e.g. `--merge-output-format=mp4`) are left untouched.
+- **URL query strings are masked in the failure log.** The URL itself is kept (it identifies the failed job), but its query string — where a session token or auth code would live — is replaced with `?***`.
+
+---
+
 ## 1.4.7 — 2026-10-14
 
 - **Subs button is now disabled during a download.** Previously the standalone SRT converter stayed clickable while yt-dlp or the worker's subtitle post-processing was writing the same file, which could race a read against a write. The button now disables with the rest of the primary controls, and the handler refuses to run while a download is in flight.
