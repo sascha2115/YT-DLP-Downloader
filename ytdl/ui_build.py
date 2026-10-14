@@ -148,7 +148,7 @@ class UiBuildMixin:
         group_boxes_hlayout.setSpacing(15)
         # Info and Log buttons stacked vertically
         info_log_layout = QVBoxLayout()
-        info_log_layout.setSpacing(4)
+        info_log_layout.setSpacing(5)
 
         self.thumbnail_button = QPushButton("Info")
         self.thumbnail_button.setToolTip("Click to see video description")
