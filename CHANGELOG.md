@@ -53,6 +53,7 @@ disagree, this file is right.
 - Video codec radio order changed: Best → AV1 → VP9 → H264.
 - Audio format radio order changed: Best → Opus → M4A → MP3.
 - Single muxed stream: both video and audio progress bars show 100% at completion.
+- Metadata sidecar files (`.edl`, `.nfo`) are now created even when the media download fails, since yt-dlp writes `.info.json` before downloading.
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.3) · tag `v1.4.3`
 
