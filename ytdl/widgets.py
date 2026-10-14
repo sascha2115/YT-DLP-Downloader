@@ -61,6 +61,14 @@ class SignalEmitter(QObject):
     set_download_button_status = pyqtSignal(str)
     set_cancel_button_visible = pyqtSignal(bool)
     thumbnail_ready = pyqtSignal(bytes)
+    # Standalone SRT conversion: the worker emits this when it is done, so the
+    # main thread can re-enable the controls without the handler having to
+    # know whether the worker succeeded, failed or was interrupted.
+    subtitle_processing_complete = pyqtSignal(bool)
+    # Standalone SRT conversion: the worker emits this when it is done, so the
+    # main thread can re-enable the controls without the handler having to
+    # know whether the worker succeeded, failed or was interrupted.
+    subtitle_processing_complete = pyqtSignal(bool)
 
 
 # ----------------------------------------------------------------------------------------------------

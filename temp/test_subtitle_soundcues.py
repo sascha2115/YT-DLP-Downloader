@@ -43,6 +43,26 @@ class _SubtitleHarness(app.SubtitleMixin):
     def __init__(self):
         self.video_state = {}
         self.signals = type("Signals", (), {"append_output": _Signal()})()
+        # _emit() is only reached from the worker-thread paths
+        # (_resync_subtitle_for_language / _run_subtitle_resync); these tests
+        # call resync_subtitles() directly, which is now Qt-free and returns
+        # its lines instead of emitting.
+        self._shutting_down = False
+
+    def _emit(self, name, *args):
+        getattr(self.signals, name).emit(*args)
+
+
+def _run_resync(harness, path):
+    """Call resync_subtitles() in place and return the rewritten content.
+
+    resync_subtitles() is now Qt-free: it returns its panel output rather
+    than emitting it, so the caller prints the lines. The soundcues tests
+    only care about the file on disk, so they discard the return value.
+    """
+    harness.resync_subtitles(path, path)
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
 
 
 class TestPreferenceReader(unittest.TestCase):
@@ -128,7 +148,8 @@ class TestEffectOnPipeline(unittest.TestCase):
             path = os.path.join(temp_dir, "Title.en.srt")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(source)
-            self.assertTrue(self.gui.resync_subtitles(path, path))
+            ok, _lines = self.gui.resync_subtitles(path, path)
+            self.assertTrue(ok)
             with open(path, encoding="utf-8") as handle:
                 return handle.read()
 

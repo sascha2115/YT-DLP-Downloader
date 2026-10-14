@@ -25,6 +25,7 @@ import os
 import shutil      # re-exported public surface (main.shutil used by tests)
 import subprocess  # re-exported public surface (main.subprocess used by tests)
 import sys
+import threading
 
 # macOS-only framework bindings (dock tile badge + progress overlay).
 # Optional dependency: on Linux (and other platforms) AppKit does not exist,
@@ -659,7 +660,15 @@ class YTDLPDownloaderGUI(
     # Subs Button
     # ----------------------------------------------------------------------------------------------------
     def open_subtitle_file_dialog(self):
-        """Open a file dialog to select an SRT file and process it."""
+        """Open a file dialog to select an SRT file and process it.
+
+        Parsing, layout and writing a whole subtitle file are synchronous in
+        resync_subtitles(), so calling it here used to freeze the window for the
+        duration of a long file. The work now runs on a daemon thread through
+        _run_subtitle_resync(); the completion is reported back through the
+        queued subtitle_processing_complete signal, so the controls re-enable
+        on the main thread exactly like the download worker's finally block.
+        """
         if self.video_state.get("is_download_running"):
             self._emit(
                 "append_output",
@@ -677,19 +686,37 @@ class YTDLPDownloaderGUI(
 
         srt_path = file_path
         self._emit("append_output", f"🔄 Processing subtitle file: {os.path.basename(srt_path)}")
+        # Disable the primary controls while the worker runs; the completion
+        # signal re-enables them. The Cancel button is deliberately NOT in the
+        # controls list, so it stays clickable - but there is no cancel for a
+        # subtitle job, so it is hidden here too.
+        self.set_cancel_button_visible(False)
         self._set_ui_enabled_state(False)
+        self._set_download_busy(True)
+        self.signals.subtitle_processing_complete.connect(
+            self._on_subtitle_processing_complete
+        )
 
+        thread = threading.Thread(
+            target=self._run_subtitle_resync, args=(srt_path,)
+        )
+        thread.daemon = True
+        thread.start()
+
+    def _on_subtitle_processing_complete(self, ok):
+        """Main-thread slot: re-enable the controls after the worker finishes."""
         try:
-            result = self.resync_subtitles(srt_path, srt_path)
-            if result:
-                self._emit("append_output", f"✅ Saved: {os.path.basename(srt_path)}")
-            else:
-                self._emit("append_output", "⚠️ No changes made")
-        except Exception as e:
-            self._emit("append_output", f"🚩 Error processing subtitle: {e}")
-            logger.error(f"Subtitle processing error: {e}")
-        finally:
-            self._set_ui_enabled_state(True)
+            self.signals.subtitle_processing_complete.disconnect(
+                self._on_subtitle_processing_complete
+            )
+        except (TypeError, RuntimeError):
+            pass
+        self._set_download_busy(False)
+        self._set_ui_enabled_state(True)
+        if ok:
+            self._emit("append_output", "✅ Subtitle processing complete")
+        else:
+            self._emit("append_output", "⚠️ Subtitle processing did not complete")
 
     # ----------------------------------------------------------------------------------------------------
     # Start download

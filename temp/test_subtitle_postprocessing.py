@@ -24,6 +24,30 @@ class _SubtitleHarness(app.SubtitleMixin):
     def __init__(self):
         self.video_state = {}
         self.signals = type("Signals", (), {"append_output": _Signal()})()
+        # _emit() is only reached from the worker-thread paths
+        # (_resync_subtitle_for_language / _run_subtitle_resync); the
+        # post-processing tests call resync_subtitles() directly, which is
+        # now Qt-free and returns its lines instead of emitting.
+        self._shutting_down = False
+
+    def _emit(self, name, *args):
+        # Mirror the real DownloadMixin._emit(): drop worker-thread emissions
+        # while the window is closing, so a worker winding down after close
+        # cannot emit into a dying QObject.
+        if getattr(self, "_shutting_down", False):
+            return
+        getattr(self.signals, name).emit(*args)
+
+
+def _run(harness, path):
+    """Call resync_subtitles() in place and return (ok, lines).
+
+    resync_subtitles() is now Qt-free: it returns its panel output rather
+    than emitting it, so the caller prints the lines. The post-processing
+    tests read the summary line from the return value instead of from the
+    signal emitter.
+    """
+    return harness.resync_subtitles(path, path)
 
 
 class TestFormatSubtitleStats(unittest.TestCase):
@@ -83,13 +107,14 @@ class TestNoTextIsEverLost(unittest.TestCase):
 
     def test_a_lost_cue_is_reported_by_name(self):
         # The warning path: if a cue is ever lost, the panel must name the file
-        # and the count, and the log must carry the text.
+        # and the count, and the log must carry the text. _warn_about_dropped_cues
+        # is Qt-free and returns its panel lines, so the assertion reads the
+        # return value rather than the signal emitter.
         harness = _SubtitleHarness()
         lost = [{"start": 12.5, "end": 13.0, "text": "ein verlorener Satz"}]
         with self.assertLogs("ytdl.subtitles", level="WARNING") as captured:
-            harness._warn_about_dropped_cues(lost, "Title.srt")
+            panel = harness._warn_about_dropped_cues(lost, "Title.srt")
         self.assertTrue(any("ein verlorener Satz" in line for line in captured.output))
-        panel = [args[0] for args in harness.signals.append_output.emitted]
         self.assertTrue(
             any("⚠️" in line and "Title.srt" in line for line in panel), panel
         )
@@ -139,7 +164,8 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             path = os.path.join(temp_dir, "Title.en.srt")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("1\n00:00:00,000 --> 00:00:02,000\nHallo Welt.\n\n")
-            self.assertTrue(self.gui.resync_subtitles(path, path))
+            ok, _lines = _run(self.gui, path)
+            self.assertTrue(ok)
             with open(path, encoding="utf-8") as f:
                 content = f.read()
             self.assertTrue(content.endswith("\n"))
@@ -153,9 +179,9 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(original)
 
-            result = self.gui.resync_subtitles(path, path)
+            ok, _lines = _run(self.gui, path)
 
-            self.assertFalse(result)
+            self.assertFalse(ok)
             with open(path, encoding="utf-8") as f:
                 self.assertEqual(f.read(), original)
             self.assertFalse(os.path.exists(path + ".tmp"))
@@ -164,7 +190,8 @@ class TestSubtitlePostProcessing(unittest.TestCase):
         # The summary must describe the run that actually happened, so the
         # counts are checked against the layout module rather than hard-coded:
         # a layout change then shows up here instead of silently rewriting the
-        # expectation.
+        # expectation. resync_subtitles() is Qt-free and returns its panel
+        # output, so the summary is read from the return value.
         source_cues = [
             (0.0, 2.5, "Du bist ja erfolgreicher Junge"),
             (1.2, 4.0, "Unternehmer. Wieso sagst du dann, hier"),
@@ -178,17 +205,14 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                     fh.write(
                         f"{i}\n{format_srt_time(start)} --> {format_srt_time(end)}\n{text}\n\n"
                     )
-            self.assertTrue(self.gui.resync_subtitles(path, path))
+            ok, lines = _run(self.gui, path)
+            self.assertTrue(ok)
 
             expected, _ = rolling_cues(
                 [{"start": s, "end": e, "text": t} for s, e, t in source_cues]
             )
-            stats = [
-                args[0]
-                for args in self.gui.signals.append_output.emitted
-                if args and "in →" in str(args[0])
-            ]
-            self.assertEqual(len(stats), 1, self.gui.signals.append_output.emitted)
+            stats = [line for line in lines if line and "in →" in str(line)]
+            self.assertEqual(len(stats), 1, lines)
             line = stats[0]
             self.assertIn(f"4 in → {len(expected)} out", line)
             self.assertIn("Title.en.srt", line)
@@ -204,9 +228,9 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                     "Hello\r\n\r\n"
                 )
 
-            result = self.gui.resync_subtitles(source, output)
+            ok, _lines = self.gui.resync_subtitles(source, output)
 
-            self.assertTrue(result)
+            self.assertTrue(ok)
             self.assertTrue(os.path.isfile(output))
             with open(output, encoding="utf-8") as f:
                 self.assertIn("Hello", f.read())
@@ -217,7 +241,8 @@ class TestSubtitlePostProcessing(unittest.TestCase):
         output = os.path.join(temp_dir, name)
         with open(source, "w", encoding="utf-8") as f:
             f.write(block_text)
-        return self.gui.resync_subtitles(source, output), source, output
+        ok, _lines = self.gui.resync_subtitles(source, output)
+        return ok, source, output
 
     def test_block_without_a_cue_number_is_processed(self):
         # A valid SRT block may omit the cue number entirely; the parser must
@@ -227,8 +252,8 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                 "00:00:00,000 --> 00:00:01,000\n"
                 "No cue number here.\n\n"
             )
-            result, source, output = self._write_and_run(temp_dir, block)
-            self.assertTrue(result, "block without a cue number was ignored")
+            ok, source, output = self._write_and_run(temp_dir, block)
+            self.assertTrue(ok, "block without a cue number was ignored")
             with open(output, encoding="utf-8") as f:
                 self.assertIn("No cue number here", f.read())
 
@@ -242,8 +267,8 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                 "00:00:00,000 --> 00:00:01,000\n"
                 "Identifier before the timestamp.\n\n"
             )
-            result, source, output = self._write_and_run(temp_dir, block)
-            self.assertTrue(result, "block with a cue identifier was ignored")
+            ok, source, output = self._write_and_run(temp_dir, block)
+            self.assertTrue(ok, "block with a cue identifier was ignored")
             with open(output, encoding="utf-8") as f:
                 self.assertIn("Identifier before the timestamp", f.read())
 
@@ -257,12 +282,74 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                 "00:00:01,000 --> 00:00:02,000\nSecond.\n\n"
                 "2\nid-7\n00:00:02,000 --> 00:00:03,000\nThird.\n\n"
             )
-            result, source, output = self._write_and_run(temp_dir, block)
-            self.assertTrue(result)
+            ok, source, output = self._write_and_run(temp_dir, block)
+            self.assertTrue(ok)
             with open(output, encoding="utf-8") as f:
                 content = f.read()
             for word in ("First.", "Second.", "Third."):
                 self.assertIn(word, content, f"lost cue: {word}")
+
+
+class TestStandaloneSubtitleWorker(unittest.TestCase):
+    """The Subs button handler runs resync_subtitles() on a worker thread.
+
+    resync_subtitles() is Qt-free and returns its panel output; the worker
+    (_run_subtitle_resync) prints the lines through _emit() and emits
+    subtitle_processing_complete(ok). These tests exercise that path without
+    a Qt event loop, so they drive the worker directly and assert on the
+    signal emitter - which is exactly what the main thread's slot does.
+    """
+
+    def _harness(self, path):
+        h = _SubtitleHarness()
+        h.signals.append_output = _Signal()
+        h.signals.subtitle_processing_complete = _Signal()
+        return h
+
+    def test_worker_emits_completion_and_lines(self):
+        # A valid file: the worker emits the panel lines and signals ok=True.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "Title.srt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("1\n00:00:00,000 --> 00:00:02,000\nHello world.\n\n")
+            h = self._harness(path)
+            h._run_subtitle_resync(path)
+            self.assertTrue(h.signals.subtitle_processing_complete.emitted[-1][0])
+            self.assertTrue(
+                any("📊" in str(a[0]) for a in h.signals.append_output.emitted)
+            )
+
+    def test_worker_signals_false_on_failure(self):
+        # A malformed file: the worker still emits, but ok=False, and the
+        # original file is left untouched (no .tmp).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "Title.srt")
+            original = "not a subtitle file\n"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(original)
+            h = self._harness(path)
+            h._run_subtitle_resync(path)
+            self.assertFalse(h.signals.subtitle_processing_complete.emitted[-1][0])
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), original)
+            self.assertFalse(os.path.exists(path + ".tmp"))
+
+    def test_worker_drops_ui_lines_when_window_is_closing(self):
+        # _emit() no-ops while _shutting_down is set, so a worker still winding
+        # down after the window closes cannot emit into a dying QObject. Both
+        # the panel lines and the completion handshake go through _emit(), so
+        # a closing window drops both - the controls are being destroyed with
+        # it and nobody is waiting for the slot.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "Title.srt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("1\n00:00:00,000 --> 00:00:02,000\nHello world.\n\n")
+            h = self._harness(path)
+            h._shutting_down = True
+            h._run_subtitle_resync(path)
+            # Everything the worker tried to emit was dropped by _emit().
+            self.assertEqual(h.signals.append_output.emitted, [])
+            self.assertEqual(h.signals.subtitle_processing_complete.emitted, [])
 
 
 if __name__ == "__main__":

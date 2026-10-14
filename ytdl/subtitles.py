@@ -325,7 +325,11 @@ class SubtitleMixin:
         # If output_srt is different from srt_path (e.g. srt_path was .a.en.srt),
         # we process it into the final name.
         # If they are the same, we overwrite it (safe because resync_subtitles reads into memory).
-        self.resync_subtitles(srt_path, output_srt)
+        # This runs on the download worker thread, so the returned lines are
+        # printed through _emit(), which drops them if the window is closing.
+        _ok, lines = self.resync_subtitles(srt_path, output_srt)
+        for line in lines:
+            self._emit("append_output", line)
 
     def resync_subtitles(self, srt_path, output_path):
         """Lay out a downloaded subtitle file and write it to output_path.
@@ -338,20 +342,29 @@ class SubtitleMixin:
         edited timeline to match a physically cut video; that workflow was
         dropped because cutting is only clean at keyframes, and the EDL route
         needs no re-encode at all.
+
+        Returns (ok, lines): `ok` is True when the file was rewritten, and
+        `lines` is the panel output to show. The method is Qt-free and emits
+        nothing itself - the caller decides whether it runs on the main thread
+        (download post-processing) or a worker (standalone conversion), which
+        is what lets the standalone path keep the window responsive: the whole
+        parse/layout/write happens off-thread and the lines are queued for the
+        main thread to print.
         """
+        lines = []
         if not os.path.exists(srt_path):
             logger.warning(f"Subtitle file not found: {srt_path}")
-            return False
+            return False, lines
 
         try:
             with open(srt_path, "r", encoding="utf-8") as f:
                 content = f.read()
         except (OSError, UnicodeError) as e:
             logger.warning("Could not read subtitle file %s: %s", srt_path, e)
-            self.signals.append_output.emit(
+            lines.append(
                 f"⚠️ Could not read subtitle file: {os.path.basename(srt_path)}"
             )
-            return False
+            return False, lines
 
         # Accept common CRLF/CR subtitle files as well as Unix LF files.
         normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
@@ -416,10 +429,10 @@ class SubtitleMixin:
                 no_text_cues += 1
 
         if not subtitles:
-            self.signals.append_output.emit(
+            lines.append(
                 "⚠️ No valid subtitle cues found; keeping the original file"
             )
-            return False
+            return False, lines
 
         # Drop cues with no usable duration. Timestamps are the source ones -
         # see the docstring for why they are never retimed.
@@ -445,10 +458,10 @@ class SubtitleMixin:
         # Write merged and resynced subtitles
         if not merged_subtitles:
             logger.warning("Subtitle processing produced no cues for %s", srt_path)
-            self.signals.append_output.emit(
+            lines.append(
                 "⚠️ Subtitle processing produced no cues; keeping the original file"
             )
-            return False
+            return False, lines
 
         resynced_blocks = []
         for i, sub in enumerate(merged_subtitles, 1):
@@ -475,7 +488,7 @@ class SubtitleMixin:
                 pass
             raise
 
-        self.signals.append_output.emit("💬 Subtitles merged.")
+        lines.append("💬 Subtitles merged.")
 
         # What the layout actually did, per file. A whole video's subtitles can
         # be skipped by the gate upstream (or merged into nothing) without a
@@ -487,7 +500,7 @@ class SubtitleMixin:
         two_line_cues = sum(
             1 for sub in merged_subtitles if "\n" in (sub.get("text") or "")
         )
-        self.signals.append_output.emit(
+        lines.append(
             "  📊 "
             + format_subtitle_stats(
                 len(adjusted_subtitles),
@@ -501,9 +514,42 @@ class SubtitleMixin:
                 name=os.path.basename(output_path),
             )
         )
-        self._warn_about_dropped_cues(layout_stats.get("dropped_cues") or [],
-                                      os.path.basename(output_path))
-        return True
+        lines.extend(
+            self._warn_about_dropped_cues(
+                layout_stats.get("dropped_cues") or [],
+                os.path.basename(output_path),
+            )
+        )
+        return True, lines
+
+    def _run_subtitle_resync(self, srt_path):
+        """Run resync_subtitles() off the GUI thread and print its output.
+
+        The standalone Subs button handler used to call resync_subtitles()
+        directly on the main thread: parsing, layout and writing a whole file
+        are synchronous, so a long SRT froze the window. This runs the same
+        work on a daemon thread and hands the result back through the queued
+        subtitle_processing_complete signal, so the controls re-enable on the
+        main thread exactly like the download worker's finally block.
+
+        The same-file/download guard and the atomic .tmp + os.replace write
+        are unchanged; only the thread the work runs on moves.
+        """
+        try:
+            ok, lines = self.resync_subtitles(srt_path, srt_path)
+        except Exception as e:  # noqa: BLE001 - UI boundary: never let a worker crash the window
+            logger.error(f"Subtitle processing error: {e}")
+            ok = False
+            lines = [f"🚩 Error processing subtitle: {e}"]
+        # Qt-free work is done; the lines are queued for the main thread, and
+        # _emit() drops them if the window is closing mid-run. The completion
+        # handshake goes through _emit() too: it is what the main-thread slot
+        # waits on to re-enable the controls, so it must not be emitted into a
+        # dying QObject either - if the window is closing, the controls are
+        # being destroyed with it and nobody is waiting for the slot.
+        for line in lines:
+            self._emit("append_output", line)
+        self._emit("subtitle_processing_complete", ok)
 
     def _warn_about_dropped_cues(self, dropped, name):
         """Report cues the overlap guard could not place, by name.
@@ -512,9 +558,13 @@ class SubtitleMixin:
         guard only drops what cannot be shifted into place. It exists so that a
         text loss is impossible to miss: the panel line names the file and the
         count, the log file carries the text of each lost cue.
+
+        Returns the panel lines to show, so the caller can print them on
+        whatever thread it is running on instead of emitting directly.
         """
+        lines = []
         if not dropped:
-            return
+            return lines
         for cue in dropped:
             logger.warning(
                 "Subtitle cue dropped by the overlap guard in %s at %.3fs: %s",
@@ -527,10 +577,11 @@ class SubtitleMixin:
             for cue in dropped[:2]
         )
         suffix = f" — {preview}" if preview else ""
-        self.signals.append_output.emit(
+        lines.append(
             f"⚠️ {len(dropped)} subtitle line(s) could not be timed and were "
             f"dropped from {name}{suffix}"
         )
+        return lines
 
     def _strip_nonspoken_brackets(self, text: str) -> str:
         """

@@ -44,6 +44,9 @@ def bind_all(h):
 out_dir = tempfile.mkdtemp(prefix="rumble_subs_")
 h = SubtitleHarness(out_dir)
 h.signals = app.SignalEmitter()
+# _emit() reads _shutting_down; the replay harness is not a real window, so
+# set it explicitly - it is False here, so the post-processing lines print.
+h._shutting_down = False
 # Match the -o template below so canonical paths line up; site=rumble is what
 # the real GUI would have recorded for this URL (drives the resync decision)
 h.video_state["base_filename"] = "S26E0922 - Test"
