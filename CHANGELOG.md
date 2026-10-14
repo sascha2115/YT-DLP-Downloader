@@ -26,6 +26,13 @@ disagree, this file is right.
 
 ---
 
+## 1.4.10 — 2026-10-14
+
+- **Raw yt-dlp output lines are now redacted before they reach the failure log.** Previously only the command line was redacted, so an ERROR line echoing the URL yt-dlp actually fetched could carry a query string with a session token into the log. Every captured line is now masked through `_redact_line()`.
+- **`--netrc` is treated as a boolean flag.** It tells yt-dlp to read `~/.netrc` and does not consume the next argument; treating it as value-taking redacted the URL that followed it and hid the failed job from the log. The sensitive-flag set is now split into value-taking and boolean flags.
+
+---
+
 ## 1.4.9 — 2026-10-14
 
 - **A post-download exception no longer reports the media as failed when it is on disk.** The failure-sidecar helper now checks `media_downloaded` before the media-type gate, so an audio-only (or subtitles-only) job whose file already landed says "Post-download processing failed; the media file is on disk" instead of "▶ Audio only · no media download failed; no video sidecars to generate". For video jobs the sidecars are still attempted when the media landed but the EDL/NFO were not yet written.

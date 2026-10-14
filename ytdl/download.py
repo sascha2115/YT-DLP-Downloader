@@ -42,7 +42,11 @@ _REDACTED_ARG = "***"
 # yt-dlp accepts every sensitive flag in two shapes: "--flag value" (separate
 # arguments, the common form) and "--flag=value" (equals form, used for long
 # headers and extractor args). Both must be handled or a token slips through.
-_SENSITIVE_ARG_FLAGS = {
+# Flags are split by whether they take a value: --netrc is a boolean (it tells
+# yt-dlp to read ~/.netrc) and does NOT consume the next argument, so treating
+# it as value-taking would silently redact the URL that follows it and hide
+# the failed job from the log.
+_VALUE_FLAGS = {
     "--cookies",
     "--cookies-from-browser",
     "--cookie",
@@ -50,8 +54,10 @@ _SENSITIVE_ARG_FLAGS = {
     "--extractor-args",
     "--username",
     "--password",
-    "--netrc",
     "--video-password",
+}
+_BOOL_FLAGS = {
+    "--netrc",
 }
 # A query string can carry a session token or an auth code. The scheme, host
 # and path identify the failed job, so only the query is masked.
@@ -67,6 +73,19 @@ def _redact_url(url):
     if not url or "?" not in url:
         return url
     return _URL_QUERY_RE.sub("?***", url)
+
+
+def _redact_line(line):
+    """Mask URL query strings in an arbitrary output line.
+
+    Raw yt-dlp output is captured verbatim for the failure log, and those
+    lines can carry the URL yt-dlp actually fetched - including a query
+    string with a session token. The line is not otherwise inspected, so
+    every URL-shaped substring is masked here rather than only the command.
+    """
+    if not line or "?" not in line:
+        return line
+    return _URL_QUERY_RE.sub("?***", line)
 
 
 def _redact_command(cmd):
@@ -88,11 +107,11 @@ def _redact_command(cmd):
         # "--flag=value": the flag and its value are one argument.
         if "=" in item:
             flag, _sep, value = item.partition("=")
-            if flag in _SENSITIVE_ARG_FLAGS:
+            if flag in _VALUE_FLAGS:
                 redacted.append(f"{flag}={_REDACTED_ARG}")
                 continue
         redacted.append(item)
-        if item in _SENSITIVE_ARG_FLAGS:
+        if item in _VALUE_FLAGS:
             skip_next = True
     # Positional arguments are URLs or the output template; only URLs carry a
     # query string worth masking.
@@ -587,6 +606,12 @@ class DownloadMixin:
         removed_sb_segments = []
         # Capture output lines for logging on failure
         captured_output = []
+        # Every captured line is run through _redact_line() before it is
+        # stored: raw yt-dlp output can carry the URL it actually fetched,
+        # and that URL's query string can hold a session token. The command
+        # line is redacted separately through _redact_command(); the two
+        # cover different surfaces (what yt-dlp printed vs. what we asked
+        # for), and neither alone is enough.
         # Set when the bounded tail drops earlier lines, so the failure log
         # can say so instead of presenting a truncated capture as complete.
         captured_output_truncated = False
@@ -611,13 +636,13 @@ class DownloadMixin:
                 cmd, self.video_state.get("media_type", "video")
             )
             self._emit("append_output", format_line)
-            captured_output.append(format_line)
+            captured_output.append(_redact_line(format_line))
             # Capture the command for error logging, redacting any argument
             # that could carry a secret (cookies, headers, password, ...).
             cmd_line = "🖥️ " + " ".join(
                 str(item) for item in _redact_command(cmd) if item
             )
-            captured_output.append(cmd_line)
+            captured_output.append(_redact_line(cmd_line))
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -667,7 +692,11 @@ class DownloadMixin:
                         "sign in", "geo", "unavailable", "private", "members",
                     )
                 ):
-                    captured_output.append(line)
+                    # Redact before storing: yt-dlp echoes the URL it
+                    # actually fetched, and its query string can carry a
+                    # session token. The raw line still reaches the parser
+                    # below, so progress parsing is unaffected.
+                    captured_output.append(_redact_line(line))
                     if len(captured_output) > MAX_CAPTURED_OUTPUT_LINES:
                         captured_output = captured_output[
                             -MAX_CAPTURED_OUTPUT_LINES:

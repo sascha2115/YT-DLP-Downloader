@@ -612,6 +612,60 @@ class TestCapturedErrorOutput(unittest.TestCase):
             joined = "\n".join(captured.output)
             self.assertIn("--merge-output-format=mp4", joined)
 
+    def test_raw_output_line_query_is_masked(self):
+        # Raw yt-dlp output is captured verbatim for the failure log, and
+        # those lines can carry the URL yt-dlp actually fetched - including a
+        # query string with a session token. Every captured line is masked.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+                "ERROR: [youtube] X: "
+                "https://example.com/watch?v=secret_token",
+            ]
+            harness = _DownloadHarness(base_path, media_type="video")
+            process = _Process(lines, 1)
+            cmd = ["yt-dlp"]
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                with self.assertLogs("ytdl.download", level="ERROR") as captured:
+                    harness.run_download(cmd, [])
+            joined = "\n".join(captured.output)
+            self.assertIn("https://example.com/watch?", joined)
+            self.assertNotIn("secret_token", joined)
+
+    def test_netrc_is_a_boolean_flag(self):
+        # --netrc tells yt-dlp to read ~/.netrc; it does NOT consume the next
+        # argument. Treating it as value-taking would redact the URL that
+        # follows it and hide the failed job from the log.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _DownloadHarness(base_path, media_type="video")
+            process = _Process(lines, 1)
+            cmd = [
+                "yt-dlp",
+                "--netrc",
+                "https://example.com/watch?v=abc",
+            ]
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                with self.assertLogs("ytdl.download", level="ERROR") as captured:
+                    harness.run_download(cmd, [])
+            joined = "\n".join(captured.output)
+            self.assertIn("--netrc", joined)
+            # The URL is kept (it identifies the failed job), query masked.
+            self.assertIn("https://example.com/watch?", joined)
+            self.assertNotIn("v=abc", joined)
+
 
 if __name__ == "__main__":
     unittest.main()
