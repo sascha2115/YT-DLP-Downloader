@@ -26,7 +26,9 @@ disagree, this file is right.
 
 ---
 
-## Unreleased
+## 1.5.1 — 2026-10-14
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.5.1) · tag `v1.5.1`
 
 - **A successful download now writes one line to `app.log` instead of four.**
   The log recorded the channel, the episode title, the URL and the result —
