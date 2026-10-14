@@ -289,6 +289,27 @@ class TestRetryAfterDownloadError(unittest.TestCase):
         pm.on_download_destination()
         self.assertEqual((pm.download_count, pm.active_stream), (2, pm.STREAM_AUDIO))
 
+    def test_mark_complete_fills_audio_bar_regardless_of_count(self):
+        # mark_complete() fills the audio bar for every video job. The old
+        # form "download_count > 1 or download_count == 1" was True for any
+        # count that can reach this branch (audio/video_only are handled
+        # above), so it decided nothing.
+        for count in (1, 2, 5):
+            pm = app.DownloadProgressManager(media_type="video")
+            for _ in range(count):
+                pm.on_download_destination()
+            pm.video_progress = 1000
+            self.assertEqual(pm.mark_complete(), (1000, 1000))
+
+    def test_mark_complete_does_not_branch_on_download_count(self):
+        # The redundant "download_count > 1 or self.download_count == 1"
+        # guard decided nothing (True for every value reaching this branch)
+        # and was removed. Pin its absence so a future edit cannot
+        # re-introduce it.
+        import inspect
+        src = inspect.getsource(app.DownloadProgressManager.mark_complete)
+        self.assertNotIn("download_count > 1 or self.download_count == 1", src)
+
 
 class TestVideoOnlyWithSubtitles(unittest.TestCase):
     def test_merged_filename_is_the_video_no_convertor(self):

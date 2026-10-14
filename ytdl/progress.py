@@ -121,12 +121,14 @@ class DownloadProgressManager:
         else:
             # video or muxed: always fill video bar
             self.video_progress = self.PROGRESS_MAX
-            # For muxed single stream (download_count == 1), the file contains
-            # both video and audio, so show both bars as complete.
-            # For separate streams (download_count > 1), audio was downloaded
-            # separately and its bar already reached 100%.
-            if self.download_count > 1 or self.download_count == 1:
-                self.audio_progress = self.PROGRESS_MAX
+            # The audio bar is filled here too. For a single muxed stream
+            # (download_count == 1) the file contains both tracks and no audio
+            # transfer followed the video; for separate streams
+            # (download_count > 1) the audio bar already reached 100% on its
+            # own transfer. Either way it ends at full, so the count is not
+            # needed to decide — the old "download_count > 1 or == 1" form
+            # was True for every value that can reach this branch.
+            self.audio_progress = self.PROGRESS_MAX
         return self.video_progress, self.audio_progress
 
     def get_combined_fraction(self) -> float:
