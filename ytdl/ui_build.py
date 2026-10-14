@@ -674,18 +674,24 @@ class UiBuildMixin:
         # fetches the image on a daemon thread, so by the time it arrives the
         # user may have switched videos; reading the description from live
         # video_state in the receiver would pair an old image with a new
-        # description. The URL is also re-checked on the worker before
-        # emitting, so a response for a superseded video is dropped rather
-        # than shown over the new video's metadata.
+        # description. Two staleness guards, because a response can arrive at
+        # two different times:
+        #
+        # 1. The request token below is bumped on each click and again on a
+        #    URL change. It gates the flight-guard reset and the error log on
+        #    both sides, so a stale response cannot clear a newer request's
+        #    guard or be logged over the new video's output panel.
+        #
+        # 2. The URL is re-checked in the receiver against the current
+        #    thumbnail_url, so a queued delivery for a superseded video is
+        #    dropped there too. This is the second line of defence: the URL
+        #    check lives in the receiver, not the worker.
         snapshot_url = thumbnail_url
         snapshot_description = self.video_state.get("description", "")
-        # Request token. Each click bumps it, so a stale response — success or
-        # failure — cannot clear a newer request's in-flight guard: both
-        # receivers only act when the token still matches the current request.
-        # The URL is re-checked in the receiver against the current
-        # thumbnail_url, so a queued delivery for a superseded video is dropped
-        # there too. The token is the first line of defence (it gates the guard
-        # reset and the error log); the URL check is the second.
+        # Request token. Each click bumps it, and on_url_text_change() bumps it
+        # again — so a stale response — success or failure — cannot clear a
+        # newer request's in-flight guard: both the worker's finally and the
+        # receiver only act when the token still matches the current request.
         self._thumbnail_request_token += 1
         snapshot_token = self._thumbnail_request_token
 
@@ -739,8 +745,7 @@ class UiBuildMixin:
             # The URL was captured with the image, so compare against the
             # current one: a response for a superseded video must not be shown
             # over the new video's metadata. This is the second line of
-            # defence — the first is the request token, which is checked above
-            # and again on the worker before it emits.
+            # defence — the first is the request token, checked above.
             if snapshot_url != self.video_state.get("thumbnail_url", ""):
                 return
             # Create dialog
