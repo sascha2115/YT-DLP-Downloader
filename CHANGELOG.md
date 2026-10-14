@@ -26,6 +26,30 @@ disagree, this file is right.
 
 ---
 
+## Unreleased
+
+- **A successful download now writes one line to `app.log` instead of four.**
+  The log recorded the channel, the episode title, the URL and the result —
+  and then the result line repeated the URL, so every successful download put
+  a redundant address into the log. The start-of-download URL line is gone
+  (the result line already carries it alongside the outcome), and the
+  SponsorBlock segment list moved to debug level: the ranges are already shown
+  in the app (the overlay bar and its log lines) and written into the `.edl`
+  the player reads, so restating them per download served nobody. A successful
+  download now logs the channel, the title and the result:
+
+  ```
+  2026-10-14 19:15:12,525 Tucker Carlson
+  2026-10-14 19:15:12,525 S26E1012 - Tristan Harris - Rogue AI
+  2026-10-14 19:15:12,525 Download succeeded: https://www.youtube.com/watch?v=EKXJrUHudeA
+  ```
+
+  Failures are unaffected — they still dump the captured yt-dlp output, which
+  is the part worth having. That segment line also said "removed" when the app
+  only *marks* segments and lets the player skip them; it now says "marked".
+
+---
+
 ## 1.5.0 — 2026-10-14
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.5.0) · tag `v1.5.0`

@@ -346,12 +346,12 @@ class DownloadMixin:
             self.url_entry.setFocus()
             return
 
-        # Log the download start
-        channel = self.video_state.get("channel", "")
-        url = self.video_state.get("clean_url", "")
+        # Log the download start. The URL is deliberately not logged here:
+        # the result line in run_download()'s finally already records it
+        # alongside the outcome, so logging it twice put an extra line into
+        # app.log for every successful download while saying nothing new.
         logger.info(f"{channel}")
         logger.info(f"{base_name}")
-        logger.info(f"{url}")
 
         # Clear cached metadata at start of new download
         self.cached_video_metadata = None
@@ -926,7 +926,11 @@ class DownloadMixin:
             cancelled = self._cancelled
             self._cancelled = False
 
-            # Log SponsorBlock segments separately if available
+            # Log SponsorBlock segments separately if available. Debug level:
+            # the ranges are already on screen (the overlay bar + sb_log) and
+            # written into the .edl the player reads, so a line per download in
+            # app.log restated them for no one. Kept for when a segment lookup
+            # actually needs chasing.
             if success and removed_sb_segments:
                 segment_info = []
                 for seg in removed_sb_segments:
@@ -934,7 +938,7 @@ class DownloadMixin:
                     start = seg.get('start', 0)
                     end = seg.get('end', 0)
                     segment_info.append(f"{category} ({start:.1f}s-{end:.1f}s)")
-                logger.info(f"SponsorBlock removed: {', '.join(segment_info)}")
+                logger.debug(f"SponsorBlock marked: {', '.join(segment_info)}")
 
             # Log the result. The URL is logged whole, like every other log
             # path: it is the only thing that identifies which job this was,
