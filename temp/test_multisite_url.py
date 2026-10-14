@@ -801,6 +801,9 @@ class TestFetchVideoInfoPrecheck(unittest.TestCase):
         url_rejection_reason = app.YTDLPDownloaderGUI.url_rejection_reason
         extract_video_id = app.YTDLPDownloaderGUI.extract_video_id
 
+        def _emit(self, name, *args):
+            getattr(self.signals, name).emit(*args)
+
     def test_nonsense_rejected_before_ytdlp(self):
         h = self.Harness()
         h.get_clean_url = lambda: "nonsense"

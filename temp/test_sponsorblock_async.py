@@ -133,6 +133,14 @@ class Harness(app.InfoFetchMixin):
         self.deno_bin = None
         self.sb_calls = []
         self.description_summaries = []
+        # The real class routes worker emissions through DownloadMixin._emit,
+        # which guards on _shutting_down. This harness inherits only
+        # InfoFetchMixin, so provide a forwarding shim — the tests have no
+        # window to close, so no shutdown guard is needed.
+        self._shutting_down = False
+
+    def _emit(self, name, *args):
+        getattr(self.signals, name).emit(*args)
 
     update_video_state = app.YTDLPDownloaderGUI.update_video_state
 

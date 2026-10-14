@@ -150,8 +150,15 @@ class DownloadMixin:
         Qt-free work (writing EDL/NFO, subtitle files, logging) is unaffected —
         only the UI notification is dropped, and nobody can see it anyway once
         the window is gone.
+
+        getattr(self, "_shutting_down", False) rather than a plain attribute
+        access: the minimal test harnesses inherit a single mixin (e.g.
+        InfoFetchMixin alone) and have no _shutting_down, so a worker routed
+        through _emit() would raise AttributeError on a harness that has no
+        window to close at all. The real window always sets it in __init__,
+        so the guard is fully active there.
         """
-        if self._shutting_down:
+        if getattr(self, "_shutting_down", False):
             return
         getattr(self.signals, name).emit(*args)
 

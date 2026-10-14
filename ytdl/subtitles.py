@@ -315,7 +315,7 @@ class SubtitleMixin:
 
     def _resync_subtitle_for_language(self, lang, srt_path, bare=False):
         if not os.path.exists(srt_path):
-            self.signals.append_output.emit(f"No srt file: {srt_path}")
+            self._emit("append_output", f"No srt file: {srt_path}")
             return
 
         # output_srt is "Title.en.srt" (no "merged" or "resynced" suffix), or
@@ -534,6 +534,17 @@ class SubtitleMixin:
 
         The same-file/download guard and the atomic .tmp + os.replace write
         are unchanged; only the thread the work runs on moves.
+
+        The worker is a daemon: a non-daemon thread keeps the process alive
+        until it finishes, so closing the window could leave the process
+        running in the background for the rest of a long conversion - and a
+        bounded join followed by dropping the reference would not bound it
+        either. A daemon lets the process exit on close. The trade-off is that
+        a process exit mid-write stops the worker before its finally runs, so
+        a leftover .tmp can survive; the atomic write still protects the
+        original SRT (it is never truncated), and the .tmp is written beside
+        the destination so os.replace() stays atomic across the user's own
+        filesystem.
         """
         try:
             ok, lines = self.resync_subtitles(srt_path, srt_path)
@@ -541,11 +552,18 @@ class SubtitleMixin:
             logger.error(f"Subtitle processing error: {e}")
             ok = False
             lines = [f"🚩 Error processing subtitle: {e}"]
+        finally:
+            temp_path = f"{srt_path}.tmp"
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
         # Qt-free work is done; the lines are queued for the main thread, and
         # _emit() drops them if the window is closing mid-run. The completion
         # handshake goes through _emit() too: it is what the main-thread slot
         # waits on to re-enable the controls, so it must not be emitted into a
-        # dying QObject either - if the window is closing, the controls are
+        # dying QObject either — if the window is closing, the controls are
         # being destroyed with it and nobody is waiting for the slot.
         for line in lines:
             self._emit("append_output", line)

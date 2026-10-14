@@ -700,6 +700,13 @@ class YTDLPDownloaderGUI(
         thread = threading.Thread(
             target=self._run_subtitle_resync, args=(srt_path,)
         )
+        # Daemon: a non-daemon thread keeps the process alive until it
+        # finishes, so closing the window could leave the process running in
+        # the background for the rest of a long conversion - and a 30s join
+        # followed by dropping the reference would not bound it either. A
+        # daemon lets the process exit on close; the atomic write still
+        # protects the original SRT, and the worker's finally removes a
+        # leftover .tmp on every exit path it actually reaches.
         thread.daemon = True
         thread.start()
 

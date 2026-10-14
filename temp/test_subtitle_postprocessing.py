@@ -351,6 +351,55 @@ class TestStandaloneSubtitleWorker(unittest.TestCase):
             self.assertEqual(h.signals.append_output.emitted, [])
             self.assertEqual(h.signals.subtitle_processing_complete.emitted, [])
 
+    def test_worker_removes_a_leftover_tmp_after_an_interrupted_write(self):
+        # The worker is a daemon, so closing the app can leave it running. The
+        # atomic write means the original SRT is never truncated, but a kill
+        # mid-write leaves a .tmp behind - resync_subtitles()'s own except
+        # OSError only runs on a caught failure. The worker's finally removes
+        # any leftover .tmp so an interrupted run leaves the directory as it
+        # found it.
+        class _InterruptedHarness(_SubtitleHarness):
+            def resync_subtitles(self, srt_path, output_path):
+                # Simulate a write that started then was interrupted: the .tmp
+                # exists, the original is untouched, and the call raises.
+                with open(output_path + ".tmp", "w", encoding="utf-8") as f:
+                    f.write("partial\n")
+                raise OSError("disk full")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "Title.srt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("1\n00:00:00,000 --> 00:00:02,000\nHello world.\n\n")
+            h = _InterruptedHarness()
+            h.signals.append_output = _Signal()
+            h.signals.subtitle_processing_complete = _Signal()
+            h._shutting_down = False
+            h._run_subtitle_resync(path)
+            # The original is untouched and the leftover .tmp is gone.
+            with open(path, encoding="utf-8") as f:
+                self.assertIn("Hello world.", f.read())
+            self.assertFalse(os.path.exists(path + ".tmp"))
+
+    def test_worker_is_daemon_and_close_event_does_not_wait(self):
+        # The worker is a daemon: a non-daemon thread keeps the process alive
+        # until it finishes, so closing the window could leave the process
+        # running in the background for the rest of a long conversion - and a
+        # bounded join followed by dropping the reference would not bound it
+        # either. A daemon lets the process exit on close. The trade-off is
+        # that a process exit mid-write stops the worker before its finally
+        # runs, so a leftover .tmp can survive; the atomic write still
+        # protects the original SRT. Pin the contract: the handler starts a
+        # daemon thread, and closeEvent() does not wait for it.
+        import inspect
+        import main as app
+
+        handler_src = inspect.getsource(app.YTDLPDownloaderGUI.open_subtitle_file_dialog)
+        self.assertIn("thread.daemon = True", handler_src)
+        self.assertNotIn("self._subtitle_worker = thread", handler_src)
+
+        close_src = inspect.getsource(app.YTDLPDownloaderGUI.closeEvent)
+        self.assertNotIn("_wait_for_subtitle_worker", close_src)
+
 
 if __name__ == "__main__":
     unittest.main()

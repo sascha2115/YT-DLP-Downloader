@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.12 — 2026-10-14
+
+- **Closing the window during a download no longer crashes the process.** Worker-thread UI notifications — info-fetch progress, SponsorBlock lookup, thumbnail generation, the download's own output lines, and the post-download subtitle resync — all route through `_emit()`, which drops them once the window is closing. Previously the resync worker's "No srt file" line still emitted directly, so a close mid-resync could hit the dying signal object and abort the interpreter with no traceback.
+
+---
+
 ## 1.4.11 — 2026-10-14
 
 - **A post-download exception no longer reports a subtitle-only job as failed when the SRT is on disk.** `media_downloaded` was only set inside the non-subtitle path, so a subtitle-only run whose SRT was written still said "▶ Subtitles only · no media download failed; no video sidecars to generate" when cleanup or later post-download work raised. Subtitle output completion is now tracked separately (`subtitles_downloaded`), so the failure line says "Post-download processing failed; the media file is on disk" instead.

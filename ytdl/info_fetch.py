@@ -134,7 +134,7 @@ class InfoFetchMixin:
             return
         elapsed = INFO_FETCH_HINT_AFTER_SECONDS
         while True:
-            self.signals.append_output.emit(self._info_wait_hint_text(elapsed))
+            self._emit("append_output", self._info_wait_hint_text(elapsed))
             if stop_event.wait(INFO_FETCH_HINT_EVERY_SECONDS):
                 return
             elapsed += INFO_FETCH_HINT_EVERY_SECONDS
@@ -195,7 +195,7 @@ class InfoFetchMixin:
         self.download_button.setEnabled(False)
         self._reset_download_progress_bars()
         self._set_download_busy(True)
-        self.signals.update_dock_tile.emit("")
+        self._emit("update_dock_tile", "")
         self.clearDockProgress()
         self.clear_output()
         thread = threading.Thread(target=self.get_video_info, args=(url,))
@@ -248,9 +248,7 @@ class InfoFetchMixin:
             )
             # Log the info-fetch command if enabled (disabled by default)
             if prefs.preferences.get("show_fetchinfo_command", False):
-                self.signals.append_output.emit(
-                    f"\n🖥️ {' '.join(str(item) for item in cmd if item)}"
-                )
+                self._emit("append_output", f"\n🖥️ {' '.join(str(item) for item in cmd if item)}")
             result = self._run_info_command(cmd, info_timeout)
             if result.returncode == 0 and result.stdout.strip():
                 json_data = json.loads(result.stdout.strip())
@@ -293,9 +291,9 @@ class InfoFetchMixin:
                     duration_sec=duration_sec,
                 )
 
-                self.signals.append_output.emit(f"Channel: {youtube_channel}")
+                self._emit("append_output", f"Channel: {youtube_channel}")
                 if channel != youtube_channel:
-                    self.signals.append_output.emit(f"Podcast: {channel}")
+                    self._emit("append_output", f"Podcast: {channel}")
 
                 # Format and display info
                 # short_date is the title prefix: only keep it when the date
@@ -315,9 +313,9 @@ class InfoFetchMixin:
                             "omitting the title prefix"
                         )
 
-                    self.signals.append_output.emit(f"Upload date: {formatted_date}")
+                    self._emit("append_output", f"Upload date: {formatted_date}")
 
-                self.signals.append_output.emit(f"Duration: {duration}")
+                self._emit("append_output", f"Duration: {duration}")
 
                 # Resolutions
                 # Exclude audio-only formats: Rumble's "audio-192p" carries a
@@ -331,12 +329,12 @@ class InfoFetchMixin:
 
                 if unique_heights:
                     res_str = " | ".join([f"{h}p" for h in unique_heights])
-                    self.signals.append_output.emit(f"Resolutions: {res_str}")
+                    self._emit("append_output", f"Resolutions: {res_str}")
                 elif height and height.isdigit():
-                    self.signals.append_output.emit(f"Max Resolution: {height}p")
+                    self._emit("append_output", f"Max Resolution: {height}p")
 
                 if fps and fps not in ("NA", "None", "", "None.0"):
-                    self.signals.append_output.emit(f"FPS: {fps}")
+                    self._emit("append_output", f"FPS: {fps}")
 
                 # Show bitrates for the selected resolution only
                 if all_formats and height and height.isdigit():
@@ -354,7 +352,7 @@ class InfoFetchMixin:
                         if matching_fmts:
                             bitrate_strs = [f"{round(f['vbr'])} kbps" for f in matching_fmts]
                             label_key = "Video Bitrate" if len(bitrate_strs) == 1 else "Video Bitrates"
-                            self.signals.append_output.emit(f"{label_key}: {' | '.join(bitrate_strs)}")
+                            self._emit("append_output", f"{label_key}: {' | '.join(bitrate_strs)}")
                     except Exception:
                         pass
 
@@ -373,7 +371,7 @@ class InfoFetchMixin:
                 if available_codecs:
                     codec_order = {"H264": 1, "VP9": 2, "AV1": 3}
                     sorted_codecs = sorted(list(available_codecs), key=lambda x: codec_order.get(x, 99))
-                    self.signals.append_output.emit(f"Video Codecs: {' | '.join(sorted_codecs)}")
+                    self._emit("append_output", f"Video Codecs: {' | '.join(sorted_codecs)}")
 
                 # Audio Codecs availability.
                 # Generic across sites: Rumble reports plain "aac" (not
@@ -409,7 +407,7 @@ class InfoFetchMixin:
                 if available_audio:
                     audio_order = {"AAC": 1, "Opus": 2, "MP3": 3, "Vorbis": 4}
                     sorted_audio = sorted(list(available_audio), key=lambda x: audio_order.get(x, 99))
-                    self.signals.append_output.emit(f"Audio Codecs: {' | '.join(sorted_audio)}")
+                    self._emit("append_output", f"Audio Codecs: {' | '.join(sorted_audio)}")
 
                 if audio_capable:
 
@@ -465,20 +463,18 @@ class InfoFetchMixin:
                                 report_tokens.append(f"{lang_code} (auto)")
 
                         if report_tokens:
-                            self.signals.append_output.emit(f"Subtitles: {', '.join(report_tokens)}")
+                            self._emit("append_output", f"Subtitles: {', '.join(report_tokens)}")
                         else:
                             site_key = self.video_state.get("site", DEFAULT_SITE)
                             profile = SUPPORTED_SITES.get(site_key, {})
                             if profile.get("supports_subtitles", True):
-                                self.signals.append_output.emit("Subtitles: None available")
+                                self._emit("append_output", "Subtitles: None available")
                             else:
                                 # e.g. Odysee: the extractor exposes no
                                 # subtitle tracks at all - say so instead of
                                 # the generic "(none)" wording.
                                 label = profile.get("label", site_key)
-                                self.signals.append_output.emit(
-                                    f"Subtitles: Not available on {label}"
-                                )
+                                self._emit("append_output", f"Subtitles: Not available on {label}")
 
                         # Cache availability BEFORE the emit below, so the
                         # main-thread slot always reads the fresh data
@@ -488,9 +484,7 @@ class InfoFetchMixin:
                         # json.JSONDecodeError is not listed on purpose: the
                         # subs_dict/autos_dict inputs were already decoded from
                         # json_data above, so no JSON parsing happens here.
-                        self.signals.append_output.emit(
-                            "⚠️ Could not read subtitle information for this video"
-                        )
+                        self._emit("append_output", "⚠️ Could not read subtitle information for this video")
 
                     # Set title (without channel name - channel is added to folder name only)
                     if title:
@@ -500,17 +494,15 @@ class InfoFetchMixin:
                             self.video_state["episode_code"] = episode_code
 
                         full_title = build_title_with_prefix(short_date, title)
-                        self.signals.update_title.emit(full_title)
+                        self._emit("update_title", full_title)
                     else:
-                        self.signals.append_output.emit("🚩 Could not find title")
+                        self._emit("append_output", "🚩 Could not find title")
                         error_status["error"] = True
                 else:
                     # Every format explicitly says acodec="none" (no unknown-
                     # codec/muxed formats either), so the video has no audio.
                     # Kept as a hard error so the Download button stays off.
-                    self.signals.append_output.emit(
-                        "🚩 yt-dlp returned no audio formats for this video"
-                    )
+                    self._emit("append_output", "🚩 yt-dlp returned no audio formats for this video")
                     error_status["error"] = True
 
             else:
@@ -525,9 +517,7 @@ class InfoFetchMixin:
                 error_status["error"] = True
 
         except subprocess.TimeoutExpired as timeout_error:
-            self.signals.append_output.emit(
-                f"👉 Timeout fetching video info (yt-dlp killed after {info_timeout}s)"
-            )
+            self._emit("append_output", f"👉 Timeout fetching video info (yt-dlp killed after {info_timeout}s)")
             # subprocess.run() attaches whatever it captured before the kill.
             partial_stdout = getattr(timeout_error, "stdout", None)
             if not partial_stdout:
@@ -539,7 +529,7 @@ class InfoFetchMixin:
             )
             error_status["error"] = True
         except Exception as e:
-            self.signals.append_output.emit(f"🚩 Error fetching video info: {e}")
+            self._emit("append_output", f"🚩 Error fetching video info: {e}")
             error_status["error"] = True
 
         # Refresh the subtitle checkboxes on every path. The availability dict
@@ -547,7 +537,7 @@ class InfoFetchMixin:
         # parse succeeded, so this always leaves the UI matching what we
         # actually learned — including a failed fetch, which leaves it empty
         # and disables the boxes instead of showing the previous video's.
-        self.signals.update_subtitle_checkboxes.emit(language or "")
+        self._emit("update_subtitle_checkboxes", language or "")
 
         # Release the UI first. Everything above is local metadata state; the
         # SponsorBlock lookup below is optional enrichment over the network and
@@ -555,7 +545,7 @@ class InfoFetchMixin:
         # signal by up to ~49s on a failing API). The description summary moves
         # here too, so it no longer rides on the SponsorBlock code path.
         self._emit_description_summary()
-        self.signals.title_fetch_complete.emit(error_status)
+        self._emit("title_fetch_complete", error_status)
 
         if not error_status["error"]:
             # Pass an explicit snapshot: check_sponsorblock() hands the HTTP
@@ -578,7 +568,7 @@ class InfoFetchMixin:
         to just stop. Only the last `max_lines` lines are kept (yt-dlp prints
         the actual ERROR at the end of its output).
         """
-        self.signals.append_output.emit(headline)
+        self._emit("append_output", headline)
         showed_something = False
         for stream_name, data in (("stdout", stdout), ("stderr", stderr)):
             if data is None:
@@ -589,18 +579,16 @@ class InfoFetchMixin:
             lines = [line for line in lines if line]
             if not lines:
                 continue
-            self.signals.append_output.emit(f"--- yt-dlp {stream_name} ---")
+            self._emit("append_output", f"--- yt-dlp {stream_name} ---")
             if len(lines) > max_lines:
-                self.signals.append_output.emit(
-                    f"[yt-dlp] ({len(lines) - max_lines} earlier lines omitted)"
-                )
+                self._emit("append_output", f"[yt-dlp] ({len(lines) - max_lines} earlier lines omitted)")
             for line in lines[-max_lines:]:
                 if len(line) > 1000:
                     line = line[:1000] + " …"
-                self.signals.append_output.emit(f"[yt-dlp] {line}")
+                self._emit("append_output", f"[yt-dlp] {line}")
             showed_something = True
         if not showed_something:
-            self.signals.append_output.emit("[yt-dlp] (no output was captured)")
+            self._emit("append_output", "[yt-dlp] (no output was captured)")
 
     def _get_description_summary(
         self, description: str, max_chars: int = 220, min_words: int = 10
@@ -686,7 +674,7 @@ class InfoFetchMixin:
         summary = self._get_description_summary(description)
         if summary:
             # Keep an empty line above the description and force a "..." ending.
-            self.signals.append_output.emit(f"\nDescription: {summary}...")
+            self._emit("append_output", f"\nDescription: {summary}...")
 
     def check_sponsorblock(self, video_id=None, site=None, duration_sec=None):
         """Run the SponsorBlock gate now and schedule the segment lookup.
@@ -717,14 +705,10 @@ class InfoFetchMixin:
 
         if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
             # SponsorBlock is a YouTube-only database; skip cleanly on other sites
-            self.signals.append_output.emit(
-                "SponsorBlock: Not available for this site (YouTube only) — skipping"
-            )
+            self._emit("append_output", "SponsorBlock: Not available for this site (YouTube only) — skipping")
             return
         if not video_id:
-            self.signals.append_output.emit(
-                "SponsorBlock: Could not extract video ID from URL"
-            )
+            self._emit("append_output", "SponsorBlock: Could not extract video ID from URL")
             return
 
         thread = threading.Thread(
@@ -773,30 +757,18 @@ class InfoFetchMixin:
                             ]
                         )
                         total = len(segments)
-                        self.signals.append_output.emit(
-                            f"📟 SponsorBlock: {total} segment(s) available ({segments_info})"
-                        )
+                        self._emit("append_output", f"📟 SponsorBlock: {total} segment(s) available ({segments_info})")
                         # Update visual bar
-                        self.signals.update_sb_bar.emit(segments, float(duration))
+                        self._emit("update_sb_bar", segments, float(duration))
                     else:
-                        self.signals.append_output.emit(
-                            "📟 SponsorBlock: No segments available"
-                        )
-                        self.signals.update_sb_bar.emit([], 0)
+                        self._emit("append_output", "📟 SponsorBlock: No segments available")
+                        self._emit("update_sb_bar", [], 0)
                 elif response.status_code == 404:
-                    self.signals.append_output.emit(
-                        "📟 SponsorBlock: No segments available"
-                    )
-                    self.signals.update_sb_bar.emit([], 0)
+                    self._emit("append_output", "📟 SponsorBlock: No segments available")
+                    self._emit("update_sb_bar", [], 0)
                 else:
-                    self.signals.append_output.emit(
-                        f"🚩 SponsorBlock: API returned status {response.status_code}"
-                    )
+                    self._emit("append_output", f"🚩 SponsorBlock: API returned status {response.status_code}")
             except requests.exceptions.RequestException as e:
-                self.signals.append_output.emit(
-                    f"🚩 SponsorBlock: Request error: {str(e)}"
-                )
+                self._emit("append_output", f"🚩 SponsorBlock: Request error: {str(e)}")
         except Exception as e:
-            self.signals.append_output.emit(
-                f"🚩 SponsorBlock: Failed to check segments: {str(e)}"
-            )
+            self._emit("append_output", f"🚩 SponsorBlock: Failed to check segments: {str(e)}")

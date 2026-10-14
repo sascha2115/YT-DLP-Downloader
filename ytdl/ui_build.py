@@ -661,6 +661,7 @@ class UiBuildMixin:
     def open_thumbnail_dialog(self):
         thumbnail_url = self.video_state.get("thumbnail_url", "")
         if not thumbnail_url:
+            # Main thread: the SignalEmitter is still alive here.
             self.signals.append_output.emit("👉 No thumbnail available")
             return
 
@@ -675,14 +676,17 @@ class UiBuildMixin:
                 response.raise_for_status()
                 image_data = response.content
             except Exception as e:
-                self.signals.append_output.emit(f"🚩 Error loading thumbnail: {e}")
+                # Worker thread: route through _emit() so a close in flight
+                # cannot emit into a destroyed QObject.
+                self._emit("append_output", f"🚩 Error loading thumbnail: {e}")
                 self._fetching_thumbnail = False
                 return
             # Deliver bytes to the main thread via a queued signal — the only
             # safe way to trigger Qt widget construction from a worker thread.
             # (QTimer.singleShot from a plain threading.Thread has no event
-            # loop and is silently dropped by Qt 6.)
-            self.signals.thumbnail_ready.emit(image_data)
+            # loop and is silently dropped by Qt 6.) _emit() guards it too,
+            # so a close in flight cannot deliver into a destroyed window.
+            self._emit("thumbnail_ready", image_data)
 
         threading.Thread(target=_fetch_and_show, daemon=True).start()
 

@@ -71,6 +71,9 @@ class Harness(app.InfoFetchMixin):
 
     update_video_state = app.YTDLPDownloaderGUI.update_video_state
 
+    def _emit(self, name, *args):
+        getattr(self.signals, name).emit(*args)
+
     def _emit_description_summary(self):
         self.description_summaries.append(True)
 
