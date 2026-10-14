@@ -697,11 +697,14 @@ class UiBuildMixin:
                     image_data = response.content
                 except Exception as e:
                     # Worker thread: route through _emit() so a close in flight
-                    # cannot emit into a destroyed QObject. The token travels
-                    # with the message so a failure for an old request cannot
-                    # be logged over the new video.
+                    # cannot emit into a destroyed QObject. The token and the
+                    # URL travel with the message so a failure for an old
+                    # request cannot be logged over the new video.
                     self._emit(
-                        "thumbnail_error", f"🚩 Error loading thumbnail: {e}", snapshot_token
+                        "thumbnail_error",
+                        f"🚩 Error loading thumbnail: {e}",
+                        snapshot_url,
+                        snapshot_token,
                     )
                     return
                 # Deliver bytes to the main thread via a queued signal — the only

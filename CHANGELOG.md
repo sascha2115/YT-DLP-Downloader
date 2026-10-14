@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.20 — 2026-10-14
+
+- **A stale thumbnail error is now dropped after a URL change too.** The error signal carried only the message and request token, and the token is only bumped when Info is clicked again — so a failure queued after a URL change but before the next Info click could still match the token and be logged over the new video's output panel. The error signal now carries the snapshot URL, and the receiver compares it against the current `thumbnail_url` before appending. The token is also bumped in `on_url_text_change()` alongside the SponsorBlock generation, as a second line of defence.
+
+---
+
 ## 1.4.19 — 2026-10-14
 
 - **The thumbnail dialog is now gated by a request token, not just the URL.** A stale request could clear a newer request's in-flight guard: the worker reset `_fetching_thumbnail` in its `finally` as soon as it emitted the queued result, and the receiver reset it again even when it rejected the result as stale. Each Info click now bumps a token carried on both the success and error signals, and both the worker's `finally` and the receiver only reset the guard when the token still matches the current request — so an older response cannot clear a newer one's guard. The error path also moved onto a scoped `thumbnail_error` signal carrying the token, with its own receiver dropping a failure for an old request.

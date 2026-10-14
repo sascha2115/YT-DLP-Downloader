@@ -59,7 +59,7 @@ class Harness:
         getattr(self, name).emit(*args)
 
     def append_output_text(self, text):
-        pass
+        self.append_output.emitted.append(text)
 
     def _requests_get(self, url, timeout=None):
         # Simulate a slow fetch: block until the test releases the gate.
@@ -230,6 +230,93 @@ class TestThumbnailDialogMetadata(unittest.TestCase):
             ui_build.QLabel = original_label
             ui_build.QShortcut = original_shortcut
             ui_build.QPixmap = original_pixmap
+
+    def test_a_failed_fetch_for_an_old_request_is_not_logged(self):
+        """The error path carries the URL and token and is gated at delivery."""
+        h = Harness("https://example.com/a.png", "Description of video A")
+        h._thumbnail_request_token = 0
+
+        def _failing_get(url, timeout=None):
+            raise RuntimeError("connection reset")
+
+        with mock.patch.object(ui_build.requests, "get", side_effect=_failing_get):
+            open_thumbnail_dialog(h)
+            for _ in range(400):
+                if not h._fetching_thumbnail:
+                    break
+                time.sleep(0.005)
+        # The failure was emitted for token 1 with the snapshot URL.
+        self.assertEqual(len(h.thumbnail_error.emitted), 1)
+        self.assertEqual(
+            h.thumbnail_error.emitted[0],
+            (
+                "🚩 Error loading thumbnail: connection reset",
+                "https://example.com/a.png",
+                1,
+            ),
+        )
+
+        # Now bump the token as a newer request would, and drive the receiver
+        # directly with the stale failure: it must be dropped.
+        h._thumbnail_request_token = 2
+        receiver = app.YTDLPDownloaderGUI._append_thumbnail_error
+        receiver(
+            h,
+            "🚩 Error loading thumbnail: connection reset",
+            "https://example.com/a.png",
+            1,
+        )
+        self.assertEqual(
+            h.thumbnail_error.emitted,
+            [
+                (
+                    "🚩 Error loading thumbnail: connection reset",
+                    "https://example.com/a.png",
+                    1,
+                )
+            ],
+            "a failed fetch for an old request must not be logged",
+        )
+
+    def test_a_stale_error_after_a_url_change_is_dropped_even_without_a_new_click(self):
+        """A failure queued after a URL change but before the next Info click.
+
+        Changing the video clears thumbnail_url without bumping the request
+        token, so a token check alone would let an old failure through. The
+        error signal now carries the snapshot URL, and the receiver compares
+        it against the current one.
+        """
+        h = Harness("https://example.com/a.png", "Description of video A")
+        h._thumbnail_request_token = 0
+
+        def _failing_get(url, timeout=None):
+            raise RuntimeError("connection reset")
+
+        with mock.patch.object(ui_build.requests, "get", side_effect=_failing_get):
+            open_thumbnail_dialog(h)
+            for _ in range(400):
+                if not h._fetching_thumbnail:
+                    break
+                time.sleep(0.005)
+        self.assertEqual(len(h.thumbnail_error.emitted), 1)
+
+        # The user changes videos: thumbnail_url clears, but the token is
+        # still 1 because no new Info click happened.
+        h.video_state["thumbnail_url"] = ""
+        h.video_state["description"] = "Description of video B"
+        h.append_output.emitted = []
+        receiver = app.YTDLPDownloaderGUI._append_thumbnail_error
+        receiver(
+            h,
+            "🚩 Error loading thumbnail: connection reset",
+            "https://example.com/a.png",
+            1,
+        )
+        self.assertEqual(
+            h.append_output.emitted,
+            [],
+            "a stale error after a URL change must not be logged",
+        )
 
     def test_the_flight_guard_is_reset_even_if_the_emit_raises(self):
         """A failed delivery must not leave the Info button unclickable.

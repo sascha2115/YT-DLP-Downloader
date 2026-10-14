@@ -76,7 +76,15 @@ class SignalEmitter(QObject):
     # a stale request from clearing a newer request's in-flight guard.
     # Scoped rather than tacked onto append_output, because the download
     # worker also writes to append_output legitimately.
-    thumbnail_error = pyqtSignal(str, int)
+    thumbnail_error = pyqtSignal(str, str, int)
+    # The three args are the error message, the snapshot URL captured at click
+    # time, and the request token. Scoped rather than tacked onto
+    # append_output, because the download worker also writes to
+    # append_output legitimately. The URL is checked in the receiver too, so a
+    # failure for an old video is dropped even when the token has not been
+    # bumped again — the URL change clears thumbnail_url, and only the
+    # receiver's comparison against the current value catches a queued error
+    # that arrived after the change but before the next Info click.
     # Standalone SRT conversion: the worker emits this when it is done, so the
     # main thread can re-enable the controls without the handler having to
     # know whether the worker succeeded, failed or was interrupted.

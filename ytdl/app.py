@@ -456,6 +456,13 @@ class YTDLPDownloaderGUI(
             # new fetch reached it, and its token would still match, briefly
             # repainting the cleared bar.
             self._sb_generation += 1
+            # Invalidate any thumbnail request still in flight. The URL change
+            # clears thumbnail_url, but the request token is only bumped when
+            # Info is clicked again — so a failure queued from the previous
+            # video could still match the token and be logged over the new
+            # video's output panel. Bump it here too, alongside the
+            # SponsorBlock generation, so a stale error is dropped.
+            self._thumbnail_request_token += 1
 
         self.fetch_title_timer.stop()
         self.fetch_title_timer.start(TITLE_FETCH_DELAY_MS)
@@ -879,17 +886,20 @@ class YTDLPDownloaderGUI(
             return
         self.append_output_text(text)
 
-    def _append_thumbnail_error(self, text, token):
+    def _append_thumbnail_error(self, text, snapshot_url, token):
         """Slot for signals.thumbnail_error (thumbnail fetch failures).
 
-        Scoped to the thumbnail request and gated on the request token, the
-        same way the bar update and the SponsorBlock log lines are gated: a
+        Scoped to the thumbnail request and gated on both the request token
+        and the snapshot URL, the same way the success path is gated: a
         failure for an old request must not be logged after the user has
-        clicked Info on a new video. The token is bumped on the main thread at
-        each click and read back here, so the comparison is decisive regardless
-        of how the worker and the event loop interleave.
+        clicked Info on a new video. The URL is checked here too, because a URL
+        change clears thumbnail_url without bumping the token — so a queued
+        error that arrived after the change but before the next Info click
+        would still match the token, and only the URL comparison catches it.
         """
         if token != self._thumbnail_request_token:
+            return
+        if snapshot_url != self.video_state.get("thumbnail_url", ""):
             return
         self.append_output_text(text)
 
