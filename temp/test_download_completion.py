@@ -414,10 +414,6 @@ class TestDownloadCompletion(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-        unittest.main()
-
-
 class _ProcessManyLines(_Process):
     """A process that emits one error line per read, to drive the bound."""
 
@@ -573,3 +569,7 @@ class TestCapturedErrorOutput(unittest.TestCase):
                     harness.run_download(cmd, [])
             joined = "\n".join(captured.output)
             self.assertIn("--merge-output-format=mp4", joined)
+
+
+if __name__ == "__main__":
+    unittest.main()
