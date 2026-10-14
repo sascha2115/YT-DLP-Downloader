@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.9 — 2026-10-14
+
+- **A post-download exception no longer reports the media as failed when it is on disk.** The failure-sidecar helper now checks `media_downloaded` before the media-type gate, so an audio-only (or subtitles-only) job whose file already landed says "Post-download processing failed; the media file is on disk" instead of "▶ Audio only · no media download failed; no video sidecars to generate". For video jobs the sidecars are still attempted when the media landed but the EDL/NFO were not yet written.
+
+---
+
 ## 1.4.8 — 2026-10-14
 
 - **Error-log redaction now covers both flag shapes.** yt-dlp accepts `--flag value` and `--flag=value`; only the first was redacted, so a long header or extractor arg passed as one token leaked its value. Both forms are now redacted, and ordinary equals-form flags (e.g. `--merge-output-format=mp4`) are left untouched.

@@ -333,9 +333,17 @@ class TestDownloadCompletion(unittest.TestCase):
             returncode=0, fail_metadata=True, media_type="audio"
         )
         self.assertEqual(harness.sidecar_attempts, 0)
+        output_lines = self._output_lines(harness)
+        # The audio file is on disk (the exception was in post-download
+        # metadata caching), so the failure line names that rather than
+        # "Audio only failed; no video sidecars to generate".
         self.assertTrue(
-            any("no video sidecars" in line for line in self._output_lines(harness)),
-            self._output_lines(harness),
+            any("media file is on disk" in line for line in output_lines),
+            output_lines,
+        )
+        self.assertFalse(
+            any("no video sidecars" in line for line in output_lines),
+            output_lines,
         )
 
     def test_exception_on_subtitles_does_not_create_sidecars(self):
@@ -410,6 +418,40 @@ class TestDownloadCompletion(unittest.TestCase):
             )
             self.assertFalse(
                 any("Media download failed" in line for line in output_lines),
+                output_lines,
+            )
+
+    def test_audio_exception_after_file_on_disk_says_media_is_on_disk(self):
+        # The edge case: for an audio-only job, a post-download exception must
+        # not report "Audio only failed" when the audio file is already on
+        # disk. media_downloaded is checked before the media-type gate, so
+        # the failure line names the post-download failure instead.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp3"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _DownloadHarness(
+                base_path, media_type="audio", fail_metadata=True
+            )
+            process = _Process(lines, 0)
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                harness.run_download(["yt-dlp"], [])
+            output_lines = self._output_lines(harness)
+            self.assertTrue(
+                any("post-processing failure" in line for line in output_lines),
+                output_lines,
+            )
+            self.assertTrue(
+                any("media file is on disk" in line for line in output_lines),
+                output_lines,
+            )
+            self.assertFalse(
+                any("failed; no video sidecars" in line for line in output_lines),
                 output_lines,
             )
 

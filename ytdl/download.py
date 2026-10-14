@@ -1355,22 +1355,34 @@ class DownloadMixin:
 
         `media_downloaded` is True when the media file is already on disk -
         an exception that lands here from post-download work (subtitle
-        resync, analysis, ...) is then not a media failure, so the "Media
-        download failed" line is not printed even though the sidecars may
-        still be written (they were not, because the success path already
-        wrote them and set sidecars_attempted).
+        resync, metadata caching, analysis, ...) is then not a media
+        failure. The wording therefore depends on it first: a job whose
+        media landed says "post-processing failed", a job whose media did
+        not land names the requested operation. Sidecar *attempting* still
+        depends on media_type alone (an .edl/.nfo describes a video
+        episode), so for a video job whose media landed but whose sidecars
+        were not yet written (the exception happened before EDL/NFO
+        creation) the sidecars are still attempted. Cancellation is excluded
+        by the caller, and `sidecars_attempted` ensures this is never
+        invoked twice for one run.
         """
         media_type = self.video_state.get("media_type", "video")
-        if media_type not in ("video", "video_only"):
+        if media_downloaded:
+            self._emit("append_output",
+                "⚠️ Post-download processing failed; the media file is on disk."
+            )
+            # Video sidecars may still be unwritten at this point (the
+            # exception can land before EDL/NFO creation), so do not return
+            # for video jobs — attempt them. Non-video jobs have no video
+            # sidecars to write, so stop here.
+            if media_type not in ("video", "video_only"):
+                return
+        elif media_type not in ("video", "video_only"):
             operation = self.describe_format_choice(cmd, media_type)
             self._emit("append_output",
                 f"⚠️ {operation} failed; no video sidecars to generate."
             )
             return
-        if media_downloaded:
-            self._emit("append_output",
-                "⚠️ Post-download processing failed; the media file is on disk."
-            )
         try:
             self._try_create_sidecar_files()
         except Exception as e:
