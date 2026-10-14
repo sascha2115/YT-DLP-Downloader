@@ -26,6 +26,14 @@ disagree, this file is right.
 
 ---
 
+## 1.4.22 — 2026-10-14
+
+[Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.22) · tag `v1.4.22`
+
+- **URL query strings are now masked in every log path.** The failure-log redaction shipped in 1.4.7–1.4.10, but the download-start log line, the download and info-fetch commands shown in the output panel, and the unexpected-exception log still printed the raw URL — so a session token or auth code in a query string could reach `app.log` from a successful or non-failing run. All four now route through the shared `_redact_url` / `_redact_command` helpers, leaving only the scheme, host and path to identify the job.
+
+---
+
 ## 1.4.21 — 2026-10-14
 
 - **A URL change now releases the thumbnail flight guard.** Bumping the request token on a URL change left `_fetching_thumbnail` true, so an in-flight request's result was stale and neither the worker nor the receiver reset the flag — the Info button stayed blocked from fetching the new video's thumbnail. The flag is now reset in `on_url_text_change()` too; the token keeps the old request from clearing the state of any newer one, so a result that arrives later is still dropped.

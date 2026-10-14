@@ -18,6 +18,7 @@ from ytdl.config import (
     SPONSORBLOCK_TIMEOUT_SECONDS,
 )
 from ytdl.description import clean_youtube_description
+from ytdl.download import _redact_command
 from ytdl.sites import (
     DEFAULT_SITE,
     SUPPORTED_SITES,
@@ -258,7 +259,12 @@ class InfoFetchMixin:
             )
             # Log the info-fetch command if enabled (disabled by default)
             if prefs.preferences.get("show_fetchinfo_command", False):
-                self._emit("append_output", f"\n🖥️ {' '.join(str(item) for item in cmd if item)}")
+                # Same redaction as the download command log: the URL's query
+                # string can carry a session token or auth code.
+                self._emit(
+                    "append_output",
+                    f"\n🖥️ {' '.join(str(item) for item in _redact_command(cmd) if item)}",
+                )
             result = self._run_info_command(cmd, info_timeout)
             if result.returncode == 0 and result.stdout.strip():
                 json_data = json.loads(result.stdout.strip())

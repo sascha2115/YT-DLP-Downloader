@@ -371,7 +371,7 @@ class DownloadMixin:
         url = self.video_state.get("clean_url", "")
         logger.info(f"{channel}")
         logger.info(f"{base_name}")
-        logger.info(f"{url}")
+        logger.info(f"{_redact_url(url)}")
 
         # Clear cached metadata at start of new download
         self.cached_video_metadata = None
@@ -384,7 +384,7 @@ class DownloadMixin:
         self._set_download_busy(True)
 
         self.signals.append_output.emit(
-            f"\n🖥️ {' '.join(str(item) for item in cmd if item)}"
+            f"\n🖥️ {' '.join(str(item) for item in _redact_command(cmd) if item)}"
         )
 
         # Shown only here, after every early return above (missing title, failed
@@ -920,8 +920,8 @@ class DownloadMixin:
                     sidecars_attempted = True
 
         except Exception as e:
-            self._emit("append_output", f"🚩 An unexpected error occurred: {e}")
-            logger.error(f"Download failed with exception: {e}")
+            self._emit("append_output", f"🚩 An unexpected error occurred: {_redact_url(str(e))}")
+            logger.error(f"Download failed with exception: {_redact_url(str(e))}")
             if captured_output:
                 logger.error(
                     _format_captured_output(
