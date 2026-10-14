@@ -28,6 +28,7 @@ import ytdl.ui_build as ui_build
 
 open_thumbnail_dialog = app.YTDLPDownloaderGUI.open_thumbnail_dialog
 show_thumbnail_dialog = app.YTDLPDownloaderGUI._show_thumbnail_dialog
+on_url_text_change = app.YTDLPDownloaderGUI.on_url_text_change
 
 
 class _Signal:
@@ -36,6 +37,41 @@ class _Signal:
 
     def emit(self, *args):
         self.emitted.append(args)
+
+
+class _UrlEntry:
+    def __init__(self, text):
+        self._text = text
+
+    def text(self):
+        return self._text
+
+    def setText(self, text):
+        self._text = text
+
+    def blockSignals(self, _):
+        pass
+
+    def clear(self):
+        self._text = ""
+
+
+class _NoopButton:
+    def setEnabled(self, _):
+        pass
+
+
+class _NoopBar:
+    def set_segments(self, *a, **k):
+        pass
+
+
+class _NoopTimer:
+    def stop(self):
+        pass
+
+    def start(self, _):
+        pass
 
 
 class Harness:
@@ -54,6 +90,16 @@ class Harness:
         self._fetching_thumbnail = False
         self._thumbnail_request_token = 0
         self._image = image
+        # on_url_text_change() reads the URL from a QLineEdit; the harness
+        # carries a stub so the real method can be driven in this test.
+        self.url_entry = _UrlEntry(url)
+        self.download_button = _NoopButton()
+        self.thumbnail_button = _NoopButton()
+        self.sb_bar = _NoopBar()
+        self.fetch_title_timer = _NoopTimer()
+        self._sb_generation = 0
+        # on_url_text_change() also touches the title entry; stub it.
+        self.title_entry = _UrlEntry("")
 
     def _emit(self, name, *args):
         getattr(self, name).emit(*args)
@@ -316,6 +362,52 @@ class TestThumbnailDialogMetadata(unittest.TestCase):
             h.append_output.emitted,
             [],
             "a stale error after a URL change must not be logged",
+        )
+
+    def test_a_url_change_releases_the_flight_guard(self):
+        """A request in flight must not block the Info button after a URL change.
+
+        Changing the URL bumps the request token but used to leave
+        _fetching_thumbnail true. The in-flight request's result is then stale,
+        so neither the worker nor the receiver resets the flag — and the Info
+        button stays blocked from fetching the new video's thumbnail. The flag
+        is now reset on URL change; the token keeps the old request from
+        clearing the state of any newer one.
+        """
+        h = self._harness("https://example.com/a.png", "Description of video A")
+        with mock.patch.object(ui_build.requests, "get", side_effect=h._requests_get):
+            open_thumbnail_dialog(h)
+            self.assertTrue(h._fetching_thumbnail)
+            # The user changes the URL. on_url_text_change() bumps the token
+            # and releases the guard, so the new video's thumbnail can be
+            # fetched.
+            h.url_entry.setText("https://example.com/b.png")
+            on_url_text_change(h)
+            self.assertFalse(
+                h._fetching_thumbnail,
+                "a URL change must release the flight guard",
+            )
+
+        # A newer click can now fetch again, and the old request's queued
+        # result is dropped at the receiver because its token no longer matches.
+        guard_harness = Harness("https://example.com/b.png", "Description of video B")
+        guard_harness._thumbnail_request_token = 2
+        guard_harness._fetching_thumbnail = True
+        original_dialog = ui_build.QDialog
+        ui_build.QDialog = type("_Stub", (), {
+            "__init__": lambda self, *a, **k: None,
+            "setWindowTitle": lambda self, _: None,
+            "exec": lambda self: None,
+        })
+        try:
+            show_thumbnail_dialog(
+                guard_harness, b"\x89PNG", "Description of video A", "https://example.com/a.png", 1
+            )
+        finally:
+            ui_build.QDialog = original_dialog
+        self.assertTrue(
+            guard_harness._fetching_thumbnail,
+            "a stale request must not clear a newer request's in-flight guard",
         )
 
     def test_the_flight_guard_is_reset_even_if_the_emit_raises(self):

@@ -463,6 +463,12 @@ class YTDLPDownloaderGUI(
             # video's output panel. Bump it here too, alongside the
             # SponsorBlock generation, so a stale error is dropped.
             self._thumbnail_request_token += 1
+            # Reset the flight guard: a request in flight is now stale, so its
+            # result cannot reset the flag (the token no longer matches) and
+            # the Info button would stay blocked. Resetting here is safe — the
+            # token keeps the old request from clearing the state of any newer
+            # one, so a result that arrives later is still dropped.
+            self._fetching_thumbnail = False
 
         self.fetch_title_timer.stop()
         self.fetch_title_timer.start(TITLE_FETCH_DELAY_MS)

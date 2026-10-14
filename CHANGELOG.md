@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.21 — 2026-10-14
+
+- **A URL change now releases the thumbnail flight guard.** Bumping the request token on a URL change left `_fetching_thumbnail` true, so an in-flight request's result was stale and neither the worker nor the receiver reset the flag — the Info button stayed blocked from fetching the new video's thumbnail. The flag is now reset in `on_url_text_change()` too; the token keeps the old request from clearing the state of any newer one, so a result that arrives later is still dropped.
+
+---
+
 ## 1.4.20 — 2026-10-14
 
 - **A stale thumbnail error is now dropped after a URL change too.** The error signal carried only the message and request token, and the token is only bumped when Info is clicked again — so a failure queued after a URL change but before the next Info click could still match the token and be logged over the new video's output panel. The error signal now carries the snapshot URL, and the receiver compares it against the current `thumbnail_url` before appending. The token is also bumped in `on_url_text_change()` alongside the SponsorBlock generation, as a second line of defence.
