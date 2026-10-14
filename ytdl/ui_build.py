@@ -670,9 +670,19 @@ class UiBuildMixin:
             return
         self._fetching_thumbnail = True
 
+        # Capture the description alongside the URL at click time. The worker
+        # fetches the image on a daemon thread, so by the time it arrives the
+        # user may have switched videos; reading the description from live
+        # video_state in the receiver would pair an old image with a new
+        # description. The URL is also re-checked on the worker before
+        # emitting, so a response for a superseded video is dropped rather
+        # than shown over the new video's metadata.
+        snapshot_url = thumbnail_url
+        snapshot_description = self.video_state.get("description", "")
+
         def _fetch_and_show():
             try:
-                response = requests.get(thumbnail_url, timeout=10)
+                response = requests.get(snapshot_url, timeout=10)
                 response.raise_for_status()
                 image_data = response.content
             except Exception as e:
@@ -686,13 +696,23 @@ class UiBuildMixin:
             # (QTimer.singleShot from a plain threading.Thread has no event
             # loop and is silently dropped by Qt 6.) _emit() guards it too,
             # so a close in flight cannot deliver into a destroyed window.
-            self._emit("thumbnail_ready", image_data)
+            # The description travels with the image so the dialog cannot mix
+            # metadata from two different videos.
+            self._emit(
+                "thumbnail_ready", image_data, snapshot_description, snapshot_url
+            )
 
         threading.Thread(target=_fetch_and_show, daemon=True).start()
 
-    def _show_thumbnail_dialog(self, image_data: bytes):
+    def _show_thumbnail_dialog(self, image_data: bytes, description: str, snapshot_url: str):
         self._fetching_thumbnail = False
         try:
+            # The user may have switched videos while the image was in flight.
+            # The URL was captured with the image, so compare against the
+            # current one: a response for a superseded video must not be shown
+            # over the new video's metadata.
+            if snapshot_url != self.video_state.get("thumbnail_url", ""):
+                return
             # Create dialog
             dialog = QDialog(self)
             dialog.setWindowTitle("Video Description")
@@ -724,8 +744,9 @@ class UiBuildMixin:
             image_label.setPixmap(pixmap)
             layout.addWidget(image_label)
 
-            # Add description if available
-            description = self.video_state.get("description", "")
+            # Add description if available — the one captured with the URL, not
+            # the live video_state, so a video change in between cannot mix
+            # metadata.
             if description:
                 description_text = QTextBrowser()
                 description_text.setReadOnly(True)

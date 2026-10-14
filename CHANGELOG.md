@@ -26,6 +26,12 @@ disagree, this file is right.
 
 ---
 
+## 1.4.17 — 2026-10-14
+
+- **The thumbnail dialog no longer mixes metadata across videos.** `open_thumbnail_dialog()` fetches the image on a daemon worker thread, so by the time it arrives the user may have switched videos. The worker used to capture only the URL; `_show_thumbnail_dialog()` then read the description from live `video_state`, pairing an old image with a new video's description. The description is now captured with the URL at click time and travels on the `thumbnail_ready` signal, and the receiver re-checks the URL against the current one before constructing the dialog — a response for a superseded video is dropped instead of being shown over the new video's metadata.
+
+---
+
 ## 1.4.16 — 2026-10-14
 
 - **The last two SponsorBlock gate messages are generation-gated too.** The site-unsupported and missing-video-ID messages in `check_sponsorblock()` used to go through plain `append_output`. That method runs after `title_fetch_complete`, so a URL change could happen before those queued messages were displayed, letting a message for the previous video appear in the new video's log. They now go through the scoped `sb_log` signal carrying the generation, with the same main-thread receiver dropping a stale one.
