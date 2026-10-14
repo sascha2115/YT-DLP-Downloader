@@ -1396,16 +1396,16 @@ class DownloadMixin:
 
         yt-dlp writes .info.json before downloading, so even a nonzero exit
         or a Python exception raised after that point has all the metadata
-        needed (title, description, SponsorBlock segments). The wording
-        depends on what already landed: a job whose media landed says
-        "post-processing failed", a job whose SRT landed says the same, and
-        a job whose requested output did not land names the requested
-        operation. Sidecar *attempting* still depends on media_type alone (an
-        .edl/.nfo describes a video episode), so for a video job whose media
-        landed but whose sidecars were not yet written (the exception happened
-        before EDL/NFO creation) the sidecars are still attempted. Cancellation
-        is excluded by the caller, and `sidecars_attempted` ensures this is
-        never invoked twice for one run.
+        needed (title, description, SponsorBlock segments). The wording names what
+        already landed: "the media file is on disk" for a video/audio job,
+        "the requested subtitle is on disk" for a subtitle-only job (whose
+        media was never requested, let alone downloaded), and the requested
+        operation for a job whose output did not land. Sidecar *attempting* still
+        depends on media_type alone (an .edl/.nfo describes a video episode),
+        so for a video job whose media landed but whose sidecars were not yet
+        written (the exception happened before EDL/NFO creation) the sidecars
+        are still attempted. Cancellation is excluded by the caller, and
+        `sidecars_attempted` ensures this is never invoked twice for one run.
         """
         media_type = self.video_state.get("media_type", "video")
         if media_downloaded or subtitles_downloaded:
