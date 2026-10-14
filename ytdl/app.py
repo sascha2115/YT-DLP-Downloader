@@ -215,6 +215,7 @@ class YTDLPDownloaderGUI(
         # Deferred lookup on purpose: self.sb_bar is created by init_ui(), which
         # runs after these connections — hence a slot method, not self.sb_bar.x.
         self.signals.update_sb_bar.connect(self._set_sb_bar_segments)
+        self.signals.sb_log.connect(self._append_sb_log)
         self.signals.set_download_button_label.connect(self.set_download_button_label)
         self.signals.set_download_button_status.connect(self.set_download_button_status)
         self.signals.set_cancel_button_visible.connect(self.set_cancel_button_visible)
@@ -441,6 +442,14 @@ class YTDLPDownloaderGUI(
             self.thumbnail_button.setEnabled(False)
             # Clear SponsorBlock bar
             self.sb_bar.set_segments([], 0)
+            # Invalidate any SponsorBlock result still in flight. The lookup
+            # generation is bumped here, before the new fetch starts, so a
+            # response that was queued from the previous video cannot match it:
+            # if the bump only happened near the end of get_video_info(), that
+            # queued delivery could land after the URL changed but before the
+            # new fetch reached it, and its token would still match, briefly
+            # repainting the cleared bar.
+            self._sb_generation += 1
 
         self.fetch_title_timer.stop()
         self.fetch_title_timer.start(TITLE_FETCH_DELAY_MS)
@@ -848,6 +857,21 @@ class YTDLPDownloaderGUI(
         if generation != self._sb_generation:
             return
         self.sb_bar.set_segments(segments, duration)
+
+    def _append_sb_log(self, text, generation):
+        """Slot for signals.sb_log (SponsorBlock output lines).
+
+        Scoped to the SponsorBlock lookup and gated on the same generation
+        token as the bar update, because log signals can be queued and
+        delivered after a URL change just as easily as bar updates can. A stale
+        line for a superseded video must not appear below the new video's
+        metadata. The token is bumped on the main thread at the start of each
+        fetch, so the comparison is decisive regardless of how the worker and
+        the event loop interleave.
+        """
+        if generation != self._sb_generation:
+            return
+        self.append_output_text(text)
 
     def set_download_button_status(self, status: str):
         """

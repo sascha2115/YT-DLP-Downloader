@@ -57,6 +57,11 @@ class SignalEmitter(QObject):
     update_dock_progress = pyqtSignal(float)
     clear_dock_progress = pyqtSignal()
     update_sb_bar = pyqtSignal(list, float, int)
+    # SponsorBlock log lines carry their lookup generation so a stale line
+    # queued before a URL change can be dropped in the receiver, the same way
+    # the bar update is gated. Scoped rather than tacked onto append_output,
+    # because the download worker also writes to append_output legitimately.
+    sb_log = pyqtSignal(str, int)
     set_download_button_label = pyqtSignal(str)
     set_download_button_status = pyqtSignal(str)
     set_cancel_button_visible = pyqtSignal(bool)

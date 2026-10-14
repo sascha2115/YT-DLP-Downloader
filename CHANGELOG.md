@@ -26,6 +26,13 @@ disagree, this file is right.
 
 ---
 
+## 1.4.15 — 2026-10-14
+
+- **SponsorBlock results for a superseded video are now discarded at three points, not two.** The lookup thread re-checks the *current* video id before emitting, and the main-thread receiver compares a generation token before painting the bar — but the token used to be bumped only near the end of `get_video_info()`, so a response queued from a previous video could land after the URL changed but before the new fetch reached the bump, and its token would still match, briefly repainting the cleared bar. The generation is now bumped at the start of each fetch and again when the URL changes, before the new fetch starts, so that window is closed.
+- **Stale SponsorBlock log lines are gated too.** The lookup thread's output lines moved onto a scoped `sb_log` signal carrying the generation, with its own main-thread receiver comparing the token before appending — log signals can be queued and delivered after a URL change just as easily as bar updates can. `append_output` itself is untouched, since the download worker also writes to it legitimately.
+
+---
+
 ## 1.4.14 — 2026-10-14
 
 - **SponsorBlock results for a superseded video are now discarded at two points, not one.** The lookup thread re-checks the *current* video id before emitting, but Qt may queue that signal while the main thread is busy, so a late delivery can still repaint a bar a newer fetch already cleared. Each info fetch now bumps a **generation token** carried on the `update_sb_bar` signal, and the main-thread receiver compares it before painting — so a delivery for an older generation is dropped there even though it was emitted. The token also covers a second fetch of the *same* video, where an id check alone would let an older request publish after a newer one. Both guards gate every emission from the lookup thread, including the error lines, so a failing lookup for a superseded video never reaches the log either.

@@ -102,6 +102,7 @@ class _Signals:
         "update_dock_tile",
         "clear_dock_progress",
         "update_sb_bar",
+        "sb_log",
         "set_download_button_label",
         "set_download_button_status",
         "thumbnail_ready",
@@ -157,7 +158,16 @@ class Harness(app.InfoFetchMixin):
         return [args[0] for args in self.signals.title_fetch_complete.emitted]
 
     def output_lines(self):
-        return [args[0] for args in self.signals.append_output.emitted]
+        # SponsorBlock's own lines moved to the scoped sb_log signal, so merge
+        # it back in here for tests that read the output as one stream.
+        return [
+            args[0]
+            for args in self.signals.append_output.emitted
+            + self.signals.sb_log.emitted
+        ]
+
+    def sb_log_lines(self):
+        return [args[0] for args in self.signals.sb_log.emitted]
 
 
 class RecordingRequests:
@@ -481,6 +491,63 @@ class TestSponsorBlockResultIsDiscardedWhenVideoChanges(unittest.TestCase):
         self.assertEqual(
             len(painted), 1, "a stale generation must not repaint the bar"
         )
+
+    def test_a_stale_sb_log_line_is_dropped_at_the_receiver(self):
+        """SponsorBlock log lines are gated on the token too.
+
+        Log signals can be queued and delivered after a URL change just as
+        easily as bar updates can, so the scoped sb_log signal carries the
+        generation and the receiver compares it before appending. A stale
+        line for a superseded video must not appear below the new video's
+        metadata.
+        """
+        from ytdl.app import YTDLPDownloaderGUI
+
+        written = []
+
+        class _H:
+            _sb_generation = 0
+
+            def append_output_text(self, text):
+                written.append(text)
+
+        receiver = YTDLPDownloaderGUI._append_sb_log
+        gen = self.harness._sb_generation
+        h1 = _H()
+        h1._sb_generation = gen
+        receiver(h1, "📺 SponsorBlock: 1 segment(s) available", gen)
+        self.assertEqual(written, ["📺 SponsorBlock: 1 segment(s) available"])
+
+        # A newer fetch bumps the token; the old line now carries a stale
+        # generation and must be dropped even though it was emitted.
+        gen += 1
+        self.harness._sb_generation = gen
+        h2 = _H()
+        h2._sb_generation = gen
+        receiver(h2, "📺 SponsorBlock: 1 segment(s) available", gen - 1)
+        self.assertEqual(
+            written, ["📺 SponsorBlock: 1 segment(s) available"],
+            "a stale SponsorBlock log line must not reach the output panel",
+        )
+
+    def test_url_change_invalidates_the_generation_before_the_new_fetch_starts(self):
+        """The token is bumped when the URL changes, not at the end of a fetch.
+
+        If the bump only happened near the end of get_video_info(), a response
+        queued from the previous video could land after the URL changed but
+        before the new fetch reached it, and its token would still match,
+        briefly repainting the cleared bar. Bumping in on_url_text_change(),
+        before the new fetch starts, closes that window.
+        """
+        import inspect
+
+        src = inspect.getsource(app.YTDLPDownloaderGUI.on_url_text_change)
+        self.assertIn("self._sb_generation", src)
+        # The bump must sit inside the URL-change branch, ahead of the timer
+        # restart that starts the new fetch.
+        bump_idx = src.index("self._sb_generation")
+        timer_idx = src.index("self.fetch_title_timer.start")
+        self.assertLess(bump_idx, timer_idx, "the generation bump must precede the new fetch")
 
 
 if __name__ == "__main__":

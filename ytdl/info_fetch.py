@@ -184,6 +184,16 @@ class InfoFetchMixin:
         self.video_state["video_id"] = ""
         self.extract_video_id(url)
 
+        # Bump the SponsorBlock lookup generation up front, before the
+        # metadata worker starts. A response for the previous video may
+        # already be queued in Qt's event loop — if the token is bumped only
+        # near the end of get_video_info(), that queued delivery can land
+        # after the URL changes but before the new fetch reaches the bump,
+        # and its token still matches, so the old segments briefly repaint a
+        # bar the URL change already cleared. Bumping here, before any new
+        # signal is emitted, closes that window.
+        self._sb_generation = getattr(self, "_sb_generation", 0) + 1
+
         self.title_entry.setText("Fetching video info...")
         # Reset any prior error styling as soon as we start fetching info again
         self.set_download_button_status("")
@@ -553,15 +563,11 @@ class InfoFetchMixin:
         snapshot_id = self.video_state.get("video_id", "")
         snapshot_site = self.video_state.get("site", DEFAULT_SITE)
         snapshot_duration = self.video_state.get("duration_sec", 0)
-        # Bump the lookup generation so a response that was queued before a URL
-        # change (or before a second fetch of the same video) can be discarded
-        # in the main-thread receiver. The worker checks the video id before
-        # emitting, but Qt may queue the signal while the main thread is busy,
-        # so a late delivery can still repaint a bar a newer fetch already
-        # cleared. The token is read back on the main thread, so the
-        # comparison is decisive regardless of how the two interleave.
-        self._sb_generation = getattr(self, "_sb_generation", 0) + 1
-        sb_generation = self._sb_generation
+        # The generation was already bumped at the start of this fetch, before
+        # any signal was emitted, so a response queued from a previous video
+        # cannot match it. Read the current value here rather than re-bumping:
+        # the token is per fetch, not per emission.
+        sb_generation = getattr(self, "_sb_generation", 0)
 
         self._emit_description_summary()
         self._emit("title_fetch_complete", error_status)
@@ -753,7 +759,7 @@ class InfoFetchMixin:
         only the progress bar — never the metadata hand-off. Every result is
         published through queued signals, so the UI updates on the main thread.
 
-        Two staleness guards, because a response can arrive at two different
+Three staleness guards, because a response can arrive at three different
         times:
 
         1. Before emitting, the thread re-checks the *current* video id against
@@ -762,8 +768,8 @@ class InfoFetchMixin:
            current id is read here, on the worker, not from the snapshot — so a
            fetch that *did* replace this one is what gates the result.
 
-        2. The generation token carried on the signal is checked again in the
-           main-thread receiver. The worker checks the id, then emits; Qt may
+        2. The generation token carried on the signals is checked again in the
+           main-thread receivers. The worker checks the id, then emits; Qt may
            queue that signal while the main thread is busy, so a late delivery
            can still repaint a bar that a newer fetch already cleared. The
            token is bumped on the main thread and read back on the main thread,
@@ -771,8 +777,18 @@ class InfoFetchMixin:
            and it also covers a second fetch of the *same* video, where the id
            check alone would let an older request publish after a newer one.
 
-        Both guards gate every emission from this thread, including the error
-        lines, so a failing lookup for a superseded video never reaches the log.
+        3. The token is bumped at the start of each fetch and again when the
+           URL changes, before the new fetch starts. If it were bumped only near
+           the end of get_video_info(), a response queued from a previous video
+           could land after the URL changed but before the new fetch reached
+           the bump, and its token would still match — briefly repainting a
+           bar the URL change already cleared.
+
+        The output lines are emitted on a scoped sb_log signal carrying the
+        generation, not on append_output: append_output is also written by the
+        download worker legitimately, so gating it would mean giving it a token
+        too. sb_log's own main-thread receiver drops stale lines the same way
+        the bar receiver drops stale segments.
         """
         error_message = None
         try:
@@ -818,29 +834,38 @@ class InfoFetchMixin:
                         )
                         total = len(segments)
                         self._emit(
-                            "append_output",
-                            f"Prog SponsorBlock: {total} segment(s) available ({segments_info})",
+                            "sb_log",
+                            f"📟 SponsorBlock: {total} segment(s) available ({segments_info})",
+                            sb_generation,
                         )
                         # Update visual bar
                         self._emit(
                             "update_sb_bar", segments, float(duration), sb_generation
                         )
                         return
-                    self._emit("append_output", "Prog SponsorBlock: No segments available")
+                    self._emit(
+                        "sb_log",
+                        "📟 SponsorBlock: No segments available",
+                        sb_generation,
+                    )
                     self._emit("update_sb_bar", [], 0, sb_generation)
                     return
                 if response.status_code == 404:
-                    self._emit("append_output", "Prog SponsorBlock: No segments available")
+                    self._emit(
+                        "sb_log",
+                        "📟 SponsorBlock: No segments available",
+                        sb_generation,
+                    )
                     self._emit("update_sb_bar", [], 0, sb_generation)
                     return
-                error_message = f"Prog SponsorBlock: API returned status {response.status_code}"
+                error_message = f"📟 SponsorBlock: API returned status {response.status_code}"
             except requests.exceptions.RequestException as e:
-                error_message = f"Prog SponsorBlock: Request error: {str(e)}"
+                error_message = f"📟 SponsorBlock: Request error: {str(e)}"
         except Exception as e:
-            error_message = f"Prog SponsorBlock: Failed to check segments: {str(e)}"
+            error_message = f"📟 SponsorBlock: Failed to check segments: {str(e)}"
 
         # The id check above only ran on the success path; a failing lookup
         # still needs to be gated, so re-check here before printing the error.
         if self.video_state.get("video_id", "") != snapshot_video_id:
             return
-        self._emit("append_output", f"🚩 {error_message}")
+        self._emit("sb_log", f"🚩 {error_message}", sb_generation)
