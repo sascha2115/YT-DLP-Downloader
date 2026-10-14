@@ -660,6 +660,12 @@ class YTDLPDownloaderGUI(
     # ----------------------------------------------------------------------------------------------------
     def open_subtitle_file_dialog(self):
         """Open a file dialog to select an SRT file and process it."""
+        if self.video_state.get("is_download_running"):
+            self._emit(
+                "append_output",
+                "⚠️ Cannot process subtitles while a download is running",
+            )
+            return
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select SRT file",

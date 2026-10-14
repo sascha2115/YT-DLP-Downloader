@@ -27,6 +27,71 @@ logger = logging.getLogger(__name__)
 VIDEO_OUTPUT_EXTENSIONS = (".mp4", ".mkv", ".webm")
 AUDIO_OUTPUT_EXTENSIONS = (".mp3", ".m4a", ".wav", ".opus", ".webm")
 
+# How many lines of yt-dlp output are kept for the failure log. yt-dlp can
+# emit thousands of lines on a long download, and the failure path dumps the
+# whole capture into one log message - that is unbounded memory and an
+# unreadable log. A bounded tail keeps the lines that actually matter (the
+# error, the last few retries, the final state) and says so out loud.
+MAX_CAPTURED_OUTPUT_LINES = 200
+
+# yt-dlp passes the URL and every extractor arg on the command line, and the
+# failure log dumps the whole command. Query strings can carry session tokens
+# and user-provided args (cookies, headers) can carry secrets, so the command
+# is redacted before it is logged - the arguments are never secrets here.
+_REDACTED_ARG = "***"
+_SENSITIVE_ARG_FLAGS = {
+    "--cookies",
+    "--cookies-from-browser",
+    "--cookie",
+    "--header",
+    "--extractor-args",
+    "--username",
+    "--password",
+    "--netrc",
+    "--video-password",
+}
+
+
+def _redact_command(cmd):
+    """Return a copy of `cmd` with the value of sensitive flags redacted.
+
+    The flag itself is kept (so the log shows what was requested) but its
+    argument is replaced, so a token in a cookie or a password never reaches
+    the log. Positional arguments (the URL, the output template) are left
+    alone: they are what the user asked for and are needed to identify the
+    failed job.
+    """
+    redacted = []
+    skip_next = False
+    for item in cmd:
+        if skip_next:
+            skip_next = False
+            redacted.append(_REDACTED_ARG)
+            continue
+        redacted.append(item)
+        if item in _SENSITIVE_ARG_FLAGS:
+            skip_next = True
+    return redacted
+
+
+def _format_captured_output(captured_output, truncated):
+    """Render the failure capture as one log string, noting truncation.
+
+    yt-dlp can emit thousands of lines on a long download, so only the
+    bounded tail is kept. Saying so out loud matters: a truncated capture
+    presented as complete would mislead anyone debugging from the log.
+    """
+    if not captured_output:
+        return ""
+    body = "\n".join(captured_output)
+    if truncated:
+        return (
+            f"Download failed — captured output (last "
+            f"{len(captured_output)} of {MAX_CAPTURED_OUTPUT_LINES}+ lines):\n"
+            + body
+        )
+    return "Download failed — captured output:\n" + body
+
 
 class DownloadMixin:
     def _emit(self, name, *args):
@@ -497,6 +562,20 @@ class DownloadMixin:
         removed_sb_segments = []
         # Capture output lines for logging on failure
         captured_output = []
+        # Set when the bounded tail drops earlier lines, so the failure log
+        # can say so instead of presenting a truncated capture as complete.
+        captured_output_truncated = False
+        # Track whether the failure-sidecar step already ran, so a Python
+        # exception raised by the sidecar attempt itself is not retried
+        # (duplicate .nfo/.edl writes). Both the nonzero-exit branch below
+        # and the except branch share this flag.
+        sidecars_attempted = False
+        # True once the media file is confirmed on disk, so the except branch
+        # can tell "the download actually landed" apart from "it failed".
+        # An exception during post-download work (subtitle resync, EDL/NFO,
+        # analysis) must not be reported as a media failure or rewrite the
+        # sidecars the success path already wrote.
+        media_downloaded = False
         try:
             if self.simulate_download_error:
                 raise RuntimeError("Simulated download error (testing flag enabled)")
@@ -508,8 +587,11 @@ class DownloadMixin:
             )
             self._emit("append_output", format_line)
             captured_output.append(format_line)
-            # Capture the command for error logging
-            cmd_line = "🖥️ " + " ".join(str(item) for item in cmd if item)
+            # Capture the command for error logging, redacting any argument
+            # that could carry a secret (cookies, headers, password, ...).
+            cmd_line = "🖥️ " + " ".join(
+                str(item) for item in _redact_command(cmd) if item
+            )
             captured_output.append(cmd_line)
             process = subprocess.Popen(
                 cmd,
@@ -548,12 +630,24 @@ class DownloadMixin:
                 # universal newlines already splits them, but strip any
                 # leading "\r" so the line reliably starts with "[download]".
                 line = line.lstrip("\r").rstrip()
-                # Capture error-relevant lines for logging on failure
-                if line and not line.startswith("[download]") and not line.startswith("["):
-                    # Skip progress lines, but capture other output
-                    pass
-                if any(keyword in line.lower() for keyword in ("error", "warning", "http", "403", "404", "sign in", "geo", "unavailable", "private", "members")):
+                # Capture error-relevant lines for the failure log. yt-dlp
+                # prints thousands of progress lines on a long download, so
+                # only lines that actually say something about the failure are
+                # kept - and the list is bounded below so a runaway process
+                # cannot grow memory without limit.
+                if any(
+                    keyword in line.lower()
+                    for keyword in (
+                        "error", "warning", "http", "403", "404",
+                        "sign in", "geo", "unavailable", "private", "members",
+                    )
+                ):
                     captured_output.append(line)
+                    if len(captured_output) > MAX_CAPTURED_OUTPUT_LINES:
+                        captured_output = captured_output[
+                            -MAX_CAPTURED_OUTPUT_LINES:
+                        ]
+                        captured_output_truncated = True
                 state = self._parse_download_output(line, state)
 
             process.wait()
@@ -616,6 +710,11 @@ class DownloadMixin:
                             "🚩 yt-dlp exited successfully but no output file was found"
                         )
                         exit_code = -1
+                    else:
+                        # The media file is on disk: a later exception in
+                        # post-download work is not a media failure, and the
+                        # success-path sidecars must not be rewritten.
+                        media_downloaded = True
 
             if exit_code == 0:
                 if media_type == "subtitles":
@@ -684,6 +783,9 @@ class DownloadMixin:
                 if state["merged_filename"] and self.video_state.get("media_type") != "subtitles":
                     removed_sb_segments = self.create_edl_file(state["merged_filename"])
                     self.create_nfo_file(state["merged_filename"])
+                    # The success path wrote the sidecars; a later exception
+                    # (subtitle resync, analysis, ...) must not rewrite them.
+                    sidecars_attempted = True
 
                 # Cleanup (deletes .info.json and original subtitles)
                 self.cleanup_files(selected_langs)
@@ -716,18 +818,52 @@ class DownloadMixin:
                     )
                     # Log captured error-relevant output for debugging
                     if captured_output:
-                        logger.error("Download failed — captured output:\n" + "\n".join(captured_output))
+                        logger.error(
+                            _format_captured_output(
+                                captured_output, captured_output_truncated
+                            )
+                        )
                     # Attempt to create metadata sidecar files (.edl, .nfo)
                     # even when the media download failed: yt-dlp writes
                     # .info.json and the info-fetch already retrieved all
                     # metadata (title, description, SponsorBlock segments).
-                    self._try_create_sidecar_files()
+                    # Sidecars are video-oriented (an .edl jumps a media
+                    # timeline, an .nfo describes an episode), so they only
+                    # make sense for a job that was supposed to produce
+                    # video — a subtitles-only or audio-only failure is not
+                    # one, and naming it "media download failed" is wrong.
+                    # Shared with the except branch via
+                    # _finalize_failure_sidecars(); cancellation is excluded
+                    # there and sidecars_attempted prevents a double attempt.
+                    # The nonzero-exit branch is a genuine media failure, so
+                    # media_downloaded is False here.
+                    self._finalize_failure_sidecars(cmd, media_downloaded=False)
+                    sidecars_attempted = True
 
         except Exception as e:
             self._emit("append_output", f"🚩 An unexpected error occurred: {e}")
             logger.error(f"Download failed with exception: {e}")
             if captured_output:
-                logger.error("Download failed — captured output:\n" + "\n".join(captured_output))
+                logger.error(
+                    _format_captured_output(
+                        captured_output, captured_output_truncated
+                    )
+                )
+            # A Python exception can land here from two very different places:
+            # before the media file exists (a real download failure, where
+            # yt-dlp still wrote .info.json and sidecars are useful) or after
+            # it does (subtitle resync, EDL/NFO, analysis - the download
+            # itself succeeded). Only the first case is a media failure, and
+            # only it should attempt sidecars: the success path already wrote
+            # them, so a post-download exception must not rewrite them or
+            # report the media as failed. Cancellation is excluded (nothing to
+            # finalize for a user stop), and sidecars_attempted prevents the
+            # sidecar attempt itself from being retried.
+            if (
+                not self._cancelled
+                and not sidecars_attempted
+            ):
+                self._finalize_failure_sidecars(cmd, media_downloaded)
         finally:
             # Drop the process handle so a later cancel cannot reach a stale
             # PID, and capture the verdict before the flag is reset.
@@ -1179,6 +1315,42 @@ class DownloadMixin:
             gc.collect()
 
         return metadata
+
+    def _finalize_failure_sidecars(self, cmd, media_downloaded=False):
+        """Run the failure-sidecar step exactly once, regardless of how the
+        run failed.
+
+        yt-dlp writes .info.json before downloading, so even a nonzero exit
+        or a Python exception raised after that point has all the metadata
+        needed (title, description, SponsorBlock segments). The media-type
+        gate and the "no video sidecars" message live here so the nonzero-exit
+        branch and the except branch behave identically. Cancellation is
+        excluded by the caller, and `sidecars_attempted` ensures this is never
+        invoked twice for one run.
+
+        `media_downloaded` is True when the media file is already on disk -
+        an exception that lands here from post-download work (subtitle
+        resync, analysis, ...) is then not a media failure, so the "Media
+        download failed" line is not printed even though the sidecars may
+        still be written (they were not, because the success path already
+        wrote them and set sidecars_attempted).
+        """
+        media_type = self.video_state.get("media_type", "video")
+        if media_type not in ("video", "video_only"):
+            operation = self.describe_format_choice(cmd, media_type)
+            self._emit("append_output",
+                f"⚠️ {operation} failed; no video sidecars to generate."
+            )
+            return
+        if media_downloaded:
+            self._emit("append_output",
+                "⚠️ Post-download processing failed; the media file is on disk."
+            )
+        try:
+            self._try_create_sidecar_files()
+        except Exception as e:
+            self._emit("append_output", f"🚩 Error creating sidecar files: {e}")
+            logger.error(f"Sidecar creation failed: {e}")
 
     def _try_create_sidecar_files(self):
         """Attempt to create .edl and .nfo files even when the media download failed.

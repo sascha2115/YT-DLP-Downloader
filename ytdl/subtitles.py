@@ -367,11 +367,21 @@ class SubtitleMixin:
         # First pass: collect all subtitles and find max time
         for block in blocks:
             lines = block.split("\n")
-            if len(lines) < 3:
+
+            # Locate the timestamp line rather than assuming a fixed index:
+            # standard SRT blocks may omit the cue number, or carry a cue
+            # identifier on the line before the timestamp. Taking the first
+            # line that matches the arrow form keeps both shapes valid; lines
+            # before it (a number, an identifier, ...) are simply ignored.
+            time_index = None
+            for i, candidate in enumerate(lines):
+                if re.match(r"[\d:,]+\s+-->\s+[\d:,]+", candidate):
+                    time_index = i
+                    break
+            if time_index is None:
                 continue
 
-            # Parse timestamps
-            time_line = lines[1]
+            time_line = lines[time_index]
             match = re.match(r"([\d:,]+)\s+-->\s+([\d:,]+)", time_line)
             if not match:
                 continue
@@ -382,9 +392,10 @@ class SubtitleMixin:
 
             max_time = max(max_time, end_sec)
 
-            # Convert any multi-line subtitle block into a single line.
-            # This is crucial for the 2-line merging logic later
-            raw_text = "\n".join(lines[2:])
+            # Everything after the timestamp is the cue text; a block may
+            # carry more than one line, and the first of those is the text
+            # (not a cue number or identifier, which only precede the arrow).
+            raw_text = "\n".join(lines[time_index + 1:])
             # Filter out ">>" artifacts often found in auto-generated captions
             clean_text = re.sub(r'^>>\s*', '', raw_text, flags=re.MULTILINE).strip()
             # Remove non-spoken tokens in square brackets, e.g. [laughter],

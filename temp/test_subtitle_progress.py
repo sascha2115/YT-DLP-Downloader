@@ -457,6 +457,7 @@ class UiHarness:
         self.output_dir_entry = FakeCheckbox()
         self.browse_button = FakeCheckbox()
         self.download_button = FakeCheckbox()
+        self.subs_button = FakeCheckbox()
         self.thumbnail_button = FakeCheckbox()
         self.sb_all_checkbox = FakeCheckbox("All")
         self.sb_checkbox_map = {FakeCheckbox("Sponsor"): "sponsor"}

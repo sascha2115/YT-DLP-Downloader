@@ -69,14 +69,16 @@ class _DownloadHarness(app.DownloadMixin):
         self.base_path = base_path
         self.fail_metadata = fail_metadata
         self.direct_clear_dock_calls = 0
+        self.sidecar_attempts = 0
+        self.video_state["base_filename"] = "Title"
         # Cancellation state: run_download() sets _proc and clears both of
         # these in its finally block.
         self._proc = None
         self._cancelled = False
         self._shutting_down = False
 
-    def get_full_path(self):
-        return self.base_path
+    def get_full_path(self, extension=""):
+        return self.base_path + extension
 
     def get_file_metadata(self, _filename):
         if self.fail_metadata:
@@ -87,10 +89,18 @@ class _DownloadHarness(app.DownloadMixin):
         pass
 
     def create_edl_file(self, _filename):
+        # The success path writes sidecars through create_edl_file/create_nfo_file
+        # directly; the failure path through _try_create_sidecar_files. Count
+        # both so a test can tell whether the failure path re-entered after
+        # the success path already wrote them.
+        self.sidecar_attempts += 1
         return []
 
     def create_nfo_file(self, _filename):
-        pass
+        self.sidecar_attempts += 1
+
+    def _try_create_sidecar_files(self):
+        self.sidecar_attempts += 1
 
     def cleanup_files(self, _selected_langs):
         pass
@@ -284,6 +294,225 @@ class TestDownloadCompletion(unittest.TestCase):
             ("Download Error 🚨",),
         )
 
+    def test_failure_on_video_creates_sidecars(self):
+        # A failed video job still has .info.json, so the metadata sidecars
+        # (.edl, .nfo) are generated in the failure path.
+        harness = self._run(returncode=1, media_type="video")
+        self.assertEqual(harness.sidecar_attempts, 1)
+
+    def test_failure_on_video_only_creates_sidecars(self):
+        harness = self._run(returncode=1, media_type="video_only")
+        self.assertEqual(harness.sidecar_attempts, 1)
+
+    def test_failure_on_audio_does_not_create_sidecars(self):
+        # Sidecars are video-oriented (an .edl jumps a media timeline, an .nfo
+        # describes an episode); an audio-only failure has no video to attach
+        # them to, so the failure path must not generate them.
+        harness = self._run(returncode=1, media_type="audio")
+        self.assertEqual(harness.sidecar_attempts, 0)
+        self.assertTrue(
+            any("no video sidecars" in line for line in self._output_lines(harness)),
+            self._output_lines(harness),
+        )
+
+    def test_failure_on_subtitles_does_not_create_sidecars(self):
+        # A subtitles-only job never produced media; generating an .nfo/.edl
+        # for it would describe a video that does not exist.
+        harness = self._run(returncode=1, media_type="subtitles")
+        self.assertEqual(harness.sidecar_attempts, 0)
+
+    def test_exception_after_download_creates_sidecars(self):
+        # A Python exception raised after yt-dlp wrote its .info.json (e.g.
+        # a post-processing failure) must still attempt sidecars — the same
+        # nonzero-exit branch does not cover it.
+        harness = self._run(returncode=0, fail_metadata=True, media_type="video")
+        self.assertEqual(harness.sidecar_attempts, 1)
+
+    def test_exception_on_audio_does_not_create_sidecars(self):
+        harness = self._run(
+            returncode=0, fail_metadata=True, media_type="audio"
+        )
+        self.assertEqual(harness.sidecar_attempts, 0)
+        self.assertTrue(
+            any("no video sidecars" in line for line in self._output_lines(harness)),
+            self._output_lines(harness),
+        )
+
+    def test_exception_on_subtitles_does_not_create_sidecars(self):
+        harness = self._run(
+            returncode=0, fail_metadata=True, media_type="subtitles"
+        )
+        self.assertEqual(harness.sidecar_attempts, 0)
+
+    def test_cancelled_run_never_attempts_sidecars(self):
+        # A user stop is not a failure; nothing to finalize.
+        harness = self._run(returncode=0, cancelled=True, media_type="video")
+        self.assertEqual(harness.sidecar_attempts, 0)
+
+    def test_sidecar_attempt_failure_is_not_retried(self):
+        # If the sidecar step itself raises, the flag must stop a second
+        # attempt — the except branch must not re-enter it.
+        class _Harness(_DownloadHarness):
+            def _try_create_sidecar_files(self):
+                self.sidecar_attempts += 1
+                raise RuntimeError("sidecar boom")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _Harness(base_path, media_type="video")
+            process = _Process(lines, 1)
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                harness.run_download(["yt-dlp"], [])
+            self.assertEqual(harness.sidecar_attempts, 1)
+            self.assertTrue(
+                any("Error creating sidecar files" in line
+                    for line in self._output_lines(harness)),
+                self._output_lines(harness),
+            )
+
+    def test_exception_after_sidecars_are_written_is_not_rewritten(self):
+        # The nuance: an exception raised AFTER the success path wrote the
+        # sidecars (here, during post-download analysis) must not rewrite them
+        # — the success path marks them attempted, so the except branch skips
+        # the failure path entirely. The media file is on disk, so the failure
+        # line must not call it a media failure either.
+        class _Harness(_DownloadHarness):
+            def _analyze_downloaded_file(self, _filename):
+                raise RuntimeError("analysis boom")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _Harness(base_path, media_type="video")
+            process = _Process(lines, 0)
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                harness.run_download(["yt-dlp"], [])
+            # The success path wrote the sidecars once (EDL + NFO); the
+            # except branch did not re-enter _try_create_sidecar_files.
+            self.assertEqual(harness.sidecar_attempts, 2)
+            output_lines = self._output_lines(harness)
+            self.assertTrue(
+                any("analysis boom" in line for line in output_lines),
+                output_lines,
+            )
+            self.assertFalse(
+                any("Media download failed" in line for line in output_lines),
+                output_lines,
+            )
+
 
 if __name__ == "__main__":
-    unittest.main()
+        unittest.main()
+
+
+class _ProcessManyLines(_Process):
+    """A process that emits one error line per read, to drive the bound."""
+
+    def __init__(self, lines, returncode, n):
+        self._lines = list(lines)
+        self._extra = n
+        self.returncode = returncode
+        self.pid = 4321
+        # run_download() iterates process.stdout, so expose the iterator here.
+        self.stdout = self
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._lines:
+            return self._lines.pop(0)
+        if self._extra > 0:
+            self._extra -= 1
+            return "error: something went wrong again"
+        raise StopIteration
+
+
+class TestCapturedErrorOutput(unittest.TestCase):
+    """The failure log keeps a bounded tail and redacts secrets."""
+
+    def _run_many(self, n, returncode=1, media_type="video"):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _DownloadHarness(base_path, media_type=media_type)
+            process = _ProcessManyLines(lines, returncode, n)
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                with self.assertLogs("ytdl.download", level="ERROR") as captured:
+                    harness.run_download(["yt-dlp"], [])
+            return harness, captured.output
+
+    def test_capture_is_bounded(self):
+        # yt-dlp can emit thousands of error lines on a long download; the
+        # failure log keeps a bounded tail instead of growing without limit.
+        harness, logs = self._run_many(5000)
+        self.assertTrue(any("captured output" in line for line in logs))
+        # The tail is the last MAX_CAPTURED_OUTPUT_LINES lines, so the count
+        # in the log must not exceed the bound.
+        for line in logs:
+            if "captured output" in line:
+                self.assertIn("of 200+ lines", line)
+
+    def test_truncation_is_announced(self):
+        _, logs = self._run_many(5000)
+        self.assertTrue(
+            any("200+ lines" in line for line in logs),
+            logs,
+        )
+
+    def test_untruncated_capture_says_nothing_about_truncation(self):
+        # A short failure must not claim a tail that did not happen.
+        _, logs = self._run_many(3)
+        self.assertFalse(any("200+" in line for line in logs), logs)
+
+    def test_sensitive_command_args_are_redacted(self):
+        # Cookies, headers, passwords and extractor args carry secrets; the
+        # logged command must show the flag but never its value.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "Title")
+            media_path = base_path + ".mp4"
+            with open(media_path, "wb") as output:
+                output.write(b"test")
+            lines = [
+                f"[download] Destination: {media_path}",
+                "[download] 100% of 1.00MiB in 00:00:01",
+            ]
+            harness = _DownloadHarness(base_path, media_type="video")
+            process = _Process(lines, 1)
+            cmd = [
+                "yt-dlp",
+                "--cookies-from-browser",
+                "firefox:1abc.default-release",
+                "--header",
+                "Authorization: Bearer secret",
+                "https://example.com/watch?v=abc",
+            ]
+            with mock.patch.object(app.subprocess, "Popen", return_value=process):
+                with self.assertLogs("ytdl.download", level="ERROR") as captured:
+                    harness.run_download(cmd, [])
+            joined = "\n".join(captured.output)
+            self.assertIn("***", joined)
+            self.assertNotIn("1abc.default-release", joined)
+            self.assertNotIn("Bearer secret", joined)
+            # The URL is not a secret and is kept, so the failed job is
+            # identifiable from the log.
+            self.assertIn("https://example.com/watch?v=abc", joined)

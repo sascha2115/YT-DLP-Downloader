@@ -755,6 +755,15 @@ class TestReloadButton(unittest.TestCase):
         src = inspect.getsource(app.YTDLPDownloaderGUI._set_ui_enabled_state)
         self.assertIn("self.reload_button", src)
 
+    def test_subs_button_in_enable_list(self):
+        # The Subs button (standalone SRT processing) must be disabled
+        # together with the other primary controls while a download is
+        # running — otherwise a user can open and reprocess an SRT file
+        # that yt-dlp or the worker's subtitle post-processing is writing.
+        import inspect
+        src = inspect.getsource(app.YTDLPDownloaderGUI._set_ui_enabled_state)
+        self.assertIn("self.subs_button", src)
+
     def test_click_triggers_fetch(self):
         calls = []
 

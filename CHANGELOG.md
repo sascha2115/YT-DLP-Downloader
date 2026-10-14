@@ -26,6 +26,15 @@ disagree, this file is right.
 
 ---
 
+## 1.4.7 — 2026-10-14
+
+- **Subs button is now disabled during a download.** Previously the standalone SRT converter stayed clickable while yt-dlp or the worker's subtitle post-processing was writing the same file, which could race a read against a write. The button now disables with the rest of the primary controls, and the handler refuses to run while a download is in flight.
+- **Subs accepts standard SRT variants.** A block may now omit its cue number or carry a cue identifier on the line before the timestamp; the parser locates the timestamp line by content instead of assuming it is the second line. Files written in either shape no longer report "No changes made".
+- **Failure sidecars are scoped to video jobs.** A failed audio-only or subtitles-only download no longer generates an `.nfo`/`.edl` (they describe a video episode) and the failure line names the requested operation instead of saying "media download failed".
+- **Error logs are bounded and redacted.** yt-dlp output kept for a failure log is capped at a tail of 200 lines (with the truncation stated) and the logged command redacts the value of `--cookies-from-browser`, `--header`, `--extractor-args`, `--username`, `--password`, `--netrc` and `--video-password`; the URL and output template are kept so the failed job stays identifiable.
+
+---
+
 ## 1.4.6 — 2026-10-14
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.6) · tag `v1.4.6`

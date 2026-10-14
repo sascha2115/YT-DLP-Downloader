@@ -212,6 +212,58 @@ class TestSubtitlePostProcessing(unittest.TestCase):
                 self.assertIn("Hello", f.read())
             self.assertFalse(os.path.exists(output + ".tmp"))
 
+    def _write_and_run(self, temp_dir, block_text, name="Title.srt"):
+        source = os.path.join(temp_dir, name)
+        output = os.path.join(temp_dir, name)
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(block_text)
+        return self.gui.resync_subtitles(source, output), source, output
+
+    def test_block_without_a_cue_number_is_processed(self):
+        # A valid SRT block may omit the cue number entirely; the parser must
+        # find the timestamp line by content, not by assuming lines[1].
+        with tempfile.TemporaryDirectory() as temp_dir:
+            block = (
+                "00:00:00,000 --> 00:00:01,000\n"
+                "No cue number here.\n\n"
+            )
+            result, source, output = self._write_and_run(temp_dir, block)
+            self.assertTrue(result, "block without a cue number was ignored")
+            with open(output, encoding="utf-8") as f:
+                self.assertIn("No cue number here", f.read())
+
+    def test_block_with_a_cue_identifier_is_processed(self):
+        # Some SRT writers put a cue identifier on the line before the
+        # timestamp; the text after the arrow is still the cue text.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            block = (
+                "1\n"
+                "cue-identifier-42\n"
+                "00:00:00,000 --> 00:00:01,000\n"
+                "Identifier before the timestamp.\n\n"
+            )
+            result, source, output = self._write_and_run(temp_dir, block)
+            self.assertTrue(result, "block with a cue identifier was ignored")
+            with open(output, encoding="utf-8") as f:
+                self.assertIn("Identifier before the timestamp", f.read())
+
+    def test_mixed_block_shapes_in_one_file(self):
+        # A file mixing numbered, unnumbered and identifier-led blocks must
+        # not lose any of them - the fixed-index assumption would silently
+        # drop the unnumbered and identifier-led cues.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            block = (
+                "1\n00:00:00,000 --> 00:00:01,000\nFirst.\n\n"
+                "00:00:01,000 --> 00:00:02,000\nSecond.\n\n"
+                "2\nid-7\n00:00:02,000 --> 00:00:03,000\nThird.\n\n"
+            )
+            result, source, output = self._write_and_run(temp_dir, block)
+            self.assertTrue(result)
+            with open(output, encoding="utf-8") as f:
+                content = f.read()
+            for word in ("First.", "Second.", "Third."):
+                self.assertIn(word, content, f"lost cue: {word}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -548,6 +548,7 @@ class UiBuildMixin:
             self.output_dir_entry,
             self.browse_button,
             self.download_button,
+            self.subs_button,
             self.sb_all_checkbox,
         ]
         for control in controls:
