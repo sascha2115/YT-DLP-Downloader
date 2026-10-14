@@ -220,9 +220,15 @@ class YTDLPDownloaderGUI(
         self.signals.set_download_button_status.connect(self.set_download_button_status)
         self.signals.set_cancel_button_visible.connect(self.set_cancel_button_visible)
         self.signals.thumbnail_ready.connect(self._show_thumbnail_dialog)
+        self.signals.thumbnail_error.connect(self._append_thumbnail_error)
 
         # Guard: prevent concurrent thumbnail fetches from double-clicking Info
         self._fetching_thumbnail = False
+        # Thumbnail request token. Each Info click bumps it, so a stale
+        # response — success or failure — cannot clear a newer request's
+        # in-flight guard. Both receivers only act when the token still matches
+        # the current request.
+        self._thumbnail_request_token = 0
         # Last (video, audio) progress values, kept so the bars can be restored
         self._last_progress_values = (0, 0)
 
@@ -870,6 +876,20 @@ class YTDLPDownloaderGUI(
         the event loop interleave.
         """
         if generation != self._sb_generation:
+            return
+        self.append_output_text(text)
+
+    def _append_thumbnail_error(self, text, token):
+        """Slot for signals.thumbnail_error (thumbnail fetch failures).
+
+        Scoped to the thumbnail request and gated on the request token, the
+        same way the bar update and the SponsorBlock log lines are gated: a
+        failure for an old request must not be logged after the user has
+        clicked Info on a new video. The token is bumped on the main thread at
+        each click and read back here, so the comparison is decisive regardless
+        of how the worker and the event loop interleave.
+        """
+        if token != self._thumbnail_request_token:
             return
         self.append_output_text(text)
 

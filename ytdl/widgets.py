@@ -65,14 +65,18 @@ class SignalEmitter(QObject):
     set_download_button_label = pyqtSignal(str)
     set_download_button_status = pyqtSignal(str)
     set_cancel_button_visible = pyqtSignal(bool)
-    thumbnail_ready = pyqtSignal(bytes, str, str)
-    # The three args are the image bytes, the description captured alongside
-    # the URL at click time, and the URL itself. The worker fetches the image
-    # on a daemon thread, so by the time it arrives the user may have switched
-    # videos; reading the description from live video_state in the receiver
-    # would pair an old image with a new video's description. Capturing all
-    # three together, and discarding the response when the URL is no longer
-    # current, keeps the dialog's metadata consistent.
+    thumbnail_ready = pyqtSignal(bytes, str, str, int)
+    # The four args are the image bytes, the description captured alongside
+    # the URL at click time, the URL itself, and a request token. The worker
+    # fetches the image on a daemon thread, so by the time it arrives the user
+    # may have switched videos; reading the description from live video_state
+    # in the receiver would pair an old image with a new video's description.
+    # Capturing all four together, and only acting when the token still matches
+    # the current request, keeps the dialog's metadata consistent — and keeps
+    # a stale request from clearing a newer request's in-flight guard.
+    # Scoped rather than tacked onto append_output, because the download
+    # worker also writes to append_output legitimately.
+    thumbnail_error = pyqtSignal(str, int)
     # Standalone SRT conversion: the worker emits this when it is done, so the
     # main thread can re-enable the controls without the handler having to
     # know whether the worker succeeded, failed or was interrupted.

@@ -45,12 +45,21 @@ class Harness:
             "description": description,
         }
         self.thumbnail_ready = _Signal()
+        self.thumbnail_error = _Signal()
         self.append_output = _Signal()
+        # The real slot's except branch emits on signals.append_output, so the
+        # harness needs a stand-in for it when the dialog path is exercised.
+        self.signals = _Signal()
+        self.signals.append_output = _Signal()
         self._fetching_thumbnail = False
+        self._thumbnail_request_token = 0
         self._image = image
 
     def _emit(self, name, *args):
         getattr(self, name).emit(*args)
+
+    def append_output_text(self, text):
+        pass
 
     def _requests_get(self, url, timeout=None):
         # Simulate a slow fetch: block until the test releases the gate.
@@ -89,10 +98,11 @@ class TestThumbnailDialogMetadata(unittest.TestCase):
                 "thumbnail_ready was never emitted",
             )
 
-        image, description, snapshot_url = h.thumbnail_ready.emitted[0]
+        image, description, snapshot_url, token = h.thumbnail_ready.emitted[0]
         self.assertEqual(image, h._image)
         self.assertEqual(description, "Description of video A")
         self.assertEqual(snapshot_url, "https://example.com/a.png")
+        self.assertEqual(token, 1)
 
     def test_a_superseded_url_is_discarded_at_the_receiver(self):
         """A response for a video the user already switched away from is dropped."""
@@ -108,7 +118,7 @@ class TestThumbnailDialogMetadata(unittest.TestCase):
                 "thumbnail_ready was never emitted",
             )
 
-        image, description, snapshot_url = h.thumbnail_ready.emitted[0]
+        image, description, snapshot_url, token = h.thumbnail_ready.emitted[0]
         # The receiver compares the captured URL against the current one and
         # returns early when they differ — before any Qt construction. Drive
         # the real method on a harness whose current URL no longer matches,
@@ -116,9 +126,10 @@ class TestThumbnailDialogMetadata(unittest.TestCase):
         constructed = []
 
         class _Harness:
-            def __init__(self, current_url):
+            def __init__(self, current_url, token):
                 self.video_state = {"thumbnail_url": current_url}
                 self._fetching_thumbnail = True
+                self._thumbnail_request_token = token
 
             def append_output_text(self, text):
                 pass
@@ -138,10 +149,11 @@ class TestThumbnailDialogMetadata(unittest.TestCase):
         ui_build.QDialog = _RecordingDialog
         try:
             show_thumbnail_dialog(
-                _Harness("https://example.com/b.png"),
+                _Harness("https://example.com/b.png", token),
                 image,
                 description,
                 snapshot_url,
+                token,
             )
         finally:
             ui_build.QDialog = original_dialog
@@ -150,6 +162,74 @@ class TestThumbnailDialogMetadata(unittest.TestCase):
             [],
             "a superseded thumbnail response must not construct a dialog",
         )
+
+    def test_a_stale_request_cannot_clear_a_newer_request_in_flight_guard(self):
+        """The receiver resets the guard only for the matching request token.
+
+        The worker used to reset _fetching_thumbnail unconditionally in its
+        finally, and the receiver did the same. If a newer request started
+        while an older one was in flight, the older result's receiver would
+        reset the flag again — even when it rejected the result as stale —
+        clearing the newer request's guard. The token is now checked on both
+        sides, so a stale delivery cannot touch it.
+        """
+        # Stub the Qt classes so the real method can run without a QApplication.
+        original_dialog = ui_build.QDialog
+        original_browser = ui_build.QTextBrowser
+        original_label = ui_build.QLabel
+        original_shortcut = ui_build.QShortcut
+        original_pixmap = ui_build.QPixmap
+
+        class _Stub:
+            def __init__(self, *a, **k):
+                pass
+
+            def setWindowTitle(self, _):
+                pass
+
+            def exec(self):
+                pass
+
+        ui_build.QDialog = _Stub
+        ui_build.QTextBrowser = _Stub
+        ui_build.QLabel = _Stub
+        ui_build.QShortcut = _Stub
+        ui_build.QPixmap = _Stub
+        try:
+            # Drive the receiver directly with a stale token but a matching
+            # URL: the URL check alone would not catch this case, so the token
+            # check is what must keep the guard live.
+            guard_harness = Harness("https://example.com/b.png", "Description of video B")
+            guard_harness._thumbnail_request_token = 2
+            guard_harness._fetching_thumbnail = True
+            show_thumbnail_dialog(
+                guard_harness, b"\x89PNG", "Description of video A", "https://example.com/b.png", 1
+            )
+            self.assertTrue(
+                guard_harness._fetching_thumbnail,
+                "a stale request must not clear a newer request's in-flight guard",
+            )
+
+            # And a matching token must reset it, so a finished request does
+            # not leave the button unclickable.
+            guard_harness._fetching_thumbnail = True
+            show_thumbnail_dialog(
+                guard_harness,
+                b"\x89PNG",
+                "Description of video B",
+                "https://example.com/b.png",
+                2,
+            )
+            self.assertFalse(
+                guard_harness._fetching_thumbnail,
+                "a matching request must reset the flight guard",
+            )
+        finally:
+            ui_build.QDialog = original_dialog
+            ui_build.QTextBrowser = original_browser
+            ui_build.QLabel = original_label
+            ui_build.QShortcut = original_shortcut
+            ui_build.QPixmap = original_pixmap
 
     def test_the_flight_guard_is_reset_even_if_the_emit_raises(self):
         """A failed delivery must not leave the Info button unclickable.

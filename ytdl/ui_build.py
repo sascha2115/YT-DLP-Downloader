@@ -679,6 +679,15 @@ class UiBuildMixin:
         # than shown over the new video's metadata.
         snapshot_url = thumbnail_url
         snapshot_description = self.video_state.get("description", "")
+        # Request token. Each click bumps it, so a stale response — success or
+        # failure — cannot clear a newer request's in-flight guard: both
+        # receivers only act when the token still matches the current request.
+        # The URL is re-checked in the receiver against the current
+        # thumbnail_url, so a queued delivery for a superseded video is dropped
+        # there too. The token is the first line of defence (it gates the guard
+        # reset and the error log); the URL check is the second.
+        self._thumbnail_request_token += 1
+        snapshot_token = self._thumbnail_request_token
 
         def _fetch_and_show():
             try:
@@ -688,8 +697,12 @@ class UiBuildMixin:
                     image_data = response.content
                 except Exception as e:
                     # Worker thread: route through _emit() so a close in flight
-                    # cannot emit into a destroyed QObject.
-                    self._emit("append_output", f"🚩 Error loading thumbnail: {e}")
+                    # cannot emit into a destroyed QObject. The token travels
+                    # with the message so a failure for an old request cannot
+                    # be logged over the new video.
+                    self._emit(
+                        "thumbnail_error", f"🚩 Error loading thumbnail: {e}", snapshot_token
+                    )
                     return
                 # Deliver bytes to the main thread via a queued signal — the only
                 # safe way to trigger Qt widget construction from a worker
@@ -700,23 +713,31 @@ class UiBuildMixin:
                 # image so the dialog cannot mix metadata from two different
                 # videos.
                 self._emit(
-                    "thumbnail_ready", image_data, snapshot_description, snapshot_url
+                    "thumbnail_ready", image_data, snapshot_description, snapshot_url, snapshot_token
                 )
             finally:
-                # Reset the flight guard on every exit path, including a raise
-                # from the emit itself. Without this, a failed delivery would
-                # leave the button unclickable for the rest of the session.
-                self._fetching_thumbnail = False
+                # Reset the flight guard only for this request. A stale
+                # response must not clear a newer request's guard, so the
+                # comparison happens here, on the worker, before the token is
+                # handed to the main thread.
+                if snapshot_token == self._thumbnail_request_token:
+                    self._fetching_thumbnail = False
 
         threading.Thread(target=_fetch_and_show, daemon=True).start()
 
-    def _show_thumbnail_dialog(self, image_data: bytes, description: str, snapshot_url: str):
-        self._fetching_thumbnail = False
+    def _show_thumbnail_dialog(self, image_data: bytes, description: str, snapshot_url: str, token: int):
+        # Reset the flight guard only for this request. A stale response must
+        # not clear a newer request's guard — if the token no longer matches,
+        # the guard stays live and the dialog is not shown.
+        if token == self._thumbnail_request_token:
+            self._fetching_thumbnail = False
         try:
             # The user may have switched videos while the image was in flight.
             # The URL was captured with the image, so compare against the
             # current one: a response for a superseded video must not be shown
-            # over the new video's metadata.
+            # over the new video's metadata. This is the second line of
+            # defence — the first is the request token, which is checked above
+            # and again on the worker before it emits.
             if snapshot_url != self.video_state.get("thumbnail_url", ""):
                 return
             # Create dialog

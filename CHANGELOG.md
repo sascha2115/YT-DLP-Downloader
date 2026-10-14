@@ -26,6 +26,13 @@ disagree, this file is right.
 
 ---
 
+## 1.4.19 — 2026-10-14
+
+- **The thumbnail dialog is now gated by a request token, not just the URL.** A stale request could clear a newer request's in-flight guard: the worker reset `_fetching_thumbnail` in its `finally` as soon as it emitted the queued result, and the receiver reset it again even when it rejected the result as stale. Each Info click now bumps a token carried on both the success and error signals, and both the worker's `finally` and the receiver only reset the guard when the token still matches the current request — so an older response cannot clear a newer one's guard. The error path also moved onto a scoped `thumbnail_error` signal carrying the token, with its own receiver dropping a failure for an old request.
+- **A comment claimed the worker re-checked the URL before emitting; it did not.** The URL check lives in the receiver, and the comment now says so, with the token as the first line of defence and the URL check the second.
+
+---
+
 ## 1.4.18 — 2026-10-14
 
 - **The thumbnail signal and its use now agree on argument count.** `thumbnail_ready` was declared with two args (bytes, str) but the worker emitted three (image, description, url) and the receiver expected all three. A mismatched emit can raise a PyQt argument-count error, and because it sat outside the worker's try block the result would not be shown and `_fetching_thumbnail` would not be reset — leaving the Info button unclickable for the rest of the session. The signal now declares all three, and the emit sits inside a `try/finally` that resets the flight guard on every exit path, including a raise from the emit itself.
