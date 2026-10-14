@@ -85,6 +85,7 @@ from ytdl.utils import (  # noqa: F401
     find_binary,
     get_log_dir,
     resource_path,
+    version_header,
 )
 from ytdl.widgets import SignalEmitter  # noqa: F401
 from ytdl.download import DownloadMixin  # noqa: F401
@@ -613,7 +614,7 @@ class YTDLPDownloaderGUI(
     def clear_output(self):
         self.output_text.clear()
         # Keep the header line visible even while we are fetching video info
-        self.output_text.append("YT-DLP Downloader " + APP_VERSION)
+        self.output_text.append(version_header())
         self.output_text.append("Supported: " + SUPPORTED_SITES_LABEL)
         self._reset_download_progress_bars()
 

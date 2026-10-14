@@ -26,6 +26,17 @@ disagree, this file is right.
 
 ---
 
+## Unreleased
+
+- **The output panel header now names the commit the app was built from**,
+  after the version: `YT-DLP Downloader 1.4.23 [babb7fb]`. A version can
+  cover many commits, so this ties a bug report to an exact checkout. When
+  the commit cannot be determined — a packaged `.app` bundle ships no
+  repository, or git is missing — the header shows the version alone rather
+  than failing, so nothing changes for those runs.
+
+---
+
 ## 1.4.23 — 2026-10-14
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.4.23) · tag `v1.4.23`

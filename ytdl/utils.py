@@ -4,9 +4,12 @@ import glob
 import os
 import re
 import shutil
+import subprocess
 import sys
 import sysconfig
 import unicodedata
+
+from ytdl import APP_VERSION
 
 
 # ------------------------------------------------------------------------------------------
@@ -48,6 +51,61 @@ def get_log_dir():
         os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")),
         "YT-DLP Downloader",
     )
+
+
+# ----------------------------------------------------------------------------------------------------
+# Build identity
+# ----------------------------------------------------------------------------------------------------
+# The commit the running code came from, so a bug report can be tied to an
+# exact checkout rather than to a version number that may cover many commits.
+# Resolved once and cached: it shells out to git, so it must not run per call,
+# and it must never be able to fail the app.
+_GIT_COMMIT_CACHE = None
+# Guard the shape, not just git's exit code: a wrapper or alias could print
+# something that is not a hash at all.
+_GIT_COMMIT_RE = re.compile(r"[0-9a-f]{7,40}")
+
+
+def get_git_commit_short():
+    """Short commit hash of the checkout this runs from; "" when unknown.
+
+    Every failure mode collapses to "": no git binary, no .git directory (a
+    PyInstaller bundle ships no repository), a timeout, a nonzero exit or
+    output that is not a hash. The header line then shows the version alone
+    instead of the app refusing to start over a cosmetic detail.
+    """
+    global _GIT_COMMIT_CACHE
+    if _GIT_COMMIT_CACHE is not None:
+        return _GIT_COMMIT_CACHE
+
+    # Unknown until proven otherwise, so an early return still caches the
+    # negative answer and a broken git is not re-shelled on every call.
+    _GIT_COMMIT_CACHE = ""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if not os.path.isdir(os.path.join(repo_root, ".git")):
+        return _GIT_COMMIT_CACHE
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return _GIT_COMMIT_CACHE
+    if result.returncode == 0 and _GIT_COMMIT_RE.fullmatch(result.stdout.strip()):
+        _GIT_COMMIT_CACHE = result.stdout.strip()
+    return _GIT_COMMIT_CACHE
+
+
+def version_header():
+    """Output-panel header: version, plus the commit when it is known."""
+    commit = get_git_commit_short()
+    if commit:
+        return f"YT-DLP Downloader {APP_VERSION} [{commit}]"
+    return f"YT-DLP Downloader {APP_VERSION}"
 
 
 # ----------------------------------------------------------------------------------------------------

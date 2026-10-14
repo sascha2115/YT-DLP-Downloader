@@ -13,11 +13,10 @@ import requests
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QAction, QKeyEvent, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStyle, QTextBrowser, QVBoxLayout, QWidget
-from ytdl import APP_VERSION
 from ytdl.config import DEFAULT_OUTPUT_DIR
 from ytdl.progress import DownloadProgressManager
 from ytdl.sites import SUPPORTED_SITES_LABEL
-from ytdl.utils import get_log_dir, resource_path
+from ytdl.utils import get_log_dir, resource_path, version_header
 from ytdl.widgets import BusySpinner, CustomTextEdit, SB_CATEGORY_COLORS, SB_DISPLAY_NAMES, SponsorBlockBar
 
 logger = logging.getLogger(__name__)
@@ -505,7 +504,7 @@ class UiBuildMixin:
         # Output Text Area
         self.output_text = CustomTextEdit(self)
         self.output_text.setReadOnly(True)
-        self.output_text.append("YT-DLP Downloader " + APP_VERSION)
+        self.output_text.append(version_header())
         self.output_text.append("Supported: " + SUPPORTED_SITES_LABEL)
         main_layout.addWidget(self.output_text)
 
