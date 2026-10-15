@@ -379,7 +379,13 @@ class SubtitleMixin:
 
         # First pass: collect all subtitles and find max time
         for block in blocks:
-            lines = block.split("\n")
+            # `lines` is the panel output this method returns - the parse loop
+            # must NOT reuse that name for a block's raw text lines. It once
+            # did, and the shadowed list came back holding the LAST source
+            # block verbatim (cue number, timestamp, unstripped text), with the
+            # summary lines appended after it - observed live: a raw
+            # ">> [music]" cue printed into the output panel.
+            block_lines = block.split("\n")
 
             # Locate the timestamp line rather than assuming a fixed index:
             # standard SRT blocks may omit the cue number, or carry a cue
@@ -387,14 +393,14 @@ class SubtitleMixin:
             # line that matches the arrow form keeps both shapes valid; lines
             # before it (a number, an identifier, ...) are simply ignored.
             time_index = None
-            for i, candidate in enumerate(lines):
+            for i, candidate in enumerate(block_lines):
                 if re.match(r"[\d:,]+\s+-->\s+[\d:,]+", candidate):
                     time_index = i
                     break
             if time_index is None:
                 continue
 
-            time_line = lines[time_index]
+            time_line = block_lines[time_index]
             match = re.match(r"([\d:,]+)\s+-->\s+([\d:,]+)", time_line)
             if not match:
                 continue
@@ -408,7 +414,7 @@ class SubtitleMixin:
             # Everything after the timestamp is the cue text; a block may
             # carry more than one line, and the first of those is the text
             # (not a cue number or identifier, which only precede the arrow).
-            raw_text = "\n".join(lines[time_index + 1:])
+            raw_text = "\n".join(block_lines[time_index + 1:])
             # Filter out ">>" artifacts often found in auto-generated captions
             clean_text = re.sub(r'^>>\s*', '', raw_text, flags=re.MULTILINE).strip()
             # Remove non-spoken tokens in square brackets, e.g. [laughter],

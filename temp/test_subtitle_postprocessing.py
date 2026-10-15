@@ -289,6 +289,31 @@ class TestSubtitlePostProcessing(unittest.TestCase):
             for word in ("First.", "Second.", "Third."):
                 self.assertIn(word, content, f"lost cue: {word}")
 
+    def test_panel_output_never_carries_raw_cue_blocks(self):
+        # The parse loop once reused the name `lines` - the list this method
+        # returns as panel output - for the current block's raw text lines, so
+        # the LAST source block came back verbatim (cue number, timestamp,
+        # unstripped ">> [music]" text) with the summary lines appended after
+        # it. Observed live on a 3471-cue download: the file's final cue was
+        # printed into the output panel between "merging into 2-line format"
+        # and "💬 Subtitles merged.".
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "Title.en.srt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "1\n00:00:00,000 --> 00:00:02,000\nHello there.\n\n"
+                    "2\n00:00:03,000 --> 00:00:04,000\n>> [music]\n"
+                )
+            ok, lines = _run(self.gui, path)
+            self.assertTrue(ok)
+            joined = "\n".join(str(line) for line in lines)
+            # No cue numbers, timestamps or raw source text in the panel output.
+            self.assertNotIn("-->", joined)
+            self.assertNotIn(">>", joined)
+            # The summary lines are the whole output, in order.
+            self.assertEqual(lines[0], "💬 Subtitles merged.")
+            self.assertTrue(lines[1].startswith("  📊 "), lines)
+
 
 class TestStandaloneSubtitleWorker(unittest.TestCase):
     """The Subs button handler runs resync_subtitles() on a worker thread.

@@ -26,6 +26,18 @@ disagree, this file is right.
 
 ---
 
+## 1.5.2 — 2026-10-15
+
+- **The output panel no longer prints a raw subtitle block ahead of the
+  subtitle summary.** After the "merging into 2-line format" line, the panel
+  showed the file's final cue verbatim — cue number, timestamp and
+  unprocessed text such as `>> [music]` — before "💬 Subtitles merged." and
+  the `📊` counts. It was display-only: the `.srt` written to disk was always
+  fully processed and the counts were always correct. A file that could not
+  be processed showed the same leak ahead of its ⚠️ warning instead.
+
+---
+
 ## 1.5.1 — 2026-10-14
 
 [Release](https://github.com/sascha2115/YT-DLP-Downloader/releases/tag/v1.5.1) · tag `v1.5.1`
