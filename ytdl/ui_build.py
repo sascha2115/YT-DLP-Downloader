@@ -214,9 +214,7 @@ class UiBuildMixin:
                         "value": "edl_only",
                         "attr": "edl_only_radio",
                         "tooltip": "Write only a SponsorBlock .edl skip file "
-                        "for this video — nothing is downloaded and no "
-                        "yt-dlp is started. The player jumps the marked "
-                        "ranges during playback.",
+                        "for this video. No yt-dlp command is started. "
                     },
                 ],
             },
