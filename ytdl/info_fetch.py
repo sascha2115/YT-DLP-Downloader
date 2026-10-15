@@ -15,10 +15,11 @@ from ytdl import preferences as prefs
 from ytdl.config import (
     INFO_FETCH_HINT_AFTER_SECONDS,
     INFO_FETCH_HINT_EVERY_SECONDS,
+    SPONSORBLOCK_API_URL,
     SPONSORBLOCK_TIMEOUT_SECONDS,
 )
 from ytdl.description import clean_youtube_description
-from ytdl.download import _redact_command
+from ytdl.download import SB_ALL_API_CATEGORIES, _redact_command
 from ytdl.sites import (
     DEFAULT_SITE,
     SUPPORTED_SITES,
@@ -734,11 +735,9 @@ class InfoFetchMixin:
             sb_generation = getattr(self, "_sb_generation", 0)
 
         # Get all possible categories to show everything in the visual bar
-        all_categories = [
-            "sponsor", "selfpromo", "interaction", "intro", "outro",
-            "preview", "music_offtopic", "filler", "poi_highlight",
-            "exclusive_access", "chapter"
-        ]
+        # (shared with the ".edl only" mode's standalone lookup, so the bar
+        # and that writer always see the same segments)
+        all_categories = SB_ALL_API_CATEGORIES
 
         if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
             # SponsorBlock is a YouTube-only database; skip cleanly on other sites
@@ -807,7 +806,7 @@ Three staleness guards, because a response can arrive at three different
         error_message = None
         try:
             # Build the API URL with query parameters
-            api_url = "https://sponsor.ajay.app/api/skipSegments"
+            api_url = SPONSORBLOCK_API_URL
             payload = {"videoID": video_id, "category": all_categories}
             try:
                 # One request, short budget: the previous 3 attempts x 15s plus

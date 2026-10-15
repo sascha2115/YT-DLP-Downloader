@@ -15,17 +15,42 @@ import subprocess
 import threading
 from datetime import datetime
 
-from ytdl.config import DEFAULT_OUTPUT_DIR
+import requests
+
+from ytdl.config import (
+    DEFAULT_OUTPUT_DIR,
+    SPONSORBLOCK_API_URL,
+    SPONSORBLOCK_TIMEOUT_SECONDS,
+)
 from ytdl import preferences as prefs
 from ytdl.progress import DownloadProgressManager, RE_ALREADY, RE_AUDIO, RE_CONVERT, RE_DEST, RE_MERGE, RE_SLEEP, SUBTITLE_EXTENSIONS
-from ytdl.sites import DEFAULT_SITE, SUPPORTED_SITES, site_wants_js_runtime
+from ytdl.sites import DEFAULT_SITE, SUPPORTED_SITES, detect_site, site_wants_js_runtime
 from ytdl.utils import format_duration, format_filesize, sanitize_title
+from ytdl.widgets import SB_API_MAP
 
 logger = logging.getLogger(__name__)
 
 
 VIDEO_OUTPUT_EXTENSIONS = (".mp4", ".mkv", ".webm")
 AUDIO_OUTPUT_EXTENSIONS = (".mp3", ".m4a", ".wav", ".opus", ".webm")
+
+# video_state["media_type"] value of the ".edl only" radio button in the Type
+# group (RADIO_GROUP_CONFIGS in ytdl/ui_build.py): write <title>.edl from
+# SponsorBlock data and stop. start_download() branches on it before
+# build_command(), so no yt-dlp process is ever started for this mode.
+EDL_ONLY_MEDIA_TYPE = "edl_only"
+
+# Every SponsorBlock API category. check_sponsorblock() requests it so the
+# visual bar shows everything, and fetch_sponsorblock_segments() below
+# requests it so the standalone .edl writer sees exactly the same segments
+# as the bar.
+SB_ALL_API_CATEGORIES = [
+    "sponsor", "selfpromo", "interaction", "intro", "outro",
+    # "hook" is a real API category (merged upstream, yt-dlp PR #14845) —
+    # the UI's Hook checkbox selects it, so it must be requested here too.
+    "preview", "hook", "music_offtopic", "filler", "poi_highlight",
+    "exclusive_access", "chapter",
+]
 
 # How many lines of yt-dlp output are kept for the failure log. yt-dlp can
 # emit thousands of lines on a long download, and the failure path dumps the
@@ -115,6 +140,119 @@ def _format_captured_output(captured_output, truncated):
             + body
         )
     return "Download failed — captured output:\n" + body
+
+
+# ----------------------------------------------------------------------------------------------------
+# SponsorBlock EDL helpers (used by create_edl_file() and the ".edl only" mode)
+# ----------------------------------------------------------------------------------------------------
+
+def to_ui_category(api_category):
+    """Map a raw SponsorBlock API category onto the UI checkbox's naming.
+
+    The checkboxes speak the UI's naming (ending, tangents, highlight) while
+    the API — and yt-dlp's sponsorblock_chapters, which copies its categories
+    verbatim — speaks the raw one (outro, filler, poi_highlight). SB_API_MAP
+    is the translation; categories the UI has no checkbox for
+    (music_offtopic, chapter, ...) pass through unchanged.
+    """
+    return SB_API_MAP.get(api_category, api_category)
+
+
+def select_segments(segments, selected_ui_categories):
+    """Keep the raw API segments whose (UI-mapped) category is selected.
+
+    selected_ui_categories is what get_selected_sb_categories() returns. A
+    segment the UI has no checkbox for matches only when the caller passes
+    its raw API name too.
+    """
+    selected = set(selected_ui_categories)
+    return [
+        seg for seg in segments
+        if to_ui_category(seg.get("category", "")) in selected
+    ]
+
+
+def build_edl_content(segments):
+    """Render the EDL text: one "<start> <end> 0" line per raw API segment.
+
+    Zero-length segments (the API's whole-video marker) are skipped — a jump
+    range with start == end is meaningless to a player.
+    """
+    lines = []
+    for seg in segments:
+        start, end = seg["segment"]
+        if start == end:
+            continue
+        lines.append(f"{start} {end} 0")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def write_edl(edl_path, segments):
+    """Write the EDL text to edl_path and return that path.
+
+    The caller names the file — there is no splitext() guesswork here:
+    create_edl_only() appends ".edl" to the extensionless base path itself,
+    because a splitext() would eat a dotted title suffix ("Lecture 1.5" →
+    "Lecture 1.edl") and the player looks the file up under the media's
+    exact basename.
+    """
+    with open(edl_path, "w", encoding="utf-8") as handle:
+        handle.write(build_edl_content(segments))
+    return edl_path
+
+
+def _extract_video_id(url):
+    """Return the video id for a URL, or "" if there is none.
+
+    Pure, read-only twin of YTDLPDownloaderGUI.extract_video_id(): same site
+    profile regexes, but no video_state cache to touch — the ".edl only"
+    worker must not mutate state the main thread reads.
+    """
+    if not url:
+        return ""
+    site = detect_site(url)
+    match = SUPPORTED_SITES[site]["id_regex"].search(url)
+    return match.group(1) if match else ""
+
+
+def fetch_sponsorblock_segments(video_id, timeout=SPONSORBLOCK_TIMEOUT_SECONDS):
+    """One direct SponsorBlock request for one video id. No yt-dlp involved.
+
+    Returns (segments, error): (list, None) on success — a 404 is a clean
+    "no segments" -> ([], None); ([], str) on any HTTP/network failure.
+    Each segment is the raw API object: {"category", "segment": [start, end],
+    "UUID", "videoDuration", ...}.
+    """
+    if not video_id:
+        return [], "no video id"
+    payload = {"videoID": video_id, "category": SB_ALL_API_CATEGORIES}
+    try:
+        response = requests.get(
+            SPONSORBLOCK_API_URL, params=payload, timeout=timeout
+        )
+    except requests.exceptions.RequestException as exc:
+        return [], f"request error: {exc}"
+    return _segments_from_response(response)
+
+
+def _segments_from_response(response):
+    """Validate one SponsorBlock getSegments HTTP response -> (segments, error).
+
+    Split out of fetch_sponsorblock_segments() purely for readability: a 404
+    is a clean "this video has no segments" ([], None); any other non-200
+    status or unusable body is an error ([], str).
+    """
+    if response.status_code == 404:
+        return [], None
+    if response.status_code != 200:
+        return [], f"API returned status {response.status_code}"
+    try:
+        segments = response.json()
+    except ValueError as exc:
+        return [], f"invalid JSON: {exc}"
+    if not isinstance(segments, list):
+        return [], "unexpected payload shape"
+    return segments, None
 
 
 class DownloadMixin:
@@ -255,6 +393,16 @@ class DownloadMixin:
         self.update_video_state(title=sanitized_base_name, output_dir=video_dir)
         self.video_state["is_download_running"] = True
 
+        # .edl only: the SponsorBlock skip file, without downloading anything.
+        # Branches right after this shared prelude (title gate, directory
+        # creation, update_video_state) so the .edl lands exactly where the
+        # media file would have — and before the existence check and
+        # build_command(), neither of which means anything for a mode that
+        # never spawns yt-dlp.
+        if self.video_state.get("media_type") == EDL_ONLY_MEDIA_TYPE:
+            self.start_edl_only(channel, base_name)
+            return
+
         # Detailed Existence Check
         media_type = self.video_state.get("media_type")
         selected_langs = self.get_selected_subtitle_codes()
@@ -376,6 +524,157 @@ class DownloadMixin:
         thread = threading.Thread(target=self.run_download, args=(cmd, selected_langs))
         thread.daemon = True
         thread.start()
+
+    # ----------------------------------------------------------------------------------------------------
+    # ".edl only" mode (EDL_ONLY_MEDIA_TYPE): the SponsorBlock skip file on
+    # its own, without downloading anything and without starting yt-dlp.
+    # ----------------------------------------------------------------------------------------------------
+
+    def start_edl_only(self, channel, base_name):
+        """Main-thread entry for the ".edl only" media type.
+
+        Mirrors the pre-thread part of the download path (log, dock clear,
+        UI disable, spinner) and hands the work to a worker thread, because
+        the segment source may make one HTTP request. Unlike a download
+        there is no process to kill, so the Cancel button stays hidden —
+        the whole run is one bounded request plus one file write.
+        """
+        logger.info(f"{channel}")
+        logger.info(f"{base_name}")
+
+        # Clear cached metadata at start of new work (like start_download)
+        self.cached_video_metadata = None
+
+        self.signals.update_dock_tile.emit("")
+        self.clearDockProgress()
+        self._set_ui_enabled_state(False)
+        self.download_button.setEnabled(False)
+        self._reset_download_progress_bars()
+        self._set_download_busy(True)
+        self._cancelled = False
+        self.signals.append_output.emit(
+            "\n📟 .edl only — no download; writing SponsorBlock skip file..."
+        )
+
+        thread = threading.Thread(target=self.run_edl_only)
+        thread.daemon = True
+        thread.start()
+
+    def run_edl_only(self):
+        """Worker for the ".edl only" media type: write <title>.edl, no yt-dlp.
+
+        Same UI contract as run_download()'s finally: everything goes through
+        _emit() so a window closing mid-run cannot be touched from this
+        thread, and the UI is always re-enabled with a verdict on the button.
+        create_edl_only() returns the applied segments, [] when there was
+        deliberately nothing to write, or None on a failure.
+        """
+        segments = None
+        try:
+            segments = self.create_edl_only()
+        except Exception as e:  # pylint: disable=broad-except
+            # UI/network boundary convention (see run_download's except
+            # branch): any surprise here must still leave the window usable.
+            self._emit("append_output", f"🚩 An unexpected error occurred: {e}")
+            logger.error(f".edl only mode failed with exception: {e}")
+
+        url = self.get_clean_url() if hasattr(self, "get_clean_url") else "unknown"
+        logger.info(
+            f".edl only {'succeeded' if segments else 'wrote nothing' if segments is not None else 'failed'}: {url}"
+        )
+
+        # Clean up state and UI in a single batch to avoid cascading updates.
+        self.video_state["is_download_running"] = False
+        self._emit("set_indeterminate", False)
+        if segments:
+            button_text, button_status = "EDL Created ✅", "success"
+        elif segments is None:
+            button_text, button_status = "EDL Error 🚨", "error"
+        else:
+            button_text, button_status = "No EDL Written", ""
+        self._emit("set_download_button_label", button_text)
+        self._emit("set_download_button_status", button_status)
+        self._emit("enable_button")
+        self._emit("update_dock_tile", "✓" if segments else "")
+        self._emit("clear_dock_progress")
+
+    def create_edl_only(self, fetch=fetch_sponsorblock_segments):
+        """Write <title>.edl from SponsorBlock data — the ".edl only" body.
+
+        Runs on the worker started by start_edl_only(), i.e. after
+        start_download()'s prelude has set base_filename/output_dir and after
+        the info fetch has filled video_id/site/url. `fetch` exists for
+        tests: video_id -> (segments, error).
+
+        Segment source:
+          1. sb_bar.segments — check_sponsorblock() fetched ALL categories
+             for the visual bar during the info fetch, so normally zero HTTP
+             here.
+          2. A fresh API fetch when the bar is empty (bar cleared, or the
+             info fetch's lookup failed).
+
+        Returns the applied segments (like create_edl_file()), [] when there
+        is deliberately nothing to write (no matching segments), or None on a
+        failure — in every no-file case a line says why on the output panel.
+        """
+        state = self.video_state
+
+        def emit(text):
+            self._emit("append_output", text)
+
+        site = state.get("site", DEFAULT_SITE)
+        # _extract_video_id() is pure, so it can run before the site guard
+        # (cheapest first would be moot either way); the site verdict must
+        # stay the one reported when both guards would fail.
+        video_id = state.get("video_id") or _extract_video_id(
+            state.get("url") or state.get("clean_url") or ""
+        )
+        failure = None
+        if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
+            failure = "SponsorBlock: Not available for this site (YouTube only) — skipping"
+        elif not video_id:
+            failure = "SponsorBlock: Could not extract video ID from URL"
+        if failure:
+            emit(failure)
+            return None
+
+        # Bar segments first: they were fetched (all categories) by the info fetch.
+        sponsor_bar = getattr(self, "sb_bar", None)
+        segments = list(getattr(sponsor_bar, "segments", []) or [])
+        if not segments:
+            segments, error = fetch(video_id)
+            if error:
+                emit(f"🚩 SponsorBlock lookup failed: {error}")
+                return None
+
+        categories = self.get_selected_sb_categories()
+        emit(f"📟 Selected SB categories: {categories}")
+        selected = select_segments(segments, categories)
+        # Drop zero-length markers (the API's whole-video flag) before the
+        # emptiness check: a selection of only those must say "nothing to
+        # skip" instead of writing an empty .edl.
+        selected = [s for s in selected if s["segment"][0] != s["segment"][1]]
+        if not selected:
+            emit("📟 No segments to skip found in selected categories")
+            return []
+
+        base_path = self.get_full_path()
+        if not base_path:
+            emit("🚩 Error: No video title available")
+            return None
+        try:
+            # Append, never splitext(): base_path is extensionless by
+            # construction, and a title like "Lecture 1.5" must keep its
+            # suffix so the EDL sits under the media's exact basename.
+            edl_path = write_edl(base_path + ".edl", selected)
+        except OSError as exc:
+            emit(f"🚩 Error creating EDL file: {exc}")
+            return None
+
+        emit(f"🎬 Created EDL file: {os.path.basename(edl_path)}")
+        for line in build_edl_content(selected).splitlines():
+            emit(f"   {line}")
+        return selected
 
     def build_command(self, selected_langs=None):
         url = self.get_clean_url()
@@ -1562,8 +1861,16 @@ class DownloadMixin:
                             else:
                                 flat_categories.append(str(cat))
 
-                    # Check if this segment matches selected categories
-                    if any(cat in removed_categories for cat in flat_categories):
+                    # Check if this segment matches selected categories.
+                    # _categories holds the API's raw names (yt-dlp copies
+                    # them from SponsorBlock) while the checkboxes speak the
+                    # UI's naming — translate before comparing, or an
+                    # "Ending"-only selection matches nothing at all
+                    # (raw "outro" vs UI "ending").
+                    if any(
+                        to_ui_category(cat) in removed_categories
+                        for cat in flat_categories
+                    ):
                         self._emit("append_output", f"📟 Matching segment: {start} - {end} ({flat_categories})")
                         # Store the first category (main category) with the segment
                         category = flat_categories[0] if flat_categories else "unknown"

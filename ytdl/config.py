@@ -23,3 +23,8 @@ INFO_FETCH_HINT_EVERY_SECONDS = 20
 # single request timeout bounds the worst case (one request, no retry sleeps),
 # because stalling the thread further delays only the progress bar.
 SPONSORBLOCK_TIMEOUT_SECONDS = 4
+
+# SponsorBlock's public skipSegments endpoint. Keyed by video id alone, so it
+# is also reachable without an info fetch (see the ".edl only" mode in
+# ytdl/download.py and check_sponsorblock() in ytdl/info_fetch.py).
+SPONSORBLOCK_API_URL = "https://sponsor.ajay.app/api/skipSegments"

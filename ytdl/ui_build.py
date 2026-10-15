@@ -67,7 +67,15 @@ class UiBuildMixin:
             # Set individual button enabled state
             btn_enabled = btn_config.get("enabled", True)
             radio_button.setEnabled(enabled and btn_enabled)
-            button_configs.append({"button": radio_button, "enabled": btn_enabled})
+            # The value travels with the button entry itself: the first-word
+            # map below collapses "Video + Audio" and "Video only" onto the
+            # key "Video", so the change handler resolves by button identity
+            # (the map stays as the fallback for text-only lookups).
+            button_configs.append({
+                "button": radio_button,
+                "enabled": btn_enabled,
+                "value": btn_config["value"],
+            })
 
             # Optional per-button tooltip (e.g. explaining the M4A container)
             if btn_config.get("tooltip"):
@@ -200,6 +208,15 @@ class UiBuildMixin:
                         "text": "Subtitles only",
                         "value": "subtitles",
                         "attr": "subtitles_only_radio",
+                    },
+                    {
+                        "text": ".edl only",
+                        "value": "edl_only",
+                        "attr": "edl_only_radio",
+                        "tooltip": "Write only a SponsorBlock .edl skip file "
+                        "for this video — nothing is downloaded and no "
+                        "yt-dlp is started. The player jumps the marked "
+                        "ranges during playback.",
                     },
                 ],
             },
@@ -585,10 +602,22 @@ class UiBuildMixin:
         if not config:
             return
 
-        # Get the clean button text (e.g., "1080" from "1080p", "MP4" from "MP4", or "H264")
-        button_text = button.text().split(" ")[0].strip()
-        # Determine the selected value using the map
-        new_value = config["map"].get(button_text, button_text.lower())
+        # Resolve the new value by button identity. The first-word text map
+        # collapses "Video + Audio" and "Video only" onto the key "Video",
+        # so a text lookup stored whichever button was registered last —
+        # clicking "Video + Audio" set media_type to "video_only". The text
+        # map remains the fallback for buttons not in the config list.
+        entry = next(
+            (b for b in config.get("buttons", []) if b["button"] is button),
+            None,
+        )
+        if entry is not None and "value" in entry:
+            new_value = entry["value"]
+        else:
+            # Get the clean button text (e.g., "1080" from "1080p")
+            button_text = button.text().split(" ")[0].strip()
+            # Determine the selected value using the map
+            new_value = config["map"].get(button_text, button_text.lower())
         # save state
         self.video_state[config["attr"]] = new_value
 

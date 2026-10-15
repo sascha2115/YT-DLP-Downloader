@@ -26,6 +26,34 @@ disagree, this file is right.
 
 ---
 
+## 1.5.3 — 2026-10-15
+
+- **New media type: `.edl only`.** The Type group gained an `.edl only`
+  option: pressing Download writes the SponsorBlock skip file
+  (`<title>.edl`) for the current video and downloads **nothing** — for
+  media that is already on disk. It reuses the segments already fetched for
+  the SponsorBlock bar (one direct API request only when the bar is empty),
+  names the file after the video's exact title (a title like "Lecture 1.5"
+  keeps its suffix), and reports the outcome on the button: "EDL Created
+  ✅", "No EDL Written" or "EDL Error 🚨".
+- **The Hook checkbox now finds Hook segments.** SponsorBlock's "hook"
+  category (greetings and teasers for upcoming videos) was never requested
+  from the API, so a video whose only segments were hooks showed an empty
+  SponsorBlock bar — and `.edl only` wrote nothing for it — no matter what
+  was checked.
+- **Ending, Tangents or Highlight checked on their own now produce a skip
+  file after a download.** The `.edl` written after a download compared
+  yt-dlp's raw category names (`outro`, `filler`, `poi_highlight`) against
+  the checkbox labels, so those three selections never matched and the file
+  came out empty. The names are now translated the same way the SponsorBlock
+  bar already did.
+- **Clicking "Video + Audio" no longer downloads a video without sound.**
+  The Type group resolved its buttons by their first word, and "Video +
+  Audio" and "Video only" share it — so re-selecting "Video + Audio"
+  silently switched the download to a video-only stream.
+
+---
+
 ## 1.5.2 — 2026-10-15
 
 - **The output panel no longer prints a raw subtitle block ahead of the
