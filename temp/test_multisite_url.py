@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import main as app
+from ytdl.command import CommandMixin
 
 
 class TestDetectSite(unittest.TestCase):
@@ -408,7 +409,7 @@ class TestFormatChoiceLine(unittest.TestCase):
     whether a viewer can hear anything.
     """
 
-    class Harness(app.DownloadMixin, app.SubtitleMixin):
+    class Harness(app.DownloadMixin, app.SubtitleMixin, CommandMixin):
         get_selected_sb_categories = app.YTDLPDownloaderGUI.get_selected_sb_categories
 
         def __init__(self, media_type):
@@ -468,7 +469,7 @@ class TestFormatChoiceLine(unittest.TestCase):
 class TestBuildCommandAudio(unittest.TestCase):
     """Pin the audio postprocessor flags produced by build_command()."""
 
-    class Harness(app.DownloadMixin, app.SubtitleMixin):
+    class Harness(app.DownloadMixin, app.SubtitleMixin, CommandMixin):
         # Inherits the real mixins (so new helper methods come along);
         # only GUI state/overrides are provided here.
         # build_command() reads the SponsorBlock selection through the UI

@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from temp import sponsorblock_standalone as sb
 from ytdl.download import DownloadMixin
+from ytdl.sidecars import SidecarMixin
 from ytdl.utils import sanitize_title
 
 
@@ -257,7 +258,18 @@ class _EdlHarness:
         self.lines = []
 
     def get_full_path(self, extension="", lang=None):
-        return self._json_path
+        # Mirror the real get_full_path(): no extension -> extensionless base;
+        # with extension -> base + extension. The harness previously always
+        # returned the .info.json path, which was sufficient when create_edl_file
+        # only queried the JSON file; now it also needs the base for the EDL path.
+        base = self._json_path.removesuffix(".info.json")
+        if lang:
+            base = f"{base}.{lang}"
+        if extension:
+            if not extension.startswith("."):
+                extension = "." + extension
+            return base + extension
+        return base
 
     def get_selected_sb_categories(self):
         return list(self._selected)
@@ -274,7 +286,7 @@ class TestParityWithTheAppsEdl(unittest.TestCase):
         with open(info_path, "w", encoding="utf-8") as handle:
             json.dump({"sponsorblock_chapters": chapters}, handle)
         harness = _EdlHarness(info_path, selected)
-        DownloadMixin.create_edl_file(harness, os.path.join(tmp, "Video.mp4"))
+        SidecarMixin.create_edl_file(harness, os.path.join(tmp, "Video.mp4"))
         edl_path = os.path.join(tmp, "Video.edl")
         if not os.path.exists(edl_path):
             # create_edl_file() returns before writing when nothing matched.

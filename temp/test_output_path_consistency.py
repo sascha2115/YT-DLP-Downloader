@@ -23,6 +23,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main as app
+from ytdl.command import CommandMixin
 from ytdl.utils import sanitize_title
 
 
@@ -34,7 +35,7 @@ class TitleEntry:
         return self._text
 
 
-class Harness(app.DownloadMixin):
+class Harness(app.DownloadMixin, CommandMixin):
     """Minimal stand-in around build_command() and the path helpers."""
 
     def __init__(self, title, channel=""):

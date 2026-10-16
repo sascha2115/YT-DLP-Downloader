@@ -37,8 +37,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from temp import sponsorblock_standalone as sb
-from ytdl.download import (
-    DownloadMixin,
+from ytdl.download import DownloadMixin
+from ytdl.sponsorblock import (
     EDL_ONLY_MEDIA_TYPE,
     SB_ALL_API_CATEGORIES,
     build_edl_content,
@@ -689,7 +689,7 @@ class TestFetchHelper(unittest.TestCase):
             return self.response
 
     def _with_requests(self, stub):
-        return mock.patch("ytdl.download.requests", stub)
+        return mock.patch("ytdl.sponsorblock.requests", stub)
 
     def test_success(self):
         stub = self._Requests(self._Response(payload=[seg("sponsor", 1, 2)]))

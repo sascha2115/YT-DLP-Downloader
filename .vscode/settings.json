@@ -9,5 +9,6 @@
     "pylint.args": ["--rcfile=${workspaceFolder}/.pylintrc"],
     // The old built-in linter is deprecated and cannot see the rcfile reliably;
     // keep it off so only ms-python.pylint reports.
-    "python.linting.enabled": false
+    "python.linting.enabled": false,
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

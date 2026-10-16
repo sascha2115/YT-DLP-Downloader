@@ -19,7 +19,8 @@ from ytdl.config import (
     SPONSORBLOCK_TIMEOUT_SECONDS,
 )
 from ytdl.description import clean_youtube_description
-from ytdl.download import SB_ALL_API_CATEGORIES, _redact_command
+from ytdl.download import _redact_command
+from ytdl.sponsorblock import SB_ALL_API_CATEGORIES
 from ytdl.sites import (
     DEFAULT_SITE,
     SUPPORTED_SITES,
