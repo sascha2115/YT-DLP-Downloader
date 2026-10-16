@@ -1,6 +1,11 @@
-"""yt-dlp output parsing tables and the download progress manager."""
+"""yt-dlp output parsing tables, the download progress manager, and
+progress-parsing mixin methods extracted from ytdl/download.py.
+"""
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 
 RE_MERGE = re.compile(r'\[Merger\] Merging formats into "?(.*?)"?$')
@@ -155,3 +160,120 @@ class DownloadProgressManager:
         return (
             v * self.VIDEO_BYTE_WEIGHT + a * self.AUDIO_BYTE_WEIGHT
         )
+
+
+# ============================================================================
+# Progress-parsing mixin (extracted from ytdl/download.py)
+# ============================================================================
+class ProgressMixin:
+    """Parses yt-dlp stdout into progress-bar updates and state changes.
+
+    Methods access shared GUI state via ``self`` (``video_state``, ``_emit``,
+    etc.) provided by ``DownloadMixin`` on the combined class.
+    """
+
+    def _parse_download_output(self, line, state):
+        # A subtitle transfer only ever produces consecutive "[download]"
+        # lines; any other non-empty line ends it, so later media lines are
+        # accounted normally. (yt-dlp's "\r"-separated progress chunks yield
+        # EMPTY lines mid-transfer, which must NOT end it.)
+        if line and not line.startswith("[download]"):
+            state["downloading_subtitles"] = False
+
+        progress_manager = state.get("progress_manager")
+        if progress_manager and progress_manager.is_started():
+            if (
+                line.startswith(("[Merger]", "[ExtractAudio]", "[Fixup]"))
+                or "Merging formats" in line
+                or "Deleting original file" in line
+            ):
+                self._emit("set_indeterminate", True)
+
+        new_filename = None
+        if m := RE_MERGE.search(line):
+            new_filename = m.group(1).strip()
+        elif m := RE_AUDIO.search(line):
+            if self.video_state["media_type"] == "audio":
+                new_filename = m.group(1).strip()
+        elif m := RE_CONVERT.search(line):
+            new_filename = m.group(1).strip()
+        elif m := RE_ALREADY.search(line):
+            if not self._is_subtitle_path(m.group(1)):
+                new_filename = m.group(1).strip()
+        elif state["merged_filename"] is None:
+            if m := RE_DEST.search(line):
+                dest = m.group(1).strip()
+                if not self._is_subtitle_path(dest):
+                    new_filename = dest
+
+        if new_filename:
+            new_filename = new_filename.strip('"')
+            state["merged_filename"] = new_filename
+            logger.debug(f"Captured final filename: {new_filename}")
+
+        if line.startswith(("[youtube]", "[info]", "[debug]", "[Metadata]")):
+            self._emit("append_output", line)
+            state["last_line_was_progress"] = False
+        elif RE_SLEEP.search(line):
+            self._emit("append_output", line)
+            state["last_line_was_progress"] = False
+        elif line.startswith("[download]"):
+            state = self._update_download_progress(line, state)
+            state["last_line_was_progress"] = True
+        elif RE_MERGE.search(line):
+            self._emit("append_output", line)
+            state["last_line_was_progress"] = False
+        else:
+            self._emit("append_output", line)
+            state["last_line_was_progress"] = False
+
+        return state
+
+    def _update_download_progress(self, line, state):
+        progress_manager = state["progress_manager"]
+        in_subtitle_transfer = state.get("downloading_subtitles", False)
+
+        if "Destination:" in line:
+            m = RE_DEST.search(line)
+            in_subtitle_transfer = bool(m and self._is_subtitle_path(m.group(1)))
+            state["downloading_subtitles"] = in_subtitle_transfer
+            if not in_subtitle_transfer:
+                progress_manager.on_download_destination(
+                    m.group(1) if m else None
+                )
+        elif m := RE_ALREADY.search(line):
+            in_subtitle_transfer = self._is_subtitle_path(m.group(1))
+
+        if not in_subtitle_transfer:
+            if not progress_manager.is_started():
+                progress_manager.mark_started()
+                self._emit("set_indeterminate", False)
+
+            percent_match = re.search(r"(\d{1,3}(?:\.\d+)?)%", line)
+            if percent_match:
+                try:
+                    percent = float(percent_match.group(1))
+                    video_val, audio_val = progress_manager.update_from_ytdlp_percent(
+                        percent
+                    )
+                    self._emit("update_download_progress", video_val, audio_val)
+                    self._emit(
+                        "update_dock_progress",
+                        progress_manager.get_combined_fraction(),
+                    )
+                except ValueError:
+                    pass
+
+        if state["last_line_was_progress"]:
+            self._emit("update_last_line", line)
+        else:
+            self._emit("append_output", line)
+
+        return state
+
+    def _is_subtitle_path(self, path) -> bool:
+        """Return True if the given yt-dlp destination path is a subtitle file."""
+        name = (path or "").strip().strip('"').lower()
+        while name.endswith((".part", ".ytdl", ".temp")):
+            name = name.rsplit(".", 1)[0]
+        return name.endswith(tuple(SUBTITLE_EXTENSIONS))

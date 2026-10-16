@@ -13,6 +13,9 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main as app  # noqa: E402
+from ytdl.sidecars import SidecarMixin  # noqa: E402
+from ytdl.command import CommandMixin  # noqa: E402
+from ytdl.progress import ProgressMixin  # noqa: E402
 
 
 class _Signal:
@@ -57,7 +60,7 @@ class _Process:
         return self.returncode
 
 
-class _DownloadHarness(app.DownloadMixin):
+class _DownloadHarness(app.DownloadMixin, SidecarMixin, CommandMixin, ProgressMixin):
     def __init__(self, base_path, media_type="video", fail_metadata=False, fail_cleanup=False):
         self.video_state = {
             "media_type": media_type,

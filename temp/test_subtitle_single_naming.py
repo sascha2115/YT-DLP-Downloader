@@ -22,6 +22,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main as app  # noqa: E402
+from ytdl.command import CommandMixin  # noqa: E402
+from ytdl.progress import ProgressMixin  # noqa: E402
 from temp.test_download_completion import _Process, _Signals  # noqa: E402
 
 
@@ -32,7 +34,7 @@ SRT = (
 )
 
 
-class NamingHarness(app.SubtitleMixin, app.DownloadMixin):
+class NamingHarness(app.SubtitleMixin, app.DownloadMixin, CommandMixin, ProgressMixin):
     """Real mixins; only the output directory and video state come from here."""
 
     def __init__(self, out_dir, available=None, base="Title"):
@@ -238,7 +240,7 @@ class TestSupersededBareSubtitle(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(d, "Title.en.srt")))
 
 
-class _RunHarness(app.SubtitleMixin, app.DownloadMixin):
+class _RunHarness(app.SubtitleMixin, app.DownloadMixin, CommandMixin, ProgressMixin):
     """Real run_download() with a fake yt-dlp process (no threads, no Qt)."""
 
     def __init__(self, out_dir, available):

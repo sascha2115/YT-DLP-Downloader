@@ -92,6 +92,10 @@ from ytdl.download import DownloadMixin  # noqa: F401
 from ytdl.info_fetch import InfoFetchMixin  # noqa: F401
 from ytdl.preferences_dialog import PreferencesDialogMixin  # noqa: F401
 from ytdl.subtitles import SubtitleMixin  # noqa: F401
+from ytdl.sidecars import SidecarMixin  # noqa: F401
+from ytdl.metadata import MetadataMixin  # noqa: F401
+from ytdl.command import CommandMixin  # noqa: F401
+from ytdl.progress import ProgressMixin  # noqa: F401
 from ytdl.ui_build import UiBuildMixin  # noqa: F401
 
 # ----------------------------------------------------------------------------------------------------
@@ -140,6 +144,10 @@ def should_redraw_dock(last_fraction: float, new_fraction: float) -> bool:
 class YTDLPDownloaderGUI(
     InfoFetchMixin,
     DownloadMixin,
+    SidecarMixin,
+    MetadataMixin,
+    CommandMixin,
+    ProgressMixin,
     SubtitleMixin,
     UiBuildMixin,
     PreferencesDialogMixin,

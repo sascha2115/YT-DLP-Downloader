@@ -26,6 +26,10 @@ disagree, this file is right.
 
 ---
 
+## 1.5.4 — 2026-10-16
+
+- **Internal refactor: `download.py` split into mixin modules.** No user-visible changes — download behavior, SponsorBlock handling, EDL/NFO creation, subtitles and progress parsing are unchanged. `ytdl/download.py` is now under pylint's 1,000-line limit.
+
 ## 1.5.3 — 2026-10-15
 
 - **New media type: `.edl only`.** The Type group gained an `.edl only`
