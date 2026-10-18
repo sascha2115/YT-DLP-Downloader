@@ -26,6 +26,10 @@ disagree, this file is right.
 
 ---
 
+## 1.5.5 — 2026-10-17
+
+- **Type group: radio buttons → checkboxes.** The Type group's five radio buttons (Video+Audio, Video only, Audio only, Subtitles only, .edl only) are replaced with four independent checkboxes: **Video**, **Audio**, **Subtitles**, and **.edl only**. You can now combine options (e.g. Video + Subtitles without Audio, or Audio + Subtitles). When `.edl only` is checked, the other three are greyed out. Checking a subtitle language in the Subtitles group automatically checks the Type group's "Subtitles" checkbox as well.
+
 ## 1.5.4 — 2026-10-16
 
 - **Internal refactor: `download.py` split into mixin modules.** No user-visible changes — download behavior, SponsorBlock handling, EDL/NFO creation, subtitles and progress parsing are unchanged. `ytdl/download.py` is now under pylint's 1,000-line limit.

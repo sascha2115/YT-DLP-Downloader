@@ -93,6 +93,32 @@ class DownloadMixin:
             return
         getattr(self.signals, name).emit(*args)
 
+    def _effective_media_type(self):
+        """Compute the effective media type from the type checkboxes.
+
+        Returns one of: "edl_only", "video", "video_only", "audio",
+        "subtitles", or None when nothing is selected.
+
+        Falls back to the legacy ``video_state["media_type"]`` string for
+        callers (e.g. test harnesses) that still set it directly.
+        """
+        vs = self.video_state
+        if vs.get("wants_edl"):
+            return "edl_only"
+        if vs.get("wants_video") and vs.get("wants_audio"):
+            return "video"
+        if vs.get("wants_video"):
+            return "video_only"
+        if vs.get("wants_audio"):
+            return "audio"
+        if vs.get("wants_subtitles"):
+            return "subtitles"
+        # Legacy fallback: some test harnesses set "media_type" directly.
+        legacy = vs.get("media_type")
+        if legacy in ("edl_only", "video", "video_only", "audio", "subtitles"):
+            return legacy
+        return None
+
     def _terminate_process_tree(self, process):
         """SIGTERM the download's whole process group (yt-dlp + ffmpeg).
 
@@ -206,18 +232,33 @@ class DownloadMixin:
         self.update_video_state(title=sanitized_base_name, output_dir=video_dir)
         self.video_state["is_download_running"] = True
 
+        # Derive boolean flags from the legacy "media_type" string when the
+        # checkboxes haven't been set explicitly (e.g. test harnesses that
+        # still use video_state["media_type"]). Must run before the .edl_only
+        # branch below, which reads video_state["wants_edl"].
+        if not any(
+            k in self.video_state
+            for k in ("wants_video", "wants_audio", "wants_subtitles", "wants_edl")
+        ):
+            _mt = self._effective_media_type()
+            self.video_state["wants_video"] = _mt in ("video", "video_only")
+            self.video_state["wants_audio"] = _mt in ("video", "audio")
+            self.video_state["wants_subtitles"] = _mt == "subtitles"
+            self.video_state["wants_edl"] = _mt == "edl_only"
+
         # .edl only: the SponsorBlock skip file, without downloading anything.
         # Branches right after this shared prelude (title gate, directory
         # creation, update_video_state) so the .edl lands exactly where the
         # media file would have — and before the existence check and
         # build_command(), neither of which means anything for a mode that
         # never spawns yt-dlp.
-        if self.video_state.get("media_type") == EDL_ONLY_MEDIA_TYPE:
+        if self.video_state.get("wants_edl"):
             self.start_edl_only(channel, base_name)
             return
 
         # Detailed Existence Check
-        media_type = self.video_state.get("media_type")
+        media_type = self._effective_media_type()
+        selected_langs = self.get_selected_subtitle_codes()
         selected_langs = self.get_selected_subtitle_codes()
         base_path = self.get_full_path()
 
@@ -279,9 +320,28 @@ class DownloadMixin:
         should_skip = False
         skip_reason = ""
 
-        if media_type == "subtitles":
+        wants_video = self.video_state.get("wants_video", False)
+        wants_audio = self.video_state.get("wants_audio", False)
+        wants_subtitles = self.video_state.get("wants_subtitles", False)
+
+        # Validate at least one thing is selected
+        if not wants_video and not wants_audio and not wants_subtitles:
+            self.signals.append_output.emit(
+                "👉 Please select at least one of: Video, Audio, Subtitles"
+            )
+            self.video_state["is_download_running"] = False
+            return
+
+        # 4. Decide if we skip
+        should_skip = False
+        skip_reason = ""
+
+        if wants_subtitles and not wants_video and not wants_audio:
+            # Subtitles only
             if not selected_langs:
-                self.signals.append_output.emit("👉 No subtitle languages selected. Please check at least one language.")
+                self.signals.append_output.emit(
+                    "👉 No subtitle languages selected. Please check at least one language."
+                )
                 self.video_state["is_download_running"] = False
                 return
 
@@ -533,7 +593,7 @@ class DownloadMixin:
             # media type decides whether audio comes along, and that decision
             # was previously invisible.
             format_line = self.describe_format_choice(
-                cmd, self.video_state.get("media_type", "video")
+                cmd, self._effective_media_type() or "video"
             )
             self._emit("append_output", format_line)
             captured_output.append(format_line)
@@ -560,7 +620,7 @@ class DownloadMixin:
                 self._terminate_process_tree(process)
 
             progress_manager = DownloadProgressManager(
-                media_type=self.video_state.get("media_type", "video")
+                media_type=self._effective_media_type() or "video"
             )
             state = {
                 "last_line_was_progress": False,
@@ -620,7 +680,7 @@ class DownloadMixin:
                 # finalize files (subtitles, EDL/NFO, cleanup, analysis, etc.).
                 self._emit("set_indeterminate", True)
 
-                media_type = self.video_state.get("media_type")
+                media_type = self._effective_media_type()
 
                 # Resolve final filename before all post-processing.
                 # Fallback discovery runs here so EDL/NFO/metadata all see the
@@ -742,7 +802,7 @@ class DownloadMixin:
 
                 # Create EDL and NFO files BEFORE cleanup deletes the .info.json
                 # Skip if we only downloaded subtitles
-                if state["merged_filename"] and self.video_state.get("media_type") != "subtitles":
+                if state["merged_filename"] and self._effective_media_type() != "subtitles":
                     removed_sb_segments = self.create_edl_file(state["merged_filename"])
                     self.create_nfo_file(state["merged_filename"])
                     # The success path wrote the sidecars; a later exception
@@ -763,10 +823,10 @@ class DownloadMixin:
 
                 # Post Download Analysis (uses cached metadata)
                 # Skip if we only downloaded subtitles (as no new media was created)
-                if state["merged_filename"] and self.video_state.get("media_type") != "subtitles":
+                if state["merged_filename"] and self._effective_media_type() != "subtitles":
                     self._emit("append_output", f"🔍 Analyzing: {os.path.basename(state['merged_filename'])}")
                     self._analyze_downloaded_file(state["merged_filename"])
-                elif not state["merged_filename"] and self.video_state.get("media_type") != "subtitles":
+                elif not state["merged_filename"] and self._effective_media_type() != "subtitles":
                     self._emit("append_output", "🚩 Could not find filename for analysis")
                 # all done
                 self._emit("append_output", "\n✅ Download finished.")
@@ -862,7 +922,7 @@ class DownloadMixin:
             # _emit() drops the UI half of this while the window is closing.
             self.video_state["is_download_running"] = False
             if success:
-                if self.video_state.get("media_type") == "subtitles":
+                if self._effective_media_type() == "subtitles":
                     self._emit("update_download_progress",
                         DownloadProgressManager.PROGRESS_MAX,
                         DownloadProgressManager.PROGRESS_MAX,

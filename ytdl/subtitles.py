@@ -27,18 +27,25 @@ class SubtitleMixin:
     def _update_subtitle_warning(self):
         """Update the Subtitles group box title with a warning if >1 language selected."""
         group_box = getattr(self, "subtitle_group_box", None)
-        if group_box is None:
-            return
-        checked = sum(1 for cb in self.subtitle_checkboxes.values() if cb.isChecked())
-        if checked > 1:
-            group_box.setTitle("Subtitles ⚠️")
-            group_box.setToolTip(
-                "Multiple subtitles cause more YouTube API requests<br>"
-                "and could cause a 429 error: too many requests."
-            )
-        else:
-            group_box.setTitle("Subtitles")
-            group_box.setToolTip("")
+        if group_box is not None:
+            checked = sum(1 for cb in self.subtitle_checkboxes.values() if cb.isChecked())
+            if checked > 1:
+                group_box.setTitle("Subtitles ⚠️")
+                group_box.setToolTip(
+                    "Multiple subtitles cause more YouTube API requests<br>"
+                    "and could cause a 429 error: too many requests."
+                )
+            else:
+                group_box.setTitle("Subtitles")
+                group_box.setToolTip("")
+        # Keep the Type-group "Subtitles" checkbox in sync: as soon as any
+        # language is checked, make sure it is also checked there. Only
+        # auto-checks — the user can still uncheck it manually afterwards.
+        type_cb = getattr(self, "subtitles_checkbox", None)
+        if type_cb is not None:
+            any_checked = any(cb.isChecked() for cb in self.subtitle_checkboxes.values())
+            if any_checked and not type_cb.isChecked():
+                type_cb.setChecked(True)
 
     def _update_subtitle_checkboxes(self, _lang_input):
         # The language the site reported is not needed for the labels: availability
@@ -69,7 +76,7 @@ class SubtitleMixin:
         # "Subtitles only" mode, which downloads nothing else — there the
         # selection is auto-filled (same priority rule the mode's radio
         # button applies via _auto_select_subtitles()).
-        if self.video_state.get("media_type") == "subtitles":
+        if self._effective_media_type() == "subtitles":
             self._auto_select_subtitles()
         self._update_subtitle_warning()
 

@@ -22,6 +22,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main as app  # noqa: E402
+from ytdl.ui_build import UiBuildMixin  # noqa: E402
 
 
 class FakeSignal:
@@ -66,6 +67,7 @@ class ParserHarness:
     # The parser emits through DownloadMixin._emit() so the worker can go quiet
     # when the window closes; borrow it rather than constructing a window.
     _emit = app.DownloadMixin._emit
+    _effective_media_type = app.DownloadMixin._effective_media_type
 
     def __init__(self, media_type="video"):
         self.video_state = {"media_type": media_type}
@@ -461,6 +463,8 @@ class UiHarness:
     _auto_select_subtitles = app.YTDLPDownloaderGUI._auto_select_subtitles
     _set_ui_enabled_state = app.YTDLPDownloaderGUI._set_ui_enabled_state
     _update_subtitle_warning = app.YTDLPDownloaderGUI._update_subtitle_warning
+    _effective_media_type = app.DownloadMixin._effective_media_type
+    _update_type_checkbox_enable_state = app.UiBuildMixin._update_type_checkbox_enable_state
 
     def __init__(self, media_type="video"):
         self.video_state = {"media_type": media_type, "available_subtitles": {}}
@@ -483,6 +487,17 @@ class UiHarness:
         self.sb_all_checkbox = FakeCheckbox("All")
         self.sb_checkbox_map = {FakeCheckbox("Sponsor"): "sponsor"}
         self.option_group_map = [{"buttons": [{"button": FakeCheckbox()}], "enabled": True}]
+        # Type checkboxes (borrowed from the real UI build)
+        self.video_checkbox = FakeCheckbox("Video")
+        self.audio_checkbox = FakeCheckbox("Audio")
+        self.subtitles_checkbox = FakeCheckbox("Subtitles")
+        self.edl_checkbox = FakeCheckbox(".edl only")
+        # Initialize boolean flags matching media_type
+        _mt = media_type
+        self.video_state["wants_video"] = _mt in ("video", "video_only")
+        self.video_state["wants_audio"] = _mt in ("video", "audio")
+        self.video_state["wants_subtitles"] = _mt == "subtitles"
+        self.video_state["wants_edl"] = _mt == "edl_only"
 
 
 class TestSubtitleCheckboxDisable(unittest.TestCase):
@@ -574,6 +589,33 @@ class TestSubtitleCheckboxDisable(unittest.TestCase):
         self.assertTrue(gui.subtitle_checkboxes["de"].checked)
         self.assertFalse(gui.subtitle_checkboxes["en"].checked)
         self.assertFalse(gui.subtitle_checkboxes["es"].checked)
+
+
+class TestSubtitleTypeCheckboxSync(unittest.TestCase):
+    """Checking a subtitle language checkbox auto-checks the Type "Subtitles" checkbox."""
+
+    def setUp(self):
+        self.gui = UiHarness("video")  # start in video mode (Subtitles unchecked)
+
+    def test_language_selection_auto_checks_type_subtitles(self):
+        self.assertFalse(self.gui.subtitles_checkbox.isChecked())
+        self.gui.subtitle_checkboxes["en"].setChecked(True)
+        self.gui._update_subtitle_warning()
+        self.assertTrue(self.gui.subtitles_checkbox.isChecked())
+
+    def test_no_auto_check_when_no_language_selected(self):
+        self.gui._update_subtitle_warning()
+        self.assertFalse(self.gui.subtitles_checkbox.isChecked())
+
+    def test_auto_check_only_adds_never_removes(self):
+        # Type "Subtitles" already checked; unchecking a language doesn't uncheck it
+        self.gui.subtitles_checkbox.setChecked(True)
+        self.gui.subtitle_checkboxes["en"].setChecked(True)
+        self.gui._update_subtitle_warning()
+        self.gui.subtitle_checkboxes["en"].setChecked(False)
+        self.gui._update_subtitle_warning()
+        # The type checkbox stays checked — only auto-checks, never auto-unchecks
+        self.assertTrue(self.gui.subtitles_checkbox.isChecked())
 
 
 # ====================================================================================================

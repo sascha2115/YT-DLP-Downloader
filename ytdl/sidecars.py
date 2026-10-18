@@ -32,7 +32,7 @@ class SidecarMixin:
         are still attempted. Cancellation is excluded by the caller, and
         `sidecars_attempted` ensures this is never invoked twice for one run.
         """
-        media_type = self.video_state.get("media_type", "video")
+        media_type = self._effective_media_type() or "video"
         if media_downloaded or subtitles_downloaded:
             # The message names what actually landed: "the media file" for a
             # video/audio job, "the requested subtitle" for a subtitle-only

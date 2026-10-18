@@ -149,7 +149,7 @@ class CommandMixin:
             cmd.extend(["--cookies-from-browser", cookie_browser])
 
         # Media Type and Format Logic
-        media_type = self.video_state["media_type"]
+        media_type = self._effective_media_type() or "video"
         quality = self.video_state["quality"]
         video_fmt = self.video_state["video_format"]
         audio_fmt = self.video_state["audio_format"]

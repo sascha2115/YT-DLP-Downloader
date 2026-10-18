@@ -208,6 +208,8 @@ class _StartHarness:
 
     start_download = DownloadMixin.start_download
     get_full_path = DownloadMixin.get_full_path
+    get_output_dir = DownloadMixin.get_output_dir
+    _effective_media_type = DownloadMixin._effective_media_type
 
     def __init__(self, tmp, media_type, channel="PowerfulJRE",
                  title="Ep 12 - The Big One"):
@@ -236,6 +238,17 @@ class _StartHarness:
     def start_edl_only(self, channel, base_name):
         self.edl_only_calls.append((channel, base_name))
 
+    def get_selected_subtitle_codes(self):
+        return []
+
+    def _bare_subtitle_credit(self, selected_langs):
+        if not selected_langs:
+            return None
+        offered = set(self.video_state.get("available_subtitles") or {})
+        if offered and offered.issubset(set(selected_langs)):
+            return selected_langs[0]
+        return None
+
 
 class TestRadioAndConstant(unittest.TestCase):
     """The mode is a media_type radio, not a button, and both sides agree."""
@@ -245,17 +258,17 @@ class TestRadioAndConstant(unittest.TestCase):
         # Single source of truth against the prototype's copy.
         self.assertEqual(sb.EDL_ONLY_MEDIA_TYPE, EDL_ONLY_MEDIA_TYPE)
 
-    def test_ui_declares_the_edl_only_radio(self):
-        """The Type group has the radio wired to the same value."""
+    def test_ui_declares_the_edl_only_checkbox(self):
+        """The Type group has .edl only as a checkbox, not a radio."""
         ui_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "ytdl", "ui_build.py",
         )
         with open(ui_path, encoding="utf-8") as handle:
             source = handle.read()
-        self.assertIn('"text": ".edl only"', source)
-        self.assertIn('"value": "edl_only"', source)
-        self.assertIn('"attr": "edl_only_radio"', source)
+        self.assertIn('QCheckBox(".edl only")', source)
+        self.assertIn('self.edl_checkbox', source)
+        self.assertNotIn('"attr": "edl_only_radio"', source)
 
 
 class _FakeRadio:

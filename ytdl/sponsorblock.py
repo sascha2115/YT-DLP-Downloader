@@ -15,10 +15,10 @@ from ytdl.config import SPONSORBLOCK_API_URL, SPONSORBLOCK_TIMEOUT_SECONDS
 from ytdl.sites import SUPPORTED_SITES, detect_site
 from ytdl.widgets import SB_API_MAP
 
-# video_state["media_type"] value of the ".edl only" radio button in the Type
-# group (RADIO_GROUP_CONFIGS in ytdl/ui_build.py): write <title>.edl from
-# SponsorBlock data and stop. start_download() branches on it before
-# build_command(), so no yt-dlp process is ever started for this mode.
+# .edl-only media type: start_download() branches on video_state["wants_edl"]
+# before build_command(), so no yt-dlp process is ever started for this mode.
+# (Replaced the old "media_type" radio enum with checkboxes; EDL_ONLY_MEDIA_TYPE
+# is kept for backward-compat references.)
 EDL_ONLY_MEDIA_TYPE = "edl_only"
 
 # Every SponsorBlock API category. check_sponsorblock() requests it so the

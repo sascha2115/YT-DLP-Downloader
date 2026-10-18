@@ -184,41 +184,6 @@ class UiBuildMixin:
         # Configuration for all Radio Button Groups
         RADIO_GROUP_CONFIGS = [
             {
-                "title": "Type",
-                "attr": "media_type",
-                "group_attr": "media_button_group",
-                "buttons": [
-                    {
-                        "text": "Video + Audio",
-                        "value": "video",
-                        "is_default": True,
-                        "attr": "video_audio_radio",
-                    },
-                    {
-                        "text": "Video only",
-                        "value": "video_only",
-                        "attr": "video_only_radio",
-                    },
-                    {
-                        "text": "Audio only",
-                        "value": "audio",
-                        "attr": "audio_only_radio",
-                    },
-                    {
-                        "text": "Subtitles only",
-                        "value": "subtitles",
-                        "attr": "subtitles_only_radio",
-                    },
-                    {
-                        "text": ".edl only",
-                        "value": "edl_only",
-                        "attr": "edl_only_radio",
-                        "tooltip": "Write only a SponsorBlock .edl skip file "
-                        "for this video. No yt-dlp command is started. "
-                    },
-                ],
-            },
-            {
                 "title": "Quality",
                 "attr": "quality",
                 "group_attr": "quality_button_group",
@@ -295,6 +260,49 @@ class UiBuildMixin:
             },
         ]
         # group_boxes_hlayout.addStretch(1)
+
+        # --------------------------------------------------------------------
+        # Type group: checkboxes instead of radios (video, audio, subtitles,
+        # .edl only). Built manually because checkboxes are independent, not
+        # mutually exclusive like the radio groups below.
+        # --------------------------------------------------------------------
+        self.type_group_box = QGroupBox("Type")
+        type_group_box = self.type_group_box
+        type_layout = QVBoxLayout()
+        type_layout.setContentsMargins(15, 0, 20, 0)
+        type_layout.setSpacing(6)
+
+        self.video_checkbox = QCheckBox("Video")
+        self.video_checkbox.setChecked(self.video_state.get("wants_video", True))
+        self.video_checkbox.setToolTip("Download the video stream.")
+        self.video_checkbox.stateChanged.connect(self._on_type_checkbox_changed)
+        type_layout.addWidget(self.video_checkbox)
+
+        self.audio_checkbox = QCheckBox("Audio")
+        self.audio_checkbox.setChecked(self.video_state.get("wants_audio", True))
+        self.audio_checkbox.setToolTip("Download the audio stream.")
+        self.audio_checkbox.stateChanged.connect(self._on_type_checkbox_changed)
+        type_layout.addWidget(self.audio_checkbox)
+
+        self.subtitles_checkbox = QCheckBox("Subtitles")
+        self.subtitles_checkbox.setChecked(
+            self.video_state.get("wants_subtitles", False)
+        )
+        self.subtitles_checkbox.setToolTip("Download subtitle tracks only (with --skip-download).")
+        self.subtitles_checkbox.stateChanged.connect(self._on_type_checkbox_changed)
+        type_layout.addWidget(self.subtitles_checkbox)
+
+        self.edl_checkbox = QCheckBox(".edl only")
+        self.edl_checkbox.setChecked(self.video_state.get("wants_edl", False))
+        self.edl_checkbox.setToolTip(
+            "Write only a SponsorBlock .edl skip file for this video. "
+            "No yt-dlp command is started."
+        )
+        self.edl_checkbox.stateChanged.connect(self._on_type_checkbox_changed)
+        type_layout.addWidget(self.edl_checkbox)
+
+        type_group_box.setLayout(type_layout)
+        group_boxes_hlayout.addWidget(type_group_box)
 
         # Loop and create the option groups dynamically
         for config in RADIO_GROUP_CONFIGS:
@@ -552,6 +560,8 @@ class UiBuildMixin:
         app_menu.addAction(quit_action)
 
     def _set_ui_enabled_state(self, enabled: bool):
+        self._ui_enabled = enabled
+
         # Primary Controls
         controls = [
             self.url_entry,
@@ -579,6 +589,16 @@ class UiBuildMixin:
             else:
                 for button in config["group"].buttons():
                     button.setEnabled(group_enabled)
+
+        # Type checkboxes — dynamic enabling handled by
+        # _update_type_checkbox_enable_state(); here we only set the base
+        # enabled state (all disabled when the UI is locked during a download).
+        for name in ("video_checkbox", "audio_checkbox", "subtitles_checkbox", "edl_checkbox"):
+            cb = getattr(self, name, None)
+            if cb is not None:
+                cb.setEnabled(enabled)
+        if enabled:
+            self._update_type_checkbox_enable_state()
 
         # Subtitle Checkboxes (using the new dictionary); languages whose
         # last info fetch reported "(none)" availability stay disabled
@@ -622,6 +642,70 @@ class UiBuildMixin:
         # If "Subtitles only" is selected, auto-check subtitles
         if config["attr"] == "media_type" and new_value == "subtitles":
             self._auto_select_subtitles()
+
+    def _on_type_checkbox_changed(self):
+        """Handle changes to the Type checkboxes (video, audio, subtitles,
+        .edl only). Updates video_state and re-applies dynamic enabling."""
+        cb = self.sender()
+        if cb is self.video_checkbox:
+            self.video_state["wants_video"] = cb.isChecked()
+        elif cb is self.audio_checkbox:
+            self.video_state["wants_audio"] = cb.isChecked()
+        elif cb is self.subtitles_checkbox:
+            self.video_state["wants_subtitles"] = cb.isChecked()
+        elif cb is self.edl_checkbox:
+            self.video_state["wants_edl"] = cb.isChecked()
+
+        # Re-apply dynamic enable/disable rules
+        self._update_type_checkbox_enable_state()
+
+        # Subtitles-only mode: auto-select subtitle languages (same rule the
+        # old "Subtitles only" radio button applied via _on_option_group_change)
+        if (
+            self.video_state.get("wants_subtitles")
+            and not self.video_state.get("wants_video")
+            and not self.video_state.get("wants_audio")
+        ):
+            self._auto_select_subtitles()
+
+    def _update_type_checkbox_enable_state(self):
+        """Dynamic enabling/disabling of Type checkboxes based on each other's
+        state.
+
+        Rules:
+          - EDL checked  → grey out Video, Audio, Subtitles (EDL is exclusive)
+          - Subtitles checked AND neither Video nor Audio → grey out Video,
+            Audio (subtitles-only mode)
+          - Otherwise → all follow the base UI enabled state
+        """
+        if not getattr(self, "_ui_enabled", True):
+            # UI is locked (download running): everything already disabled by
+            # _set_ui_enabled_state; nothing more to do.
+            return
+
+        edl = self.edl_checkbox.isChecked() if hasattr(self, "edl_checkbox") else False
+        subtitles = self.subtitles_checkbox.isChecked() if hasattr(self, "subtitles_checkbox") else False
+        video = self.video_checkbox.isChecked() if hasattr(self, "video_checkbox") else False
+        audio = self.audio_checkbox.isChecked() if hasattr(self, "audio_checkbox") else False
+
+        if edl:
+            # EDL only: grey out everything else
+            for name in ("video_checkbox", "audio_checkbox", "subtitles_checkbox"):
+                cb = getattr(self, name, None)
+                if cb is not None:
+                    cb.setEnabled(False)
+        elif subtitles and not video and not audio:
+            # Subtitles only: grey out Video + Audio
+            for name in ("video_checkbox", "audio_checkbox"):
+                cb = getattr(self, name, None)
+                if cb is not None:
+                    cb.setEnabled(False)
+        else:
+            # Normal mode: all enabled
+            for name in ("video_checkbox", "audio_checkbox", "subtitles_checkbox"):
+                cb = getattr(self, name, None)
+                if cb is not None:
+                    cb.setEnabled(True)
 
     def toggle_sb_categories(self, state):
         # Disable/enable all other SponsorBlock checkboxes depending on "All"

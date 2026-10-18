@@ -193,7 +193,7 @@ class ProgressMixin:
         if m := RE_MERGE.search(line):
             new_filename = m.group(1).strip()
         elif m := RE_AUDIO.search(line):
-            if self.video_state["media_type"] == "audio":
+            if self._effective_media_type() == "audio":
                 new_filename = m.group(1).strip()
         elif m := RE_CONVERT.search(line):
             new_filename = m.group(1).strip()
