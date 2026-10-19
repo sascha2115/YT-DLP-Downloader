@@ -10,7 +10,12 @@ import os
 import shutil
 
 from ytdl import preferences as prefs
-from ytdl.sites import DEFAULT_SITE, SUPPORTED_SITES, site_wants_js_runtime
+from ytdl.sites import (
+    DEFAULT_SITE,
+    SUPPORTED_SITES,
+    site_supports_sponsorblock,
+    site_wants_js_runtime,
+)
 from ytdl.utils import sanitize_title
 
 logger = logging.getLogger(__name__)
@@ -236,9 +241,9 @@ class CommandMixin:
         # SponsorBlock Integration
         sb_categories = self.get_selected_sb_categories()
 
-        if sb_categories and SUPPORTED_SITES.get(
-            self.video_state.get("site", DEFAULT_SITE), {}
-        ).get("sponsorblock", False):
+        if sb_categories and site_supports_sponsorblock(
+            self.video_state.get("site", DEFAULT_SITE)
+        ):
             # SponsorBlock chapters only exist on YouTube
             cmd.extend(["--sponsorblock-mark", "all"])
 

@@ -78,6 +78,7 @@ from ytdl.sites import (  # noqa: F401
     site_info_timeout,
     site_resyncs_auto_subs,
     site_slow_hint,
+    site_supports_sponsorblock,
     site_wants_js_runtime,
 )
 from ytdl.progress import DownloadProgressManager  # noqa: F401

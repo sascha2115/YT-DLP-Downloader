@@ -295,6 +295,22 @@ def site_wants_js_runtime(site):
     return SUPPORTED_SITES.get(site, {}).get("js_runtime", True)
 
 
+def site_supports_sponsorblock(site):
+    """
+    Whether SponsorBlock data can exist for a site's videos.
+
+    The SponsorBlock database is keyed by YouTube video ids, so only
+    YouTube's profile sets "sponsorblock". This is the single gate for every
+    SponsorBlock touch point: the API query in check_sponsorblock(),
+    --sponsorblock-mark in build_command(), the ".edl only" writer, and the
+    download path's EDL sidecar (create_edl_file). Defaults to False — unlike
+    js_runtime / resync_auto_subs, which default True to preserve their
+    historical always-on behavior: an unknown site must never query the API
+    or claim to have segments.
+    """
+    return SUPPORTED_SITES.get(site, {}).get("sponsorblock", False)
+
+
 def is_plausible_url(url):
     """
     Cheap syntactic pre-check so obvious non-URLs never reach yt-dlp.

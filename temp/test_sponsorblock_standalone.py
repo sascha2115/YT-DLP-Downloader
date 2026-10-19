@@ -252,10 +252,13 @@ class TestWriteEdl(unittest.TestCase):
 class _EdlHarness:
     """Minimal stand-in around the REAL DownloadMixin.create_edl_file()."""
 
-    def __init__(self, json_path, selected):
+    def __init__(self, json_path, selected, site="youtube"):
         self._json_path = json_path
         self._selected = selected
         self.lines = []
+        # create_edl_file() gates on video_state["site"]; default to YouTube
+        # so the parity tests below exercise the ungated writer.
+        self.video_state = {"site": site}
 
     def get_full_path(self, extension="", lang=None):
         # Mirror the real get_full_path(): no extension -> extensionless base;
@@ -348,6 +351,52 @@ class TestParityWithTheAppsEdl(unittest.TestCase):
             [seg("outro", 5, 15)], ["ending"]
         ))
         self.assertEqual(our_content, "5 15 0\n")
+
+
+class TestEdlSiteGate(unittest.TestCase):
+    """create_edl_file() must not process SponsorBlock off YouTube.
+
+    Regression: an ARD download printed "Reading … for EDL generation /
+    Selected SB categories / No sponsorblock_chapters / No segments to skip"
+    even though the info fetch had already reported "SponsorBlock: Not
+    available for this site (YouTube only) — skipping".
+    """
+
+    @staticmethod
+    def _write_info(tmp):
+        # Chapters present on purpose: the site gate must fire before the
+        # .info.json is read, not merely because there is nothing to find.
+        info_path = os.path.join(tmp, "Video.info.json")
+        with open(info_path, "w", encoding="utf-8") as handle:
+            json.dump({"sponsorblock_chapters": [
+                {"start_time": 15.25, "end_time": 90.5,
+                 "_categories": [("sponsor", 15.25, 90.5, "Sponsor")]},
+            ]}, handle)
+        return info_path
+
+    def test_non_youtube_site_skips_the_edl_entirely(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = _EdlHarness(self._write_info(tmp), ["sponsor"], site="ard")
+            applied = SidecarMixin.create_edl_file(
+                harness, os.path.join(tmp, "Video.mp4")
+            )
+            self.assertEqual(applied, [])
+            self.assertFalse(os.path.exists(os.path.join(tmp, "Video.edl")))
+            # No EDL-generation chatter — one skip line instead.
+            self.assertFalse(any("EDL generation" in line for line in harness.lines))
+            self.assertTrue(any(
+                "Not available for this site" in line and "skipping EDL" in line
+                for line in harness.lines
+            ))
+
+    def test_youtube_site_still_writes_the_edl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = _EdlHarness(self._write_info(tmp), ["sponsor"], site="youtube")
+            applied = SidecarMixin.create_edl_file(
+                harness, os.path.join(tmp, "Video.mp4")
+            )
+            self.assertEqual(len(applied), 1)
+            self.assertTrue(os.path.exists(os.path.join(tmp, "Video.edl")))
 
 
 class _Bar:

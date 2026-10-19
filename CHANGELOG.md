@@ -26,6 +26,10 @@ disagree, this file is right.
 
 ---
 
+## Unreleased
+
+- **No more SponsorBlock chatter on non-YouTube sites.** A download from ARD/ZDF Mediathek, Rumble or Odysee still printed the EDL-generation lines ("📟 Reading … for EDL generation…", "Selected SB categories", "No segments to skip found in selected categories") even though the info fetch had already reported "SponsorBlock: Not available for this site (YouTube only) — skipping". Such downloads now skip the step with a single "skipping EDL" line. Nothing was ever written for these sites (SponsorBlock is YouTube-only), but the output wrongly looked like the video was being processed.
+
 ## 1.5.5 — 2026-10-17
 
 - **Type group: radio buttons → checkboxes.** The Type group's five radio buttons (Video+Audio, Video only, Audio only, Subtitles only, .edl only) are replaced with four independent checkboxes: **Video**, **Audio**, **Subtitles**, and **.edl only**. You can now combine options (e.g. Video + Subtitles without Audio, or Audio + Subtitles). When `.edl only` is checked, the other three are greyed out. Checking a subtitle language in the Subtitles group automatically checks the Type group's "Subtitles" checkbox as well.

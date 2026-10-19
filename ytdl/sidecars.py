@@ -11,6 +11,7 @@ import os
 import re
 from datetime import datetime
 
+from ytdl.sites import DEFAULT_SITE, site_supports_sponsorblock
 from ytdl.sponsorblock import to_ui_category, write_edl
 
 
@@ -165,8 +166,25 @@ class SidecarMixin:
             self._emit("append_output", f"🚩 Error creating NFO file: {e}")
 
     def create_edl_file(self, video_path):
+        # pylint: disable=too-many-return-statements
+        # One guard clause per distinct, reported no-file case (mirrors
+        # create_edl_only()); the site gate below added the 7th.
         if not video_path:
             self._emit("append_output", "📟 create_edl_file called without video_path")
+            return []
+
+        # Site gate. SponsorBlock's database is YouTube-only, and
+        # --sponsorblock-mark is site-gated too, so the .info.json of an
+        # ARD/ZDF/Rumble/Odysee download can never contain
+        # sponsorblock_chapters. Without this check every such download
+        # printed "Selected SB categories / No sponsorblock_chapters /
+        # No segments to skip" — contradicting the info fetch's
+        # "SponsorBlock: Not available for this site" skip line.
+        if not site_supports_sponsorblock(self.video_state.get("site", DEFAULT_SITE)):
+            self._emit(
+                "append_output",
+                "SponsorBlock: Not available for this site (YouTube only) — skipping EDL",
+            )
             return []
 
         json_file = self.get_full_path(".info.json")

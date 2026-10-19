@@ -12,7 +12,7 @@ import threading
 from ytdl.command import _format_captured_output, _redact_command
 from ytdl.config import DEFAULT_OUTPUT_DIR
 from ytdl.progress import DownloadProgressManager
-from ytdl.sites import DEFAULT_SITE, SUPPORTED_SITES
+from ytdl.sites import DEFAULT_SITE, site_supports_sponsorblock
 from ytdl.sponsorblock import (
     EDL_ONLY_MEDIA_TYPE,
     _extract_video_id,
@@ -505,7 +505,7 @@ class DownloadMixin:
             self._emit("append_output", text)
 
         site = state.get("site", DEFAULT_SITE)
-        if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
+        if not site_supports_sponsorblock(site):
             emit("SponsorBlock: Not available for this site (YouTube only) — skipping")
             return None
 

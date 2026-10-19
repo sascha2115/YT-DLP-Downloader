@@ -26,6 +26,7 @@ from ytdl.sites import (
     SUPPORTED_SITES,
     site_info_timeout,
     site_slow_hint,
+    site_supports_sponsorblock,
     site_wants_js_runtime,
 )
 from ytdl.utils import canonical_subtitle_lang, sanitize_title
@@ -740,7 +741,7 @@ class InfoFetchMixin:
         # and that writer always see the same segments)
         all_categories = SB_ALL_API_CATEGORIES
 
-        if not SUPPORTED_SITES.get(site, {}).get("sponsorblock", False):
+        if not site_supports_sponsorblock(site):
             # SponsorBlock is a YouTube-only database; skip cleanly on other sites
             self._emit(
                 "sb_log",

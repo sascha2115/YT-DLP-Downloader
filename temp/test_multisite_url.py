@@ -184,6 +184,18 @@ class TestSiteProfiles(unittest.TestCase):
         self.assertFalse(app.SUPPORTED_SITES["ard"]["sponsorblock"])
         self.assertFalse(app.SUPPORTED_SITES["zdf"]["sponsorblock"])
 
+    def test_site_supports_sponsorblock_is_the_single_gate(self):
+        # One helper gates all four touch points: the info-fetch API query,
+        # --sponsorblock-mark, the ".edl only" writer and the download path's
+        # EDL sidecar. Unknown sites stay off — SponsorBlock is YouTube-only.
+        self.assertTrue(app.site_supports_sponsorblock("youtube"))
+        self.assertFalse(app.site_supports_sponsorblock("rumble"))
+        self.assertFalse(app.site_supports_sponsorblock("odysee"))
+        self.assertFalse(app.site_supports_sponsorblock("ard"))
+        self.assertFalse(app.site_supports_sponsorblock("zdf"))
+        self.assertFalse(app.site_supports_sponsorblock("some-future-site"))
+        self.assertFalse(app.site_supports_sponsorblock(""))
+
     def test_id_regexes_wired(self):
         self.assertIs(app.SUPPORTED_SITES["youtube"]["id_regex"], app.YOUTUBE_ID_REGEX)
         self.assertIs(app.SUPPORTED_SITES["rumble"]["id_regex"], app.RUMBLE_ID_REGEX)
