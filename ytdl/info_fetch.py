@@ -226,6 +226,14 @@ class InfoFetchMixin:
         # its checkboxes would stay enabled and get_selected_subtitle_codes()
         # would ask yt-dlp for subtitles this video does not have.
         self.video_state["available_subtitles"] = {}
+        # The description has the same problem: it is written only on the
+        # success path (via update_video_state), but _emit_description_summary()
+        # reads it on EVERY path — including the failure paths below. A failed
+        # fetch therefore re-printed the PREVIOUS video's description, and the
+        # stale text also leaked into the thumbnail dialog and the NFO sidecar.
+        # Reset it here, next to the subtitle reset, so a failed fetch shows no
+        # description instead of the last successful one.
+        self.video_state["description"] = ""
         # `language` is only assigned after a successful parse, but the
         # checkbox refresh at the end of this method runs on every path —
         # default it here so the failure paths do not raise NameError.
