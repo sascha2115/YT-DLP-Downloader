@@ -35,6 +35,10 @@ def main():
             print("field enabled:", field.isEnabled())
             checkbox.setChecked(True)
             print("field enabled after checking:", field.isEnabled())
+            # Geometry: the field must sit on the same line as the checkbox.
+            print("checkbox geometry:", checkbox.geometry().getRect())
+            print("field geometry:", field.geometry().getRect())
+            print("same line:", checkbox.geometry().center().y() == field.geometry().center().y())
             dialog.accept()
         else:
             print("no modal dialog found")

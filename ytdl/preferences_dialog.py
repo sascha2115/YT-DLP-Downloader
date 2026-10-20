@@ -75,17 +75,6 @@ class PreferencesDialogMixin:
             "Use cookies from your browser for authenticated requests "
             "(fixes 403 / sign-in / age-restricted videos)."
         )
-        layout.addWidget(cookie_enabled)
-
-        # The browser field sits directly next to its label, not in a
-        # full-width form row. The field is flat (no padding, no rounded
-        # corners) and uses the pane's regular font size.
-        browser_row = QHBoxLayout()
-        browser_row.setContentsMargins(0, 0, 0, 0)
-        browser_row.setSpacing(6)
-        browser_label = QLabel("Browser")
-        browser_label.setFixedWidth(60)
-        browser_row.addWidget(browser_label)
 
         cookie_browser = QLineEdit()
         cookie_browser.setPlaceholderText("firefox, chrome, …")
@@ -96,9 +85,9 @@ class PreferencesDialogMixin:
         )
         cookie_browser.setFixedWidth(240)
         # Flat field: no padding, no rounded corners, and the pane's regular
-        # font size (taken from the label) instead of the stylesheet's larger
-        # QLineEdit size.
-        base_size = browser_label.font().pointSize()
+        # font size (taken from the checkbox) instead of the stylesheet's
+        # larger QLineEdit size.
+        base_size = cookie_enabled.font().pointSize()
         font_rule = (
             f"font-size: {base_size}pt;" if base_size > 0 else ""
         )
@@ -118,9 +107,15 @@ class PreferencesDialogMixin:
                 color: #999;
             }}
         """)
-        browser_row.addWidget(cookie_browser)
-        browser_row.addStretch(1)
-        layout.addLayout(browser_row)
+
+        # The field sits right next to the checkbox, on the same line.
+        cookie_row = QHBoxLayout()
+        cookie_row.setContentsMargins(0, 0, 0, 0)
+        cookie_row.setSpacing(6)
+        cookie_row.addWidget(cookie_enabled)
+        cookie_row.addWidget(cookie_browser)
+        cookie_row.addStretch(1)
+        layout.addLayout(cookie_row)
 
         # Text editor for JSON
         text_edit = QPlainTextEdit()
