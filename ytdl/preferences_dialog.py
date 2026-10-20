@@ -8,7 +8,6 @@ import os
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -69,15 +68,14 @@ class PreferencesDialogMixin:
         # and "cookies_from_browser") in both directions: the JSON editor
         # updates the form while typing, and saving writes the form back
         # into the JSON. One source of truth, no surprise overwrites.
-        cookie_box = QGroupBox("Browser cookies")
-        cookie_layout = QVBoxLayout(cookie_box)
-
+        # No group box / frame here: the cookies section is just the
+        # checkbox and the browser field, placed directly in the dialog.
         cookie_enabled = QCheckBox("cookies_from_browser")
         cookie_enabled.setToolTip(
             "Use cookies from your browser for authenticated requests "
             "(fixes 403 / sign-in / age-restricted videos)."
         )
-        cookie_layout.addWidget(cookie_enabled)
+        layout.addWidget(cookie_enabled)
 
         # The browser field sits directly next to its label, not in a
         # full-width form row. The field is flat (no padding, no rounded
@@ -122,8 +120,7 @@ class PreferencesDialogMixin:
         """)
         browser_row.addWidget(cookie_browser)
         browser_row.addStretch(1)
-        cookie_layout.addLayout(browser_row)
-        layout.addWidget(cookie_box)
+        layout.addLayout(browser_row)
 
         # Text editor for JSON
         text_edit = QPlainTextEdit()
