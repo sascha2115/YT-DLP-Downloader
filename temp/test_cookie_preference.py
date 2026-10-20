@@ -472,5 +472,70 @@ class TestInvalidUtf8Preferences(unittest.TestCase):
             json.load(handle)
 
 
+class TestPreferenceTooltips(unittest.TestCase):
+    """The help text for each preference lives in its widget's tooltip.
+
+    There is no separate explanations section in the dialog any more, so
+    the tooltip is the only place a user can read what a key does. These
+    tests are pure (no Qt): they check the texts in `ytdl/preferences.py`,
+    which the dialog hands to the widgets.
+    """
+
+    ALL_TOOLTIPS = (
+        P.TOOLTIP_COOKIES_FROM_BROWSER_ENABLED,
+        P.TOOLTIP_COOKIES_FROM_BROWSER,
+        P.TOOLTIP_STRIP_BRACKETED_SOUNDCUES,
+        P.TOOLTIP_SHOW_FETCHINFO_COMMAND,
+        P.TOOLTIP_CHANNEL_NAME_MAP_EDITOR,
+    )
+
+    def test_every_tooltip_is_non_empty(self):
+        for tooltip in self.ALL_TOOLTIPS:
+            self.assertTrue(tooltip.strip(), "a tooltip is empty")
+
+    def test_each_tooltip_names_its_own_key(self):
+        # A tooltip that does not mention the key cannot help the user map
+        # it back to the preferences file.
+        self.assertIn("cookies_from_browser_enabled",
+                      P.TOOLTIP_COOKIES_FROM_BROWSER_ENABLED)
+        self.assertIn("cookies_from_browser",
+                      P.TOOLTIP_COOKIES_FROM_BROWSER)
+        self.assertIn("strip_bracketed_soundcues",
+                      P.TOOLTIP_STRIP_BRACKETED_SOUNDCUES)
+        self.assertIn("show_fetchinfo_command",
+                      P.TOOLTIP_SHOW_FETCHINFO_COMMAND)
+        self.assertIn("channel_name_map",
+                      P.TOOLTIP_CHANNEL_NAME_MAP_EDITOR)
+
+    def test_the_tooltips_state_the_type_and_the_default(self):
+        # The old explanations section spelled out "true or false
+        # (default X)" for every boolean; that has to survive the move
+        # into the tooltips.
+        for tooltip in (P.TOOLTIP_COOKIES_FROM_BROWSER_ENABLED,
+                        P.TOOLTIP_STRIP_BRACKETED_SOUNDCUES,
+                        P.TOOLTIP_SHOW_FETCHINFO_COMMAND):
+            self.assertIn("true or false", tooltip)
+            self.assertIn("default", tooltip)
+
+    def test_the_strip_tooltip_reports_the_real_default(self):
+        # The default is interpolated from the constant, so a change to
+        # the constant cannot leave a stale "default true" in the text.
+        expected = "default true" if P.STRIP_BRACKETED_SOUNDCUES_DEFAULT \
+            else "default false"
+        self.assertIn(expected, P.TOOLTIP_STRIP_BRACKETED_SOUNDCUES)
+
+    def test_the_browser_tooltip_lists_every_valid_browser(self):
+        for browser in P.VALID_COOKIE_BROWSERS:
+            self.assertIn(browser, P.TOOLTIP_COOKIES_FROM_BROWSER)
+
+    def test_the_browser_tooltip_keeps_the_firefox_profile_hint(self):
+        # A recurring mistake: "default-release" instead of the full
+        # profile directory name.
+        self.assertIn("1abc2def.default-release",
+                      P.TOOLTIP_COOKIES_FROM_BROWSER)
+        self.assertIn("not just default-release",
+                      P.TOOLTIP_COOKIES_FROM_BROWSER)
+
+
 if __name__ == "__main__":
     unittest.main()

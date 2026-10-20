@@ -53,39 +53,6 @@ class PreferencesDialogMixin:
         path_label.setWordWrap(True)
         layout.addWidget(path_label)
 
-        # Show/hide explanations link
-        self._prefs_show_explanations = False
-        toggle_label = QLabel(
-            '<small><a href="toggle">Show explanations</a></small>'
-        )
-        toggle_label.setOpenExternalLinks(False)
-        toggle_label.linkActivated.connect(lambda _: self._toggle_explanations(toggle_label, hint_label))
-        layout.addWidget(toggle_label)
-
-        hint_label = QLabel(
-            "<small>strip_bracketed_soundcues: true or false (default "
-            f"{'true' if prefs.STRIP_BRACKETED_SOUNDCUES_DEFAULT else 'false'}). "
-            "Removes bracketed sound cues such as [laughter], [snorts] and "
-            "[musik] from subtitles; false keeps them.<br>"
-            "cookies_from_browser_enabled: true or false (default false). The "
-            "on/off switch for browser cookies.<br>"
-            "cookies_from_browser: empty string (default) or one of "
-            "brave, chrome, chromium, edge, firefox, opera, safari, vivaldi, whale "
-            "(or firefox:profile_dir). Reads cookies from your browser for authenticated "
-            "requests (fixes 403/Sign-in/age-restricted videos). Only used when "
-            "cookies_from_browser_enabled is true.<br>"
-            "For Firefox: use the full profile directory name (e.g. "
-            "<code>firefox:1abc2def.default-release</code>), not just <code>default-release</code>.<br>"
-            "show_fetchinfo_command: true or false (default false). Logs the info-fetch "
-            "yt-dlp command (with cookies/JS runtime) to the output panel for debugging.<br>"
-            "The four switches above are set here; the JSON editor below holds "
-            "only <code>channel_name_map</code>.<br>"
-            "Chromium-based browsers must be closed first (they lock the cookie DB).</small>"
-        )
-        hint_label.setWordWrap(True)
-        hint_label.setVisible(False)
-        layout.addWidget(hint_label)
-
         # Browser cookies: an on/off switch and the browser to take them from.
         # The form owns the two keys ("cookies_from_browser_enabled" and
         # "cookies_from_browser"); the JSON editor holds only
@@ -93,37 +60,26 @@ class PreferencesDialogMixin:
         # values live and no sync between the two.
         # No group box / frame here: the cookies section is just the
         # checkbox and the browser field, placed directly in the dialog.
+        # The help text for each key is the tooltip of the widget that owns
+        # it, so the dialog needs no separate explanations section.
         cookie_enabled = QCheckBox("cookies_from_browser")
         cookie_enabled.setObjectName("cookies_from_browser")
-        cookie_enabled.setToolTip(
-            "Use cookies from your browser for authenticated requests "
-            "(fixes 403 / sign-in / age-restricted videos)."
-        )
+        cookie_enabled.setToolTip(prefs.TOOLTIP_COOKIES_FROM_BROWSER_ENABLED)
 
         # The remaining switches: they are booleans in the preferences file
         # and are edited as checkboxes, so the JSON editor does not have to
         # carry them.
         strip_soundcues = QCheckBox("strip_bracketed_soundcues")
         strip_soundcues.setObjectName("strip_bracketed_soundcues")
-        strip_soundcues.setToolTip(
-            "Remove bracketed sound cues such as [laughter], [snorts] and "
-            "[musik] from subtitles. Off keeps them."
-        )
+        strip_soundcues.setToolTip(prefs.TOOLTIP_STRIP_BRACKETED_SOUNDCUES)
 
         show_fetchinfo = QCheckBox("show_fetchinfo_command")
         show_fetchinfo.setObjectName("show_fetchinfo_command")
-        show_fetchinfo.setToolTip(
-            "Log the info-fetch yt-dlp command (with cookies/JS runtime) to "
-            "the output panel. Useful for debugging."
-        )
+        show_fetchinfo.setToolTip(prefs.TOOLTIP_SHOW_FETCHINFO_COMMAND)
 
         cookie_browser = QLineEdit()
         cookie_browser.setPlaceholderText("firefox, chrome, …")
-        cookie_browser.setToolTip(
-            "The browser to read cookies from. For Firefox use the full profile "
-            "directory name, e.g. firefox:1abc2def.default-release. "
-            "Chromium-based browsers must be closed first."
-        )
+        cookie_browser.setToolTip(prefs.TOOLTIP_COOKIES_FROM_BROWSER)
         cookie_browser.setFixedWidth(240)
         # Flat field: no padding, no rounded corners, and the pane's regular
         # font size (taken from the checkbox) instead of the stylesheet's
@@ -167,6 +123,7 @@ class PreferencesDialogMixin:
         # switches live in the checkboxes above, so the file the user edits
         # by hand stays small and cannot break a switch by accident.
         text_edit = QPlainTextEdit()
+        text_edit.setToolTip(prefs.TOOLTIP_CHANNEL_NAME_MAP_EDITOR)
         text_edit.setStyleSheet("""
             QPlainTextEdit {
                 font-family: "Menlo", "Courier New";
@@ -234,16 +191,6 @@ class PreferencesDialogMixin:
         layout.addLayout(button_layout)
 
         dialog.exec()
-
-    def _toggle_explanations(self, toggle_label, hint_label):
-        """Toggle visibility of the explanations label."""
-        self._prefs_show_explanations = not self._prefs_show_explanations
-        hint_label.setVisible(self._prefs_show_explanations)
-        toggle_label.setText(
-            '<small><a href="toggle">Hide explanations</a></small>'
-            if self._prefs_show_explanations
-            else '<small><a href="toggle">Show explanations</a></small>'
-        )
 
     def _read_preferences_file(self):
         """The preferences currently on disk, as a dict (empty on any problem).

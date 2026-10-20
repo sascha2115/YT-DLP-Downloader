@@ -42,6 +42,45 @@ VALID_COOKIE_BROWSERS = (
 # own key ("cookies_from_browser"); this key is the on/off switch next to it.
 COOKIES_FROM_BROWSER_ENABLED_DEFAULT = False
 
+# The help text for each preference. It is shown as the tooltip of the widget
+# that owns the key, so the dialog needs no separate explanations section.
+# These live here (not in the dialog) so they can be checked without Qt.
+TOOLTIP_COOKIES_FROM_BROWSER_ENABLED = (
+    "cookies_from_browser_enabled: true or false (default false). The "
+    "on/off switch for browser cookies.\n"
+    "Reads cookies from your browser for authenticated requests "
+    "(fixes 403/Sign-in/age-restricted videos). Only used when the "
+    "browser name below is set."
+)
+
+TOOLTIP_COOKIES_FROM_BROWSER = (
+    "cookies_from_browser: empty string (default) or one of brave, "
+    "chrome, chromium, edge, firefox, opera, safari, vivaldi, whale "
+    "(or firefox:profile_dir). The browser to read cookies from.\n"
+    "For Firefox use the full profile directory name, e.g. "
+    "firefox:1abc2def.default-release, not just default-release.\n"
+    "Chromium-based browsers must be closed first (they lock the cookie DB)."
+)
+
+TOOLTIP_STRIP_BRACKETED_SOUNDCUES = (
+    "strip_bracketed_soundcues: true or false (default "
+    f"{'true' if STRIP_BRACKETED_SOUNDCUES_DEFAULT else 'false'}). "
+    "Removes bracketed sound cues such as [laughter], [snorts] and "
+    "[musik] from subtitles; false keeps them."
+)
+
+TOOLTIP_SHOW_FETCHINFO_COMMAND = (
+    "show_fetchinfo_command: true or false (default false). Logs the "
+    "info-fetch yt-dlp command (with cookies/JS runtime) to the "
+    "output panel for debugging."
+)
+
+TOOLTIP_CHANNEL_NAME_MAP_EDITOR = (
+    "The four switches above are set in the form; this editor holds "
+    "only channel_name_map, a JSON object mapping a channel name to "
+    "the name to show for it."
+)
+
 
 def validate_cookies_from_browser(value):
     """Validate cookies_from_browser value. Returns (is_valid, error_msg)."""

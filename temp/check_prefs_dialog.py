@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtCore import QTimer  # noqa: E402
 from PyQt6.QtWidgets import (  # noqa: E402
-    QApplication, QCheckBox, QDialog, QLineEdit, QPlainTextEdit,
+    QApplication, QCheckBox, QDialog, QLabel, QLineEdit, QPlainTextEdit,
 )
 
 import main as app  # noqa: E402
@@ -43,6 +43,19 @@ def main():
             print("same line:", cookies.geometry().center().y() == field.geometry().center().y())
             editor = dialog.findChild(QPlainTextEdit)
             print("editor content:", editor.toPlainText())
+            # The explanations live in the tooltips now, not in a separate
+            # expandable section: every form widget must carry one, and
+            # the "Show explanations" link must be gone.
+            for name in ("cookies_from_browser", "strip_bracketed_soundcues",
+                         "show_fetchinfo_command"):
+                box = dialog.findChild(QCheckBox, name)
+                print("tooltip", name, "->", repr(box.toolTip()))
+            print("field tooltip ->", repr(field.toolTip()))
+            print("editor tooltip ->", repr(editor.toolTip()))
+            labels = [lbl.text() for lbl in dialog.findChildren(QLabel)]
+            print("labels:", labels)
+            print("has explanations link:",
+                  any("explanation" in t.lower() for t in labels))
             dialog.reject()
         else:
             print("no modal dialog found")
