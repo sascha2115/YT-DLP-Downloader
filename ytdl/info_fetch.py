@@ -269,7 +269,7 @@ class InfoFetchMixin:
                 ]
             )
             # Log the info-fetch command if enabled (disabled by default)
-            if prefs.preferences.get("show_fetchinfo_command", False):
+            if prefs.show_fetchinfo_command():
                 # Same redaction as the download command log: a value-taking
                 # flag (cookies, header, ...) is masked, the URL is not.
                 self._emit(

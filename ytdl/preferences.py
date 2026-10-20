@@ -127,6 +127,24 @@ def strip_bracketed_soundcues(prefs_dict=None):
     return bool(STRIP_BRACKETED_SOUNDCUES_DEFAULT)
 
 
+def show_fetchinfo_command(prefs_dict=None):
+    """Whether the info-fetch yt-dlp command is logged to the output panel.
+
+    Same contract as the other boolean preferences: a real bool is used
+    as-is, anything else falls back to the default (off).
+    """
+    source = preferences if prefs_dict is None else prefs_dict
+    raw = (source or {}).get("show_fetchinfo_command")
+    if isinstance(raw, bool):
+        return raw
+    if raw is not None:
+        logger.warning(
+            "show_fetchinfo_command is %s, not true or false — using off",
+            type(raw).__name__,
+        )
+    return False
+
+
 def load_preferences():
     """Load preferences from preferences.json (macOS: ~/Library/Application Support/,
     Linux: ~/.config/)."""

@@ -17,6 +17,27 @@ from PyQt6.QtWidgets import (
 )
 from ytdl import preferences as prefs
 
+# The preference keys the dialog's form owns. Their values come from the
+# checkboxes and the browser field, never from the JSON editor.
+_FORM_OWNED_KEYS = frozenset({
+    "cookies_from_browser",
+    "cookies_from_browser_enabled",
+    "strip_bracketed_soundcues",
+    "show_fetchinfo_command",
+})
+
+
+def _form_supplied(key, cookie_enabled, cookie_browser, strip_soundcues,
+                   show_fetchinfo):
+    """Whether the form widget that owns `key` was passed in."""
+    widgets = {
+        "cookies_from_browser": cookie_browser,
+        "cookies_from_browser_enabled": cookie_enabled,
+        "strip_bracketed_soundcues": strip_soundcues,
+        "show_fetchinfo_command": show_fetchinfo,
+    }
+    return widgets.get(key) is not None
+
 
 class PreferencesDialogMixin:
     def open_preferences_dialog(self):
@@ -57,6 +78,8 @@ class PreferencesDialogMixin:
             "<code>firefox:1abc2def.default-release</code>), not just <code>default-release</code>.<br>"
             "show_fetchinfo_command: true or false (default false). Logs the info-fetch "
             "yt-dlp command (with cookies/JS runtime) to the output panel for debugging.<br>"
+            "The four switches above are set here; the JSON editor below holds "
+            "only <code>channel_name_map</code>.<br>"
             "Chromium-based browsers must be closed first (they lock the cookie DB).</small>"
         )
         hint_label.setWordWrap(True)
@@ -64,16 +87,34 @@ class PreferencesDialogMixin:
         layout.addWidget(hint_label)
 
         # Browser cookies: an on/off switch and the browser to take them from.
-        # The form mirrors the two JSON keys ("cookies_from_browser_enabled"
-        # and "cookies_from_browser") in both directions: the JSON editor
-        # updates the form while typing, and saving writes the form back
-        # into the JSON. One source of truth, no surprise overwrites.
+        # The form owns the two keys ("cookies_from_browser_enabled" and
+        # "cookies_from_browser"); the JSON editor holds only
+        # channel_name_map, so there is no longer a second place these
+        # values live and no sync between the two.
         # No group box / frame here: the cookies section is just the
         # checkbox and the browser field, placed directly in the dialog.
         cookie_enabled = QCheckBox("cookies_from_browser")
+        cookie_enabled.setObjectName("cookies_from_browser")
         cookie_enabled.setToolTip(
             "Use cookies from your browser for authenticated requests "
             "(fixes 403 / sign-in / age-restricted videos)."
+        )
+
+        # The remaining switches: they are booleans in the preferences file
+        # and are edited as checkboxes, so the JSON editor does not have to
+        # carry them.
+        strip_soundcues = QCheckBox("strip_bracketed_soundcues")
+        strip_soundcues.setObjectName("strip_bracketed_soundcues")
+        strip_soundcues.setToolTip(
+            "Remove bracketed sound cues such as [laughter], [snorts] and "
+            "[musik] from subtitles. Off keeps them."
+        )
+
+        show_fetchinfo = QCheckBox("show_fetchinfo_command")
+        show_fetchinfo.setObjectName("show_fetchinfo_command")
+        show_fetchinfo.setToolTip(
+            "Log the info-fetch yt-dlp command (with cookies/JS runtime) to "
+            "the output panel. Useful for debugging."
         )
 
         cookie_browser = QLineEdit()
@@ -117,7 +158,14 @@ class PreferencesDialogMixin:
         cookie_row.addStretch(1)
         layout.addLayout(cookie_row)
 
-        # Text editor for JSON
+        # The two standalone switches, each on its own line, directly in the
+        # dialog (no group frame, like the cookies row).
+        layout.addWidget(strip_soundcues)
+        layout.addWidget(show_fetchinfo)
+
+        # The JSON editor carries the channel name map only. The boolean
+        # switches live in the checkboxes above, so the file the user edits
+        # by hand stays small and cannot break a switch by accident.
         text_edit = QPlainTextEdit()
         text_edit.setStyleSheet("""
             QPlainTextEdit {
@@ -133,36 +181,36 @@ class PreferencesDialogMixin:
                 with open(prefs.PREFERENCES_FILE, "r", encoding="utf-8") as f:
                     content = f.read()
             else:
-                content = json.dumps(
-                    {"channel_name_map": {},
-                     "strip_bracketed_soundcues":
-                         prefs.STRIP_BRACKETED_SOUNDCUES_DEFAULT,
-                     "cookies_from_browser": "",
-                     "cookies_from_browser_enabled":
-                         prefs.COOKIES_FROM_BROWSER_ENABLED_DEFAULT,
-                     "show_fetchinfo_command": False},
-                    indent=2,
-                )
-        except Exception as e:
-            content = f"Error loading preferences: {e}"
+                content = ""
+        except (OSError, UnicodeError):
+            # UnicodeError: the file is not valid UTF-8 (a corrupted or
+            # hand-edited file). Treat it as empty rather than refusing
+            # to open the dialog.
+            content = ""
 
-        text_edit.setPlainText(content)
+        current = {}
+        if content:
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, dict):
+                    current = parsed
+            except (json.JSONDecodeError, TypeError):
+                current = {}
+
+        channel_map = current.get("channel_name_map", {})
+        if not isinstance(channel_map, dict):
+            channel_map = {}
+        text_edit.setPlainText(
+            json.dumps({"channel_name_map": channel_map}, indent=2, ensure_ascii=False)
+        )
         layout.addWidget(text_edit)
 
-        def _sync_form_from_json():
-            """Mirror the JSON editor's cookie keys into the form."""
-            try:
-                parsed = json.loads(text_edit.toPlainText())
-            except (json.JSONDecodeError, TypeError):
-                return
-            if not isinstance(parsed, dict):
-                return
-            cookie_enabled.setChecked(prefs.cookies_from_browser_enabled(parsed))
-            browser = parsed.get("cookies_from_browser", "")
-            cookie_browser.setText(browser if isinstance(browser, str) else "")
-
-        text_edit.textChanged.connect(_sync_form_from_json)
-        _sync_form_from_json()
+        # The form shows the current state of the switches.
+        cookie_enabled.setChecked(prefs.cookies_from_browser_enabled(current))
+        browser = current.get("cookies_from_browser", "")
+        cookie_browser.setText(browser if isinstance(browser, str) else "")
+        strip_soundcues.setChecked(prefs.strip_bracketed_soundcues(current))
+        show_fetchinfo.setChecked(prefs.show_fetchinfo_command(current))
 
         cookie_browser.setEnabled(cookie_enabled.isChecked())
         cookie_enabled.toggled.connect(cookie_browser.setEnabled)
@@ -173,7 +221,8 @@ class PreferencesDialogMixin:
         save_button = QPushButton("Save")
         save_button.clicked.connect(
             lambda: self._save_preferences(
-                dialog, text_edit, cookie_enabled, cookie_browser
+                dialog, text_edit, cookie_enabled, cookie_browser,
+                strip_soundcues, show_fetchinfo,
             )
         )
         button_layout.addWidget(save_button, 1)
@@ -196,29 +245,72 @@ class PreferencesDialogMixin:
             else '<small><a href="toggle">Show explanations</a></small>'
         )
 
-    def _save_preferences(self, dialog, text_edit, cookie_enabled=None, cookie_browser=None):
+    def _read_preferences_file(self):
+        """The preferences currently on disk, as a dict (empty on any problem).
+
+        Used to carry over the keys the dialog's form does not own, so
+        saving never drops an entry the user added by hand.
+        """
+        try:
+            if not os.path.exists(prefs.PREFERENCES_FILE):
+                return {}
+            with open(prefs.PREFERENCES_FILE, "r", encoding="utf-8") as f:
+                parsed = json.load(f)
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+            # UnicodeError: the file is not valid UTF-8 (a corrupted or
+            # hand-edited file). "Empty on any problem" applies here too,
+            # so a broken file cannot stop a save.
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _save_preferences(self, dialog, text_edit, cookie_enabled=None,
+                          cookie_browser=None, strip_soundcues=None,
+                          show_fetchinfo=None):
         """Validate and save the edited preferences JSON.
 
-        The cookie form fields, when given, are written back into the JSON
-        before it is validated - the form is the primary way to set them.
+        The form is authoritative for the switches it owns (the browser
+        cookie on/off switch, the browser name, and the two booleans); the
+        JSON editor is authoritative for `channel_name_map`. Any other key
+        already in the file is carried over untouched, so a hand-edited
+        file never loses an entry the dialog does not know about.
         """
         content = text_edit.toPlainText().strip()
         try:
-            parsed = json.loads(content)
+            parsed = json.loads(content) if content else {}
             # Validate structure
             if not isinstance(parsed, dict):
                 raise ValueError("Root must be a JSON object")
 
-            # The cookie form is authoritative for its two keys.
+            # The form is authoritative for the keys it owns.
             if cookie_enabled is not None:
                 parsed["cookies_from_browser_enabled"] = bool(cookie_enabled.isChecked())
             if cookie_browser is not None:
                 parsed["cookies_from_browser"] = cookie_browser.text().strip()
+            if strip_soundcues is not None:
+                parsed["strip_bracketed_soundcues"] = bool(strip_soundcues.isChecked())
+            if show_fetchinfo is not None:
+                parsed["show_fetchinfo_command"] = bool(show_fetchinfo.isChecked())
 
+            # The channel name map comes from the JSON editor. It is set
+            # before the carry-over below, so an editor that omits it means
+            # "empty map" rather than "keep whatever is on disk".
             if "channel_name_map" not in parsed:
                 parsed["channel_name_map"] = {}
             if not isinstance(parsed["channel_name_map"], dict):
                 raise ValueError("channel_name_map must be a JSON object")
+
+            # Keys the dialog does not own are carried over from the file on
+            # disk, so an entry the user added by hand is never dropped.
+            # A form-owned key whose widget was not supplied keeps its value
+            # from the file rather than losing it.
+            for key, value in self._read_preferences_file().items():
+                if key in parsed:
+                    continue
+                if key in _FORM_OWNED_KEYS:
+                    if _form_supplied(key, cookie_enabled, cookie_browser,
+                                      strip_soundcues, show_fetchinfo):
+                        continue
+                parsed[key] = value
 
             if "strip_bracketed_soundcues" in parsed:
                 if not isinstance(parsed["strip_bracketed_soundcues"], bool):

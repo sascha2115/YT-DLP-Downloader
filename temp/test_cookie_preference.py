@@ -247,5 +247,230 @@ class TestSavePreferences(unittest.TestCase):
         self.assertIn("cookies_from_browser", self.harness.signals.append_output.emitted[0][0])
 
 
+class TestShowFetchinfoCommand(unittest.TestCase):
+    """The show_fetchinfo_command switch, read from a dict."""
+
+    def test_absent_key_defaults_to_off(self):
+        self.assertFalse(P.show_fetchinfo_command({}))
+
+    def test_explicit_true_and_false(self):
+        self.assertTrue(P.show_fetchinfo_command({"show_fetchinfo_command": True}))
+        self.assertFalse(P.show_fetchinfo_command({"show_fetchinfo_command": False}))
+
+    def test_non_bool_falls_back_to_off(self):
+        # bool is a subclass of int, so only a real bool counts.
+        self.assertFalse(P.show_fetchinfo_command({"show_fetchinfo_command": "yes"}))
+        self.assertFalse(P.show_fetchinfo_command({"show_fetchinfo_command": 1}))
+
+
+class TestSaveSwitches(unittest.TestCase):
+    """The two standalone switches are saved from the form, not the JSON."""
+
+    def setUp(self):
+        self.harness = _SaveHarness()
+        self.saved = P.preferences
+        self._patcher = None
+
+    def tearDown(self):
+        P.apply_preferences(self.saved)
+        if self._patcher is not None:
+            self._patcher.stop()
+
+    def _patch_prefs_file(self):
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        self._patcher = unittest.mock.patch.multiple(
+            P,
+            PREFERENCES_DIR=tmp,
+            PREFERENCES_FILE=os.path.join(tmp, "preferences.json"),
+        )
+        self._patcher.start()
+        return self._patcher
+
+    def _save(self, strip, show, editor_text="{}"):
+        from ytdl.preferences_dialog import PreferencesDialogMixin
+
+        mixin = PreferencesDialogMixin()
+        mixin.signals = self.harness.signals
+        text_edit = type("TE", (), {"toPlainText": lambda self: editor_text})()
+        dialog = _FakeDialog()
+        mixin._save_preferences(
+            dialog, text_edit,
+            _FakeCheckBox(False), _FakeLineEdit(""),
+            _FakeCheckBox(strip), _FakeCheckBox(show),
+        )
+        return dialog
+
+    def test_switches_are_saved_from_the_form(self):
+        self._patch_prefs_file()
+        dialog = self._save(strip=True, show=False)
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertTrue(saved["strip_bracketed_soundcues"])
+        self.assertFalse(saved["show_fetchinfo_command"])
+
+    def test_the_json_editor_cannot_override_a_switch(self):
+        # The form owns these keys, so a value in the editor is ignored.
+        self._patch_prefs_file()
+        editor_text = json.dumps({
+            "strip_bracketed_soundcues": True,
+            "show_fetchinfo_command": True,
+        })
+        dialog = self._save(strip=False, show=False, editor_text=editor_text)
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertFalse(saved["strip_bracketed_soundcues"])
+        self.assertFalse(saved["show_fetchinfo_command"])
+
+    def test_the_channel_name_map_is_saved_from_the_editor(self):
+        self._patch_prefs_file()
+        editor_text = json.dumps({"channel_name_map": {"PowerfulJRE": "Joe Rogan"}})
+        dialog = self._save(strip=True, show=True, editor_text=editor_text)
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["channel_name_map"], {"PowerfulJRE": "Joe Rogan"})
+
+    def test_an_unknown_key_in_the_file_is_carried_over(self):
+        # A hand-added entry the dialog does not know about must survive a
+        # save, or the user silently loses it.
+        self._patch_prefs_file()
+        with open(P.PREFERENCES_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"my_own_key": 42, "channel_name_map": {}}, handle)
+        dialog = self._save(strip=True, show=False)
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["my_own_key"], 42)
+
+    def test_an_empty_editor_saves_an_empty_channel_map(self):
+        self._patch_prefs_file()
+        dialog = self._save(strip=True, show=False, editor_text="")
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["channel_name_map"], {})
+
+    def test_the_editor_wins_over_the_map_on_disk(self):
+        # The map in the editor is authoritative: an editor that drops the
+        # key means an empty map, not "keep the old one".
+        self._patch_prefs_file()
+        with open(P.PREFERENCES_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"channel_name_map": {"Old": "Old"}}, handle)
+        dialog = self._save(strip=True, show=False, editor_text="{}")
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["channel_name_map"], {})
+
+    def test_a_missing_form_widget_keeps_the_value_from_the_file(self):
+        # A caller that does not supply a widget must not wipe that setting.
+        self._patch_prefs_file()
+        with open(P.PREFERENCES_FILE, "w", encoding="utf-8") as handle:
+            json.dump({
+                "strip_bracketed_soundcues": True,
+                "show_fetchinfo_command": True,
+                "channel_name_map": {},
+            }, handle)
+
+        from ytdl.preferences_dialog import PreferencesDialogMixin
+
+        mixin = PreferencesDialogMixin()
+        mixin.signals = self.harness.signals
+        text_edit = type("TE", (), {"toPlainText": lambda self: "{}"})()
+        dialog = _FakeDialog()
+        mixin._save_preferences(dialog, text_edit)
+
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertTrue(saved["strip_bracketed_soundcues"])
+        self.assertTrue(saved["show_fetchinfo_command"])
+
+
+class TestInvalidUtf8Preferences(unittest.TestCase):
+    """A preferences file that is not valid UTF-8 must not break the dialog.
+
+    The two read paths (the dialog's load and its carry-over helper) both
+    promise to degrade to "empty" on any problem. A corrupted file used to
+    raise UnicodeDecodeError out of open(), which stopped the dialog from
+    opening and stopped a save.
+    """
+
+    def setUp(self):
+        self.harness = _SaveHarness()
+        self.saved = P.preferences
+        self._patcher = None
+
+    def tearDown(self):
+        P.apply_preferences(self.saved)
+        if self._patcher is not None:
+            self._patcher.stop()
+
+    def _patch_prefs_file(self):
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        self._patcher = unittest.mock.patch.multiple(
+            P,
+            PREFERENCES_DIR=tmp,
+            PREFERENCES_FILE=os.path.join(tmp, "preferences.json"),
+        )
+        self._patcher.start()
+        return tmp
+
+    def _write_invalid_utf8(self):
+        tmp = self._patch_prefs_file()
+        with open(P.PREFERENCES_FILE, "wb") as handle:
+            handle.write(b'{"channel_name_map": {"a": "\xff\xfe"}}')
+        return tmp
+
+    def test_read_preferences_file_returns_empty(self):
+        self._write_invalid_utf8()
+        from ytdl.preferences_dialog import PreferencesDialogMixin
+
+        mixin = PreferencesDialogMixin()
+        mixin.signals = self.harness.signals
+        self.assertEqual(mixin._read_preferences_file(), {})
+
+    def test_a_save_over_a_broken_file_still_succeeds(self):
+        self._write_invalid_utf8()
+        from ytdl.preferences_dialog import PreferencesDialogMixin
+
+        mixin = PreferencesDialogMixin()
+        mixin.signals = self.harness.signals
+        text_edit = type("TE", (), {"toPlainText": lambda self: "{}"})()
+        dialog = _FakeDialog()
+        mixin._save_preferences(
+            dialog, text_edit,
+            _FakeCheckBox(False), _FakeLineEdit(""),
+            _FakeCheckBox(True), _FakeCheckBox(True),
+        )
+
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertTrue(saved["strip_bracketed_soundcues"])
+        self.assertTrue(saved["show_fetchinfo_command"])
+
+    def test_the_file_is_replaced_with_valid_utf8(self):
+        self._write_invalid_utf8()
+        from ytdl.preferences_dialog import PreferencesDialogMixin
+
+        mixin = PreferencesDialogMixin()
+        mixin.signals = self.harness.signals
+        text_edit = type("TE", (), {"toPlainText": lambda self: "{}"})()
+        mixin._save_preferences(
+            _FakeDialog(), text_edit,
+            _FakeCheckBox(False), _FakeLineEdit(""),
+            _FakeCheckBox(False), _FakeCheckBox(False),
+        )
+
+        # The broken file is now readable as UTF-8 again.
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            json.load(handle)
+
+
 if __name__ == "__main__":
     unittest.main()
