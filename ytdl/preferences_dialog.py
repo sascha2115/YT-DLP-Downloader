@@ -8,7 +8,6 @@ import os
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -71,25 +70,59 @@ class PreferencesDialogMixin:
         # updates the form while typing, and saving writes the form back
         # into the JSON. One source of truth, no surprise overwrites.
         cookie_box = QGroupBox("Browser cookies")
-        cookie_form = QFormLayout(cookie_box)
+        cookie_layout = QVBoxLayout(cookie_box)
 
         cookie_enabled = QCheckBox("cookies_from_browser")
         cookie_enabled.setToolTip(
             "Use cookies from your browser for authenticated requests "
             "(fixes 403 / sign-in / age-restricted videos)."
         )
-        cookie_form.addRow(cookie_enabled)
+        cookie_layout.addWidget(cookie_enabled)
+
+        # The browser field sits directly next to its label, not in a
+        # full-width form row. The field is flat (no padding, no rounded
+        # corners) and uses the pane's regular font size.
+        browser_row = QHBoxLayout()
+        browser_row.setContentsMargins(0, 0, 0, 0)
+        browser_row.setSpacing(6)
+        browser_label = QLabel("Browser")
+        browser_label.setFixedWidth(60)
+        browser_row.addWidget(browser_label)
 
         cookie_browser = QLineEdit()
-        cookie_browser.setPlaceholderText(
-            "firefox, chrome, chromium, edge, brave, opera, safari, vivaldi, whale"
-        )
+        cookie_browser.setPlaceholderText("firefox, chrome, …")
         cookie_browser.setToolTip(
             "The browser to read cookies from. For Firefox use the full profile "
             "directory name, e.g. firefox:1abc2def.default-release. "
             "Chromium-based browsers must be closed first."
         )
-        cookie_form.addRow("Browser", cookie_browser)
+        cookie_browser.setFixedWidth(240)
+        # Flat field: no padding, no rounded corners, and the pane's regular
+        # font size (taken from the label) instead of the stylesheet's larger
+        # QLineEdit size.
+        base_size = browser_label.font().pointSize()
+        font_rule = (
+            f"font-size: {base_size}pt;" if base_size > 0 else ""
+        )
+        cookie_browser.setStyleSheet(f"""
+            QLineEdit {{
+                padding: 0;
+                border: 1px solid #525252;
+                border-radius: 0;
+                background-color: #383838;
+                color: #fff;
+                {font_rule}
+            }}
+            QLineEdit:focus {{
+                border: 1px solid #777;
+            }}
+            QLineEdit:disabled {{
+                color: #999;
+            }}
+        """)
+        browser_row.addWidget(cookie_browser)
+        browser_row.addStretch(1)
+        cookie_layout.addLayout(browser_row)
         layout.addWidget(cookie_box)
 
         # Text editor for JSON
