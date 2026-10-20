@@ -1,5 +1,6 @@
 {
   "cookies_from_browser": "",
+  "cookies_from_browser_enabled": false,
   "strip_bracketed_soundcues": true,
   "show_fetchinfo_command": false,
   "channel_name_map": {

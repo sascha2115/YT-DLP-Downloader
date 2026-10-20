@@ -38,6 +38,10 @@ VALID_COOKIE_BROWSERS = (
     "opera", "safari", "vivaldi", "whale",
 )
 
+# Whether the browser cookies are used at all. The browser name lives in its
+# own key ("cookies_from_browser"); this key is the on/off switch next to it.
+COOKIES_FROM_BROWSER_ENABLED_DEFAULT = False
+
 
 def validate_cookies_from_browser(value):
     """Validate cookies_from_browser value. Returns (is_valid, error_msg)."""
@@ -48,6 +52,54 @@ def validate_cookies_from_browser(value):
     if browser_part not in VALID_COOKIE_BROWSERS:
         return False, f"unknown browser '{browser_part}' — expected one of {', '.join(VALID_COOKIE_BROWSERS)}"
     return True, ""
+
+
+def cookies_from_browser_enabled(prefs_dict=None):
+    """Whether cookies from the browser should be used (the on/off switch).
+
+    Reads `cookies_from_browser_enabled` from the live preferences at call
+    time. An absent key is derived from the browser name: a non-empty
+    `cookies_from_browser` means the user had configured cookies before the
+    switch existed, so it stays enabled (otherwise an upgrade would silently
+    drop their cookies). Everything else falls back to the default — off.
+    """
+    source = preferences if prefs_dict is None else prefs_dict
+    raw = (source or {}).get("cookies_from_browser_enabled")
+    if isinstance(raw, bool):
+        return raw
+    if raw is not None:
+        logger.warning(
+            "cookies_from_browser_enabled is %s, not true or false — using %s",
+            type(raw).__name__,
+            "on" if COOKIES_FROM_BROWSER_ENABLED_DEFAULT else "off",
+        )
+        return bool(COOKIES_FROM_BROWSER_ENABLED_DEFAULT)
+    # Absent key: migrate. A configured browser name means cookies were in
+    # use before the switch existed.
+    browser = (source or {}).get("cookies_from_browser")
+    if isinstance(browser, str) and browser.strip():
+        return True
+    return bool(COOKIES_FROM_BROWSER_ENABLED_DEFAULT)
+
+
+def cookie_browser(prefs_dict=None):
+    """The browser to take cookies from, or "" when cookies are off.
+
+    This is the single place that decides whether `--cookies-from-browser`
+    is passed to yt-dlp: the switch must be on AND a browser name must be
+    set. Both the info fetch and the download build their command from it.
+    """
+    if not cookies_from_browser_enabled(prefs_dict):
+        return ""
+    source = preferences if prefs_dict is None else prefs_dict
+    browser = (source or {}).get("cookies_from_browser")
+    if not isinstance(browser, str):
+        return ""
+    browser = browser.strip()
+    if not browser:
+        return ""
+    valid, _ = validate_cookies_from_browser(browser)
+    return browser if valid else ""
 
 
 def strip_bracketed_soundcues(prefs_dict=None):
@@ -82,6 +134,7 @@ def load_preferences():
         "channel_name_map": {},
         "strip_bracketed_soundcues": STRIP_BRACKETED_SOUNDCUES_DEFAULT,
         "cookies_from_browser": "",
+        "cookies_from_browser_enabled": COOKIES_FROM_BROWSER_ENABLED_DEFAULT,
         "show_fetchinfo_command": False,
     }
 
@@ -121,6 +174,16 @@ def apply_preferences(parsed):
         if not valid and parsed["cookies_from_browser"]:
             logger.warning("cookies_from_browser %s — ignoring", err)
             preferences["cookies_from_browser"] = ""
+    # The on/off switch is a real bool, like strip_bracketed_soundcues.
+    if "cookies_from_browser_enabled" in parsed:
+        if not isinstance(parsed["cookies_from_browser_enabled"], bool):
+            logger.warning(
+                "cookies_from_browser_enabled is not true or false — using %s",
+                "on" if COOKIES_FROM_BROWSER_ENABLED_DEFAULT else "off",
+            )
+            preferences["cookies_from_browser_enabled"] = bool(
+                COOKIES_FROM_BROWSER_ENABLED_DEFAULT
+            )
 
 
 # Loaded once at import time

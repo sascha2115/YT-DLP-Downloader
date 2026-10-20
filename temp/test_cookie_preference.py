@@ -1,0 +1,251 @@
+"""Unit tests for the cookies_from_browser preference.
+
+Run from the repo root:  python3 -m unittest temp.test_cookie_preference -v
+
+Covers the pure readers in `ytdl/preferences.py`:
+  - `cookies_from_browser_enabled()` - the on/off switch
+  - `cookie_browser()` - the single place that decides whether yt-dlp gets
+    `--cookies-from-browser`
+
+No Qt needed.
+"""
+
+import json
+import os
+import sys
+import unittest
+import unittest.mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from ytdl import preferences as P  # noqa: E402
+
+
+class TestCookiesFromBrowserEnabled(unittest.TestCase):
+    """The on/off switch, read from a dict."""
+
+    def test_absent_key_defaults_to_off(self):
+        self.assertFalse(P.cookies_from_browser_enabled({}))
+
+    def test_explicit_true_and_false(self):
+        self.assertTrue(P.cookies_from_browser_enabled(
+            {"cookies_from_browser_enabled": True}))
+        self.assertFalse(P.cookies_from_browser_enabled(
+            {"cookies_from_browser_enabled": False}))
+
+    def test_non_bool_falls_back_to_default(self):
+        # A string is not a bool, and bool is a subclass of int - so only a
+        # real bool counts.
+        self.assertFalse(P.cookies_from_browser_enabled(
+            {"cookies_from_browser_enabled": "yes"}))
+        self.assertFalse(P.cookies_from_browser_enabled(
+            {"cookies_from_browser_enabled": 1}))
+
+    def test_missing_key_migrates_from_browser_name(self):
+        # An existing install has a browser name but no switch: cookies were
+        # in use before, so they stay in use.
+        self.assertTrue(P.cookies_from_browser_enabled(
+            {"cookies_from_browser": "firefox"}))
+        self.assertFalse(P.cookies_from_browser_enabled(
+            {"cookies_from_browser": ""}))
+
+    def test_explicit_false_beats_a_configured_browser(self):
+        self.assertFalse(P.cookies_from_browser_enabled(
+            {"cookies_from_browser": "chrome",
+             "cookies_from_browser_enabled": False}))
+
+
+class TestCookieBrowser(unittest.TestCase):
+    """The browser name that is actually passed to yt-dlp."""
+
+    def test_off_switch_wins(self):
+        self.assertEqual(P.cookie_browser({
+            "cookies_from_browser": "firefox",
+            "cookies_from_browser_enabled": False}), "")
+
+    def test_on_with_browser(self):
+        self.assertEqual(P.cookie_browser({
+            "cookies_from_browser": "firefox",
+            "cookies_from_browser_enabled": True}), "firefox")
+
+    def test_on_without_browser(self):
+        self.assertEqual(P.cookie_browser({
+            "cookies_from_browser": "",
+            "cookies_from_browser_enabled": True}), "")
+
+    def test_profile_form_is_kept(self):
+        self.assertEqual(P.cookie_browser({
+            "cookies_from_browser": "firefox:1abc2def.default-release",
+            "cookies_from_browser_enabled": True}),
+            "firefox:1abc2def.default-release")
+
+    def test_unknown_browser_is_dropped(self):
+        self.assertEqual(P.cookie_browser({
+            "cookies_from_browser": "netscape",
+            "cookies_from_browser_enabled": True}), "")
+
+    def test_whitespace_is_trimmed(self):
+        self.assertEqual(P.cookie_browser({
+            "cookies_from_browser": "  chrome  ",
+            "cookies_from_browser_enabled": True}), "chrome")
+
+    def test_non_string_browser_is_dropped(self):
+        self.assertEqual(P.cookie_browser({
+            "cookies_from_browser": 42,
+            "cookies_from_browser_enabled": True}), "")
+
+
+class TestLivePreferences(unittest.TestCase):
+    """The readers work against the live in-memory state."""
+
+    def setUp(self):
+        self.saved = P.preferences
+
+    def tearDown(self):
+        P.apply_preferences(self.saved)
+
+    def test_live_read(self):
+        P.apply_preferences({
+            "cookies_from_browser": "chrome",
+            "cookies_from_browser_enabled": True,
+        })
+        self.assertTrue(P.cookies_from_browser_enabled())
+        self.assertEqual(P.cookie_browser(), "chrome")
+
+    def test_live_read_off(self):
+        P.apply_preferences({
+            "cookies_from_browser": "chrome",
+            "cookies_from_browser_enabled": False,
+        })
+        self.assertFalse(P.cookies_from_browser_enabled())
+        self.assertEqual(P.cookie_browser(), "")
+
+    def test_wrong_typed_switch_is_normalized(self):
+        P.apply_preferences({
+            "cookies_from_browser": "chrome",
+            "cookies_from_browser_enabled": "yes",
+        })
+        self.assertFalse(P.cookies_from_browser_enabled())
+
+
+class _FakeSignal:
+    def __init__(self):
+        self.emitted = []
+
+    def emit(self, *args):
+        self.emitted.append(args)
+
+
+class _FakeLineEdit:
+    def __init__(self, text=""):
+        self._text = text
+
+    def text(self):
+        return self._text
+
+    def setText(self, value):
+        self._text = value
+
+
+class _FakeCheckBox:
+    def __init__(self, checked=False):
+        self._checked = checked
+
+    def isChecked(self):
+        return self._checked
+
+    def setChecked(self, value):
+        self._checked = value
+
+
+class _FakeDialog:
+    def __init__(self):
+        self.accepted = False
+
+    def accept(self):
+        self.accepted = True
+
+
+class _SaveHarness:
+    """Minimal stand-in for the dialog mixin's host object."""
+
+    def __init__(self):
+        self.signals = type("Signals", (), {"append_output": _FakeSignal()})()
+
+
+class TestSavePreferences(unittest.TestCase):
+    """The form fields are authoritative for the two cookie keys."""
+
+    def setUp(self):
+        self.harness = _SaveHarness()
+        self.saved = P.preferences
+        self._patcher = None
+
+    def tearDown(self):
+        P.apply_preferences(self.saved)
+        if self._patcher is not None:
+            self._patcher.stop()
+
+    def _patch_prefs_file(self):
+        """Redirect the preferences file to a temp dir."""
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        self._patcher = unittest.mock.patch.multiple(
+            P,
+            PREFERENCES_DIR=tmp,
+            PREFERENCES_FILE=os.path.join(tmp, "preferences.json"),
+        )
+        self._patcher.start()
+        return self._patcher
+
+    def test_form_writes_both_keys(self):
+        self._patch_prefs_file()
+        from ytdl.preferences_dialog import PreferencesDialogMixin
+
+        mixin = PreferencesDialogMixin()
+        mixin.signals = self.harness.signals
+        text_edit = type("TE", (), {"toPlainText": lambda self: "{}"})()
+        dialog = _FakeDialog()
+        mixin._save_preferences(
+            dialog, text_edit, _FakeCheckBox(True), _FakeLineEdit("firefox"))
+
+        self.assertTrue(dialog.accepted)
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertTrue(saved["cookies_from_browser_enabled"])
+        self.assertEqual(saved["cookies_from_browser"], "firefox")
+
+    def test_switch_off_still_saves_the_browser_name(self):
+        self._patch_prefs_file()
+        from ytdl.preferences_dialog import PreferencesDialogMixin
+
+        mixin = PreferencesDialogMixin()
+        mixin.signals = self.harness.signals
+        text_edit = type("TE", (), {"toPlainText": lambda self: "{}"})()
+        dialog = _FakeDialog()
+        mixin._save_preferences(
+            dialog, text_edit, _FakeCheckBox(False), _FakeLineEdit("chrome"))
+
+        with open(P.PREFERENCES_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertFalse(saved["cookies_from_browser_enabled"])
+        self.assertEqual(saved["cookies_from_browser"], "chrome")
+
+    def test_unknown_browser_is_rejected(self):
+        self._patch_prefs_file()
+        from ytdl.preferences_dialog import PreferencesDialogMixin
+
+        mixin = PreferencesDialogMixin()
+        mixin.signals = self.harness.signals
+        text_edit = type("TE", (), {"toPlainText": lambda self: "{}"})()
+        dialog = _FakeDialog()
+        mixin._save_preferences(
+            dialog, text_edit, _FakeCheckBox(True), _FakeLineEdit("netscape"))
+
+        self.assertFalse(dialog.accepted)
+        self.assertFalse(os.path.exists(P.PREFERENCES_FILE))
+        self.assertIn("cookies_from_browser", self.harness.signals.append_output.emitted[0][0])
+
+
+if __name__ == "__main__":
+    unittest.main()

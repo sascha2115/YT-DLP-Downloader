@@ -255,7 +255,7 @@ class InfoFetchMixin:
                 cmd.extend(["--js-runtimes", f"deno:{self.deno_bin}"])
 
             # Cookies from browser (for authenticated requests: 403, sign-in, age-restricted)
-            cookie_browser = prefs.preferences.get("cookies_from_browser", "")
+            cookie_browser = prefs.cookie_browser()
             if cookie_browser:
                 cmd.extend(["--cookies-from-browser", cookie_browser])
 
