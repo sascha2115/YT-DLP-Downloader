@@ -26,15 +26,20 @@ disagree, this file is right.
 
 ---
 
-## Unreleased
+## 1.5.6 — 2026-10-20
 
-- **The Preferences dialog's switches are now checkboxes.** `strip_bracketed_soundcues` and `show_fetchinfo_command` join the existing browser-cookie switch as real checkboxes, and the JSON editor below them now holds **only** `channel_name_map`. The four switches are set in the form and no longer have to be typed as JSON; the JSON editor is for the channel name map alone. Any other key already in your `preferences.json` is carried over untouched when you save, so a hand-added entry is never lost.
-- **The Preferences explanations moved into the tooltips.** Each setting now explains itself when you hover over it — what the key does, whether it is `true` or `false`, and what the default is — so the separate "Show explanations" section at the top of the dialog is gone. The dialog is now just the settings and the channel name map.
-- **The Preferences dialog opens straight on the settings.** The "Editing: …preferences.json" line at the top is gone; the file being edited is named in the tooltip of the channel name map editor.
+- **The Preferences dialog is now just the settings.** It opens straight on the switches and the channel name map: the "Editing: …preferences.json" line at the top is gone (the file being edited is named in the tooltip of the channel name map editor), and the separate "Show explanations" section is gone too — each setting now explains itself in its own tooltip when you hover over it, covering what the key does, whether it is `true` or `false`, and what the default is.
+- **The Preferences' switches are now checkboxes.** `strip_bracketed_soundcues` and `show_fetchinfo_command` join the browser-cookie switch as real checkboxes, and the JSON editor below them now holds **only** `channel_name_map`. The four switches are set in the form and no longer have to be typed as JSON; the JSON editor is for the channel name map alone. Any other key already in your `preferences.json` is carried over untouched when you save, so a hand-added entry is never lost.
 - **Browser cookies are now a checkbox plus a browser field.** The Preferences dialog has a browser-cookies row: a `cookies_from_browser` on/off switch and a field for the browser to read cookies from (`firefox`, `chrome`, `chromium`, `edge`, `brave`, `opera`, `safari`, `vivaldi`, `whale`, or `firefox:profile_dir`). Cookies are only used when the switch is on. Existing setups keep working: a configured browser name without the new switch stays enabled.
 - **A corrupted `preferences.json` no longer blocks the Preferences dialog.** If the file was not valid UTF-8 (e.g. edited by a tool that wrote the wrong encoding), opening the dialog raised a `UnicodeDecodeError` and saving failed with it. The dialog now treats such a file as empty, so it opens, and saving replaces it with a valid file.
 - **A failed info fetch no longer shows the last video's description.** If yt-dlp failed (error exit, timeout, unreadable output, a video without audio) the output panel still printed the description of the *previous* successfully fetched video, and the same stale text could end up in the thumbnail dialog and in the NFO sidecar. A failed fetch now shows no description at all.
 - **No more SponsorBlock chatter on non-YouTube sites.** A download from ARD/ZDF Mediathek, Rumble or Odysee still printed the EDL-generation lines ("📟 Reading … for EDL generation…", "Selected SB categories", "No segments to skip found in selected categories") even though the info fetch had already reported "SponsorBlock: Not available for this site (YouTube only) — skipping". Such downloads now skip the step with a single "skipping EDL" line. Nothing was ever written for these sites (SponsorBlock is YouTube-only), but the output wrongly looked like the video was being processed.
+
+### 🧪 Verified
+
+- 587 tests pass (`python3 -m unittest discover -s temp -p 'test_*.py'`), and pylint is unchanged at 9.91/10.
+- The Preferences dialog was checked headless (`temp/check_prefs_dialog.py`): the four switches carry their tooltips, the browser field's tooltip is the browser help, the editor's tooltip names the file being edited, and there is no explanations link and no path label.
+- The save path was checked headless (`temp/check_prefs_save.py`): the four form switches land in the file, a hand-added key (`my_own_key`) survives the save, and the JSON editor's `channel_name_map` is what gets written.
 
 ## 1.5.5 — 2026-10-17
 
