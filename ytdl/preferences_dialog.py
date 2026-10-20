@@ -9,7 +9,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
     QPlainTextEdit,
@@ -48,11 +47,6 @@ class PreferencesDialogMixin:
 
         layout = QVBoxLayout(dialog)
 
-        # Label with file path
-        path_label = QLabel(f"<small>Editing: {prefs.PREFERENCES_FILE}</small>")
-        path_label.setWordWrap(True)
-        layout.addWidget(path_label)
-
         # Browser cookies: an on/off switch and the browser to take them from.
         # The form owns the two keys ("cookies_from_browser_enabled" and
         # "cookies_from_browser"); the JSON editor holds only
@@ -61,7 +55,9 @@ class PreferencesDialogMixin:
         # No group box / frame here: the cookies section is just the
         # checkbox and the browser field, placed directly in the dialog.
         # The help text for each key is the tooltip of the widget that owns
-        # it, so the dialog needs no separate explanations section.
+        # it, so the dialog needs no separate explanations section. The
+        # edited file's path is in the JSON editor's tooltip, so there is
+        # no path label at the top either.
         cookie_enabled = QCheckBox("cookies_from_browser")
         cookie_enabled.setObjectName("cookies_from_browser")
         cookie_enabled.setToolTip(prefs.TOOLTIP_COOKIES_FROM_BROWSER_ENABLED)

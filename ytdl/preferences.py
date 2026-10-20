@@ -78,7 +78,8 @@ TOOLTIP_SHOW_FETCHINFO_COMMAND = (
 TOOLTIP_CHANNEL_NAME_MAP_EDITOR = (
     "The four switches above are set in the form; this editor holds "
     "only channel_name_map, a JSON object mapping a channel name to "
-    "the name to show for it."
+    "the name to show for it.\n"
+    f"Editing: {PREFERENCES_FILE}"
 )
 
 

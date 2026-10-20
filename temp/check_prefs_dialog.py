@@ -56,6 +56,12 @@ def main():
             print("labels:", labels)
             print("has explanations link:",
                   any("explanation" in t.lower() for t in labels))
+            # The path label at the top is gone; the file path is still
+            # reachable through the editor's tooltip.
+            print("has path label:",
+                  any("Editing:" in t for t in labels))
+            print("editor tooltip names the file:",
+                  prefs.PREFERENCES_FILE in editor.toolTip())
             dialog.reject()
         else:
             print("no modal dialog found")

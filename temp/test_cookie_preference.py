@@ -536,6 +536,12 @@ class TestPreferenceTooltips(unittest.TestCase):
         self.assertIn("not just default-release",
                       P.TOOLTIP_COOKIES_FROM_BROWSER)
 
+    def test_the_editor_tooltip_names_the_preferences_file(self):
+        # The path label at the top of the dialog is gone, so the editor's
+        # tooltip is the only place that says which file is being edited.
+        self.assertIn(P.PREFERENCES_FILE,
+                      P.TOOLTIP_CHANNEL_NAME_MAP_EDITOR)
+
 
 if __name__ == "__main__":
     unittest.main()
