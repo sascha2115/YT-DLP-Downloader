@@ -619,7 +619,7 @@ class UiBuildMixin:
         main_layout.addWidget(self.output_text)
 
         # Sidebar toolbar buttons (left)
-        for btn in (self.paste_button, self.reload_button, self.nice_button, self.thumbnail_button, self.log_button, self.subs_button, self.cancel_button, self.reset_button):
+        for btn in (self.paste_button, self.reload_button, self.nice_button, self.thumbnail_button, self.subs_button, self.log_button, self.cancel_button, self.reset_button):
             btn.setFixedHeight(56)
             sidebar.addWidget(btn)
         sidebar.addStretch(1)
