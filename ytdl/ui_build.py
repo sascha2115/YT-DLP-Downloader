@@ -11,7 +11,7 @@ import shutil
 import threading
 import requests
 from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QAction, QColor, QIcon, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
+from PyQt6.QtGui import QAction, QIcon, QKeyEvent, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStyle, QTextBrowser, QToolButton, QVBoxLayout, QWidget
 from ytdl.config import DEFAULT_OUTPUT_DIR
 from ytdl.progress import DownloadProgressManager
@@ -867,9 +867,9 @@ class UiBuildMixin:
     def _apply_thumbnail_icon(self, image_data):
         """Set the Info toolbar icon from fetched thumbnail bytes, or reset to standard.
 
-        The thumbnail is scaled to 24px height (aspect ratio preserved) and drawn
-        centered on a black 24x24 canvas, so non-square thumbnails get black bars
-        around only the image — not the whole button.
+        The thumbnail is scaled to 24px height with aspect ratio preserved, so
+        a 1280x720 thumbnail becomes roughly 43px wide — non-square, matching
+        the video's true proportions instead of being forced into a square.
         """
         button = self.thumbnail_button
         if image_data and hasattr(button, "setIcon"):
@@ -880,15 +880,7 @@ class UiBuildMixin:
                     pixmap = pixmap.scaledToHeight(
                         24, Qt.TransformationMode.SmoothTransformation
                     )
-                    # Draw on a black 24x24 canvas so only the thumbnail area is black
-                    canvas = QPixmap(24, 24)
-                    canvas.fill(QColor("#000000"))
-                    painter = QPainter(canvas)
-                    x = (24 - pixmap.width()) // 2
-                    y = (24 - pixmap.height()) // 2
-                    painter.drawPixmap(x, y, pixmap)
-                    painter.end()
-                    button.setIcon(QIcon(canvas))
+                    button.setIcon(QIcon(pixmap))
                     return
             except Exception:
                 pass

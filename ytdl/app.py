@@ -459,7 +459,6 @@ class YTDLPDownloaderGUI(
             # Disable thumbnail button since info is now stale
             self.thumbnail_button.setEnabled(False)
             self._reset_thumbnail_icon()
-            self._reset_thumbnail_icon()
             # Clear SponsorBlock bar
             self.sb_bar.set_segments([], 0)
             # Invalidate any SponsorBlock result still in flight. The lookup

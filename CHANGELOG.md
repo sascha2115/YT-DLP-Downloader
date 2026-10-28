@@ -26,6 +26,18 @@ disagree, this file is right.
 
 ---
 
+## 1.5.8 — 2026-10-28
+
+- **Show Info thumbnail no longer forced square.** The video thumbnail shown on the
+  Show Info button is scaled to 24px height with aspect ratio preserved, so a
+  1280x720 thumbnail becomes roughly 43px wide instead of being squashed into a
+  24x24 square.
+
+### 🧪 Verified
+
+- 587 tests pass (`python3 -m unittest discover -s temp -p 'test_*.py'`), and pylint is unchanged at 9.91/10.
+- GUI constructs cleanly headless (`temp/smoke_gui.py`).
+
 ## 1.5.7 — 2026-10-28
 
 - **New left sidebar toolbar.** The URL paste, Reload Info, Nice Title, Show Info, Show Log, Nice SRT, Cancel and Reset UI buttons moved out of the main panels into a vertical toolbar on the left side of the window. Each button shows an icon with a text label underneath. The Download button stays unchanged in the main UI.
