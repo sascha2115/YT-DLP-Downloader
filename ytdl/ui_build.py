@@ -147,7 +147,7 @@ class UiBuildMixin:
 
         main_layout = QVBoxLayout()
         main_layout.setSpacing(5)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(15, 0, 15, 0)
 
         # URL Button
         url_layout = QHBoxLayout()
