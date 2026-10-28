@@ -101,6 +101,9 @@ class Harness:
         # on_url_text_change() also touches the title entry; stub it.
         self.title_entry = _UrlEntry("")
 
+    def _reset_thumbnail_icon(self):
+        pass
+
     def _emit(self, name, *args):
         getattr(self, name).emit(*args)
 

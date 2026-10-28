@@ -11,8 +11,8 @@ import shutil
 import threading
 import requests
 from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QAction, QKeyEvent, QKeySequence, QPixmap, QShortcut
-from PyQt6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStyle, QTextBrowser, QVBoxLayout, QWidget
+from PyQt6.QtGui import QAction, QColor, QIcon, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
+from PyQt6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStyle, QTextBrowser, QToolButton, QVBoxLayout, QWidget
 from ytdl.config import DEFAULT_OUTPUT_DIR
 from ytdl.progress import DownloadProgressManager
 from ytdl.sites import SUPPORTED_SITES_LABEL
@@ -109,41 +109,93 @@ class UiBuildMixin:
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        outer_layout = QHBoxLayout(central_widget)
+        outer_layout.setSpacing(10)
+        outer_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Left sidebar toolbar (real vertical toolbar with icons + labels)
+        sidebar_frame = QFrame()
+        sidebar_frame.setObjectName("sidebarFrame")
+        sidebar_frame.setFixedWidth(80)
+        sidebar_frame.setStyleSheet("""
+            QFrame#sidebarFrame {
+                background-color: #222222;
+            }
+            QToolButton#sidebarButton {
+                color: #bbbbbb;
+                background-color: transparent;
+                border: none;
+                padding: 2px 0;
+                icon-size: 24px;
+                font-size: 11px;
+                font-weight: 400;
+            }
+            QToolButton#sidebarButton:hover {
+                background-color: #3d3d3d;
+                border-radius: 5px;
+            }
+            QToolButton#sidebarButton:pressed {
+                background-color: #4d4d4d;
+            }
+            QToolButton#sidebarButton:disabled {
+                color: #666666;
+            }
+        """)
+        sidebar = QVBoxLayout(sidebar_frame)
+        sidebar.setContentsMargins(4, 10, 4, 10)
+        sidebar.setSpacing(4)
+
+        main_layout = QVBoxLayout()
         main_layout.setSpacing(5)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
         # URL Button
         url_layout = QHBoxLayout()
-        self.paste_button = QPushButton("URL")
-        self.paste_button.setToolTip("Click to paste clipboard content")
+        url_layout.setContentsMargins(0,0,0,0)
+        self.paste_button = QToolButton()
+        self.paste_button.setObjectName("sidebarButton")
+        self.paste_button.setText("Paste URL")
+        self.paste_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
+        self.paste_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.paste_button.setToolTip("Paste Clipboard Content")
         self.paste_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.paste_button.setFixedWidth(72)
         self.paste_button.clicked.connect(self.on_paste_button_click)
-        url_layout.addWidget(self.paste_button)
+        # (moved to sidebar)
         self.url_entry = QLineEdit()
         self.url_entry.setPlaceholderText("Paste video URL here...")
         self.url_entry.textChanged.connect(self.on_url_text_change)
         self.url_entry.returnPressed.connect(self.on_reload_button_click)
         url_layout.addWidget(self.url_entry)
         # Reload Button (right side): re-fetches video info for the current URL
-        self.reload_button = QPushButton()
+        self.reload_button = QToolButton()
+        self.reload_button.setObjectName("sidebarButton")
+        self.reload_button.setText("Reload Info")
         self.reload_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
         )
-        self.reload_button.setToolTip("Fetch video info again")
+        self.reload_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.reload_button.setToolTip("Re-Fetch Video Info")
         self.reload_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reload_button.setFixedWidth(72)
         self.reload_button.clicked.connect(self.on_reload_button_click)
-        url_layout.addWidget(self.reload_button)
+        # (moved to sidebar)
         main_layout.addLayout(url_layout)
         main_layout.addSpacing(10)
 
         # Video Title Input
         title_layout = QHBoxLayout()
-        self.clean_button = QPushButton("Title")
-        self.clean_button.setToolTip("Click to clean up video title")
-        self.clean_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.clean_button.clicked.connect(self.clean_title)
-        title_layout.addWidget(self.clean_button)
+        title_layout.setContentsMargins(0,0,0,0)
+        self.nice_button = QToolButton()
+        self.nice_button.setObjectName("sidebarButton")
+        self.nice_button.setText("Nice Title")
+        self.nice_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
+        self.nice_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.nice_button.setToolTip("Make Nice Video Title")
+        self.nice_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.nice_button.setFixedWidth(72)
+        self.nice_button.clicked.connect(self.nice_title)
+        # (moved to sidebar)
         self.title_entry = QLineEdit()
         self.title_entry.setPlaceholderText("...")
         title_layout.addWidget(self.title_entry)
@@ -152,34 +204,48 @@ class UiBuildMixin:
 
         # Options layout
         group_boxes_hlayout = QHBoxLayout()
+        group_boxes_hlayout.setContentsMargins(0,0,0,0)
         group_boxes_hlayout.setSpacing(15)
         # Info and Log buttons stacked vertically
         info_log_layout = QVBoxLayout()
         info_log_layout.setSpacing(5)
 
-        self.thumbnail_button = QPushButton("Info")
-        self.thumbnail_button.setToolTip("Click to see video description")
-        self.thumbnail_button.setObjectName("thumbnailButton")
+        self.thumbnail_button = QToolButton()
+        self.thumbnail_button.setObjectName("sidebarButton")
+        self.thumbnail_button.setText("Show Info")
+        self.thumbnail_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView))
+        self.thumbnail_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.thumbnail_button.setToolTip("Show Video Description")
         self.thumbnail_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.thumbnail_button.setFixedWidth(72)
         self.thumbnail_button.clicked.connect(self.open_thumbnail_dialog)
         self.thumbnail_button.setEnabled(False)
         info_log_layout.addWidget(self.thumbnail_button)
 
-        self.log_button = QPushButton("Log")
-        self.log_button.setToolTip("Click to view the download log")
+        self.log_button = QToolButton()
+        self.log_button.setObjectName("sidebarButton")
+        self.log_button.setText("Show Log")
+        self.log_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+        self.log_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.log_button.setToolTip("Show Download Log")
         self.log_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.log_button.setFixedWidth(72)
         self.log_button.clicked.connect(self.open_log_dialog)
         info_log_layout.addWidget(self.log_button)
 
         # Subs Button (standalone SRT processing) - below Log button
-        self.subs_button = QPushButton("Subs")
-        self.subs_button.setToolTip("Convert SRT into more readable format")
-        self.subs_button.setObjectName("subsButton")
+        self.subs_button = QToolButton()
+        self.subs_button.setObjectName("sidebarButton")
+        self.subs_button.setText("Nice SRT")
+        self.subs_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
+        self.subs_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.subs_button.setToolTip("Remove Rolling from Youtube ASR")
         self.subs_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.subs_button.setFixedWidth(72)
         self.subs_button.clicked.connect(self.open_subtitle_file_dialog)
         info_log_layout.addWidget(self.subs_button)
 
-        group_boxes_hlayout.addLayout(info_log_layout)
+        # (moved to sidebar)
 
         # Configuration for all Radio Button Groups
         RADIO_GROUP_CONFIGS = [
@@ -345,9 +411,11 @@ class UiBuildMixin:
         sponsorblock_group_box.setSizePolicy(
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred
         )
-        sponsorblock_layout = QHBoxLayout()
-        sponsorblock_layout.setContentsMargins(10, 5, 25, 7)
-        sponsorblock_layout.setSpacing(21)
+        sponsorblock_layout = QVBoxLayout()
+        sponsorblock_layout.setSpacing(8)
+        sponsorblock_layout.setContentsMargins(15, 2, 25, 4)
+        sponsorblock_row = QHBoxLayout()
+        sponsorblock_row.setSpacing(21)
 
         self.sb_sponsor_checkbox = QCheckBox(SB_DISPLAY_NAMES["sponsor"])
         self.sb_sponsor_checkbox.setToolTip("Paid promotion and direct advertisements.")
@@ -425,23 +493,23 @@ class UiBuildMixin:
             self.sb_hook_checkbox,
             self.sb_tangents_checkbox,
         ]:
-            sponsorblock_layout.addWidget(cb)
+            sponsorblock_row.addWidget(cb)
 
-        sponsorblock_layout.addStretch()
+        sponsorblock_row.addStretch()
+        sponsorblock_layout.addLayout(sponsorblock_row)
+        self.sb_bar = SponsorBlockBar()
+        sponsorblock_layout.addWidget(self.sb_bar)
         sponsorblock_group_box.setLayout(sponsorblock_layout)
 
         sb_centering_layout = QHBoxLayout()
-        sb_centering_layout.addSpacing(68)
+        # (removed left spacing)
         sb_centering_layout.addWidget(sponsorblock_group_box)
         sb_centering_layout.addStretch(1)
         main_layout.addLayout(sb_centering_layout)
 
         # SponsorBlock Visual Bar
         sb_bar_layout = QHBoxLayout()
-        sb_bar_layout.setContentsMargins(70, 0, 78, 0)
-        self.sb_bar = SponsorBlockBar()
-        sb_bar_layout.addWidget(self.sb_bar)
-        main_layout.addLayout(sb_bar_layout)
+        sb_bar_layout.setContentsMargins(15, 0, 20, 0)
         main_layout.addSpacing(5)
 
         # Output Directory (layout intentionally not added to main_layout;
@@ -458,11 +526,31 @@ class UiBuildMixin:
         self.download_button.clicked.connect(self.start_download)
         # Cancel is deliberately NOT part of _set_ui_enabled_state()'s control
         # list, so it stays clickable while the rest of the UI is disabled.
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.setToolTip("Cancel the active download (Esc)")
+        # It lives in the sidebar toolbar and is disabled (greyed out) when no
+        # download is running via set_cancel_button_visible().
+        self.cancel_button = QToolButton()
+        self.cancel_button.setObjectName("sidebarButton")
+        self.cancel_button.setText("Cancel")
+        self.cancel_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton)
+        )
+        self.cancel_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.cancel_button.setToolTip("Cancel Download")
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_button.setFixedWidth(72)
+        self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel_download)
-        self.cancel_button.hide()
+
+        # Reset UI button (restores all controls to default state)
+        self.reset_button = QToolButton()
+        self.reset_button.setObjectName("sidebarButton")
+        self.reset_button.setText("Reset UI")
+        self.reset_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton))
+        self.reset_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.reset_button.setToolTip("Reset UI to Default")
+        self.reset_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reset_button.setFixedWidth(72)
+        self.reset_button.clicked.connect(self.reset_ui)
 
         download_hlayout = QHBoxLayout()
         download_hlayout.setSpacing(8)
@@ -471,12 +559,11 @@ class UiBuildMixin:
         sp.setRetainSizeWhenHidden(True)
         self.download_busy_indicator.setSizePolicy(sp)
         self.download_busy_indicator.hide()
-        download_hlayout.addWidget(self.download_button, 1)
-        download_hlayout.addWidget(self.cancel_button, 0)
+        download_hlayout.addWidget(self.download_button, 0)
         download_hlayout.addWidget(
             self.download_busy_indicator, 0, Qt.AlignmentFlag.AlignVCenter
         )
-        download_hlayout.setContentsMargins(65, 10, 35, 15)
+        download_hlayout.setContentsMargins(0, 10, 35, 15)
         main_layout.addLayout(download_hlayout)
 
         # Area above Output Text
@@ -531,6 +618,15 @@ class UiBuildMixin:
         self.output_text.append("Supported: " + SUPPORTED_SITES_LABEL)
         main_layout.addWidget(self.output_text)
 
+        # Sidebar toolbar buttons (left)
+        for btn in (self.paste_button, self.reload_button, self.nice_button, self.thumbnail_button, self.log_button, self.subs_button, self.cancel_button, self.reset_button):
+            btn.setFixedHeight(56)
+            sidebar.addWidget(btn)
+        sidebar.addStretch(1)
+
+        outer_layout.addWidget(sidebar_frame, 0)
+        outer_layout.addLayout(main_layout, 1)
+
     def apply_styles(self):
         qss_path = resource_path("assets/styles.qss")
         try:
@@ -568,7 +664,7 @@ class UiBuildMixin:
             self.paste_button,
             self.reload_button,
             self.title_entry,
-            self.clean_button,
+            self.nice_button,
             self.output_dir_entry,
             self.browse_button,
             self.download_button,
@@ -729,7 +825,7 @@ class UiBuildMixin:
         if directory:
             self.output_dir_entry.setText(directory)
 
-    def clean_title(self):
+    def nice_title(self):
         title = self.title_entry.text()
 
         # Replacements
@@ -767,6 +863,91 @@ class UiBuildMixin:
             title = to_title_case(title)
 
         self.title_entry.setText(title)
+
+    def _apply_thumbnail_icon(self, image_data):
+        """Set the Info toolbar icon from fetched thumbnail bytes, or reset to standard.
+
+        The thumbnail is scaled to 24px height (aspect ratio preserved) and drawn
+        centered on a black 24x24 canvas, so non-square thumbnails get black bars
+        around only the image — not the whole button.
+        """
+        button = self.thumbnail_button
+        if image_data and hasattr(button, "setIcon"):
+            try:
+                pixmap = QPixmap()
+                if pixmap.loadFromData(image_data):
+                    # Scale to 24px height, keep aspect ratio (non-square)
+                    pixmap = pixmap.scaledToHeight(
+                        24, Qt.TransformationMode.SmoothTransformation
+                    )
+                    # Draw on a black 24x24 canvas so only the thumbnail area is black
+                    canvas = QPixmap(24, 24)
+                    canvas.fill(QColor("#000000"))
+                    painter = QPainter(canvas)
+                    x = (24 - pixmap.width()) // 2
+                    y = (24 - pixmap.height()) // 2
+                    painter.drawPixmap(x, y, pixmap)
+                    painter.end()
+                    button.setIcon(QIcon(canvas))
+                    return
+            except Exception:
+                pass
+        self._reset_thumbnail_icon()
+
+    def _reset_thumbnail_icon(self):
+        """Reset the Info button to the standard grayscale icon."""
+        button = self.thumbnail_button
+        if hasattr(button, "setIcon"):
+            button.setIcon(
+                self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView)
+            )
+
+    def _set_thumbnail_icon(self, image_data, description, snapshot_url, token):
+        """Slot for signals.thumbnail_icon_ready: set the Info button icon.
+
+        Token and URL staleness guards ensure a response for a superseded
+        video never repaints the icon.
+        """
+        if token != self._thumbnail_request_token:
+            return
+        if snapshot_url != self.video_state.get("thumbnail_url", ""):
+            return
+        self._apply_thumbnail_icon(image_data)
+
+    def _fetch_thumbnail_for_icon(self):
+        """Fetch the current video's thumbnail and set it as the Info icon.
+
+        Uses a separate signal (thumbnail_icon_ready) from the dialog flow so
+        an automatic icon update never pops the thumbnail dialog.
+        """
+        thumbnail_url = self.video_state.get("thumbnail_url", "")
+        if not thumbnail_url:
+            self._reset_thumbnail_icon()
+            return
+
+        self._thumbnail_request_token += 1
+        snapshot_token = self._thumbnail_request_token
+        snapshot_url = thumbnail_url
+
+        def _fetch():
+            try:
+                try:
+                    response = requests.get(snapshot_url, timeout=10)
+                    response.raise_for_status()
+                    image_data = response.content
+                except Exception:
+                    image_data = None
+                self._emit(
+                    "thumbnail_icon_ready",
+                    image_data,
+                    "",
+                    snapshot_url,
+                    snapshot_token,
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_fetch, daemon=True).start()
 
     def open_thumbnail_dialog(self):
         thumbnail_url = self.video_state.get("thumbnail_url", "")
@@ -858,6 +1039,8 @@ class UiBuildMixin:
             # defence — the first is the request token, checked above.
             if snapshot_url != self.video_state.get("thumbnail_url", ""):
                 return
+            # Update the Info toolbar icon from the fetched thumbnail
+            self._apply_thumbnail_icon(image_data)
             # Create dialog
             dialog = QDialog(self)
             dialog.setWindowTitle("Video Description")

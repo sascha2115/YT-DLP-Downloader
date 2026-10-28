@@ -478,7 +478,7 @@ class UiHarness:
         self.paste_button = FakeCheckbox()
         self.reload_button = FakeCheckbox()
         self.title_entry = FakeCheckbox()
-        self.clean_button = FakeCheckbox()
+        self.nice_button = FakeCheckbox()
         self.output_dir_entry = FakeCheckbox()
         self.browse_button = FakeCheckbox()
         self.download_button = FakeCheckbox()

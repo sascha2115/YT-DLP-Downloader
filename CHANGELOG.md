@@ -26,6 +26,18 @@ disagree, this file is right.
 
 ---
 
+## 1.5.7 — 2026-10-28
+
+- **New left sidebar toolbar.** The URL paste, Reload Info, Nice Title, Show Info, Show Log, Nice SRT, Cancel and Reset UI buttons moved out of the main panels into a vertical toolbar on the left side of the window. Each button shows an icon with a text label underneath. The Download button stays unchanged in the main UI.
+- **Show Info now displays the video thumbnail.** When an info fetch returns a thumbnail, the Show Info button in the sidebar shows that thumbnail as its icon instead of a generic symbol.
+- **Cancel moved to the sidebar.** The Cancel button is now in the left toolbar, greyed out when no download is running and enabled only while a download is active.
+- **Tooltips simplified.** Sidebar button tooltips now read as direct actions (e.g. "Paste Clipboard Content", "Re-Fetch Video Info") instead of "Click to …" phrasing.
+
+### 🧪 Verified
+
+- 587 tests pass (`python3 -m unittest discover -s temp -p 'test_*.py'`), and pylint is unchanged at 9.91/10.
+- GUI constructs cleanly headless (`temp/smoke_gui.py`).
+
 ## 1.5.6 — 2026-10-20
 
 - **The Preferences dialog is now just the settings.** It opens straight on the switches and the channel name map: the "Editing: …preferences.json" line at the top is gone (the file being edited is named in the tooltip of the channel name map editor), and the separate "Show explanations" section is gone too — each setting now explains itself in its own tooltip when you hover over it, covering what the key does, whether it is `true` or `false`, and what the default is.

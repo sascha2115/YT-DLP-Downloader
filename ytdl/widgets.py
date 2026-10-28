@@ -85,6 +85,11 @@ class SignalEmitter(QObject):
     # bumped again — the URL change clears thumbnail_url, and only the
     # receiver's comparison against the current value catches a queued error
     # that arrived after the change but before the next Info click.
+    thumbnail_icon_ready = pyqtSignal(bytes, str, str, int)
+    # Same shape as thumbnail_ready but used exclusively for updating the
+    # "Show Info" toolbar icon. Kept as a separate signal so the icon fetch
+    # (triggered automatically after info fetch) does not also pop the
+    # thumbnail dialog.
     # Standalone SRT conversion: the worker emits this when it is done, so the
     # main thread can re-enable the controls without the handler having to
     # know whether the worker succeeded, failed or was interrupted.

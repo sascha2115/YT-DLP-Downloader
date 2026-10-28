@@ -231,6 +231,7 @@ class YTDLPDownloaderGUI(
         self.signals.set_download_button_status.connect(self.set_download_button_status)
         self.signals.set_cancel_button_visible.connect(self.set_cancel_button_visible)
         self.signals.thumbnail_ready.connect(self._show_thumbnail_dialog)
+        self.signals.thumbnail_icon_ready.connect(self._set_thumbnail_icon)
         self.signals.thumbnail_error.connect(self._append_thumbnail_error)
 
         # Guard: prevent concurrent thumbnail fetches from double-clicking Info
@@ -457,6 +458,8 @@ class YTDLPDownloaderGUI(
             self.download_button.setEnabled(False)
             # Disable thumbnail button since info is now stale
             self.thumbnail_button.setEnabled(False)
+            self._reset_thumbnail_icon()
+            self._reset_thumbnail_icon()
             # Clear SponsorBlock bar
             self.sb_bar.set_segments([], 0)
             # Invalidate any SponsorBlock result still in flight. The lookup
@@ -578,6 +581,11 @@ class YTDLPDownloaderGUI(
             self.thumbnail_button.setEnabled(
                 bool(self.video_state.get("thumbnail_url"))
             )
+            # Fetch the thumbnail for the Info toolbar icon if available
+            if self.video_state.get("thumbnail_url"):
+                self._fetch_thumbnail_for_icon()
+            else:
+                self._reset_thumbnail_icon()
 
     # ----------------------------------------------------------------------------------------------------
     # Get selected SponsorBlock categories from checkboxes
@@ -858,6 +866,116 @@ class YTDLPDownloaderGUI(
     # Analyze the downloaded file and display metadata summary
     # ----------------------------------------------------------------------------------------------------
 
+    def reset_ui(self):
+        """Restore all controls to their default state, as when the app
+        just opened. Clears URL/title fields, resets all option groups,
+        checkboxes, output area, progress bars, and internal state.
+        """
+        # Stop any pending info-fetch timer
+        self.fetch_title_timer.stop()
+
+        # Clear URL and title fields
+        self.url_entry.clear()
+        self.title_entry.clear()
+
+        # Reset output directory
+        self.output_dir_entry.setText(DEFAULT_OUTPUT_DIR)
+
+        # Clear output area (also resets progress bars)
+        self.clear_output()
+
+        # Reset internal video state
+        self.video_state = {
+            "url": "",
+            "clean_url": "",
+            "video_id": "",
+            "title": "",
+            "description": "",
+            "thumbnail_url": "",
+            "upload_date": "",
+            "language": "",
+            "output_dir": DEFAULT_OUTPUT_DIR,
+            "base_filename": "",
+            "full_path": "",
+            "wants_video": True,
+            "wants_audio": True,
+            "wants_subtitles": False,
+            "wants_edl": False,
+            "video_format": "best",
+            "audio_format": "best",
+            "quality": "1080",
+            "video_codec": "best",
+            "is_fetching_info": False,
+            "is_download_running": False,
+            "episode_code": "",
+            "site": "youtube",
+        }
+        self.cached_video_metadata = None
+
+        # Reset type checkboxes to defaults
+        self.video_checkbox.setChecked(True)
+        self.audio_checkbox.setChecked(True)
+        self.subtitles_checkbox.setChecked(False)
+        self.edl_checkbox.setChecked(False)
+
+        # Reset radio button option groups to their defaults
+        for config in self.option_group_map:
+            group = config.get("group")
+            if group is not None:
+                for button in group.buttons():
+                    button.setChecked(False)
+                # Click the default button
+                buttons = config.get("buttons", [])
+                for btn_info in buttons:
+                    if btn_info.get("is_default"):
+                        btn_info["button"].setChecked(True)
+                        # Update video_state for this group's attr
+                        self.video_state[config["attr"]] = btn_info["value"]
+                        break
+
+        # Clear subtitle checkboxes and availability tracking
+        self.subtitle_unavailable = set()
+        for cb in self.subtitle_checkboxes.values():
+            cb.setChecked(False)
+
+        # Clear SponsorBlock category checkboxes
+        if hasattr(self, "sb_all_checkbox"):
+            self.sb_all_checkbox.setChecked(False)
+        for cb in getattr(self, "sb_checkbox_map", []):
+            cb.setChecked(False)
+
+        # Clear SponsorBlock bar
+        if hasattr(self, "sb_bar"):
+            self.sb_bar.set_segments([], 0)
+
+        # Reset thumbnail button and icon
+        self.thumbnail_button.setEnabled(False)
+        self._reset_thumbnail_icon()
+
+        # Reset download button
+        self.download_button.setEnabled(False)
+        self.download_button.setText("Download")
+        self.download_button.setProperty("status", "")
+        self.download_button.style().unpolish(self.download_button)
+        self.download_button.style().polish(self.download_button)
+        self.download_button.update()
+
+        # Reset cancel button (greyed out)
+        self.cancel_button.setEnabled(False)
+
+        # Reset download busy spinner
+        self._set_download_busy(False)
+
+        # Reset internal flags
+        self._fetching_thumbnail = False
+        self._sb_generation = 0
+        self._thumbnail_request_token = 0
+
+        # Re-enable all UI controls
+        self._set_ui_enabled_state(True)
+
+        self.signals.append_output.emit("🔄 UI reset to default state")
+
     # ----------------------------------------------------------------------------------------------------
     # Re-enable all controls after download
     # ----------------------------------------------------------------------------------------------------
@@ -868,8 +986,13 @@ class YTDLPDownloaderGUI(
         self.download_button.setText(text)
 
     def set_cancel_button_visible(self, visible: bool):
-        """Show the cancel control only while a download is actually running."""
-        self.cancel_button.setVisible(bool(visible))
+        """Enable/disable the cancel control only while a download is running.
+
+        When no download is active the button stays in the sidebar but is
+        greyed out (disabled); during a download it is enabled so it can be
+        clicked even though the rest of the UI is locked.
+        """
+        self.cancel_button.setEnabled(bool(visible))
 
     def _set_sb_bar_segments(self, segments, duration, generation):
         """Slot for signals.update_sb_bar (sb_bar exists only after init_ui).
