@@ -10,7 +10,7 @@ import re
 import shutil
 import threading
 import requests
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QSize, QTimer, Qt
 from PyQt6.QtGui import QAction, QIcon, QKeyEvent, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy, QStyle, QTextBrowser, QToolButton, QVBoxLayout, QWidget
 from ytdl.config import DEFAULT_OUTPUT_DIR
@@ -881,6 +881,10 @@ class UiBuildMixin:
                         24, Qt.TransformationMode.SmoothTransformation
                     )
                     button.setIcon(QIcon(pixmap))
+                    # Tell QToolButton the exact icon size so it doesn't
+                    # recalculate layout (which could shift height by 1-2px
+                    # vs the standard style icon).
+                    button.setIconSize(QSize(pixmap.width(), pixmap.height()))
                     return
             except Exception:
                 pass
@@ -893,6 +897,7 @@ class UiBuildMixin:
             button.setIcon(
                 self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView)
             )
+            button.setIconSize(QSize(24, 24))
 
     def _set_thumbnail_icon(self, image_data, description, snapshot_url, token):
         """Slot for signals.thumbnail_icon_ready: set the Info button icon.
