@@ -23,6 +23,8 @@ in git history if it is ever wanted back - `git show 349d0eb` is the last state
 that had it.
 """
 
+from ytdl.preferences import PAUSE_THRESHOLD_MS_DEFAULT
+
 # ---------------------------------------------------------------------------
 # Rolling layout: the YouTube player's own look.
 #
@@ -118,3 +120,97 @@ def rolling_cues(cues, windows_per_cue=ROLLING_WINDOWS_PER_CUE,
         "windows": len(usable),
     }
     return laid_out, stats
+
+
+# ---------------------------------------------------------------------------
+# Pause-aware layout: break cues at long speech pauses
+# ---------------------------------------------------------------------------
+#
+# rolling_cues() blindly pairs ASR windows in twos, so a long silence between
+# two phrases gets hidden inside a single cue block. This function instead
+# walks the per-word/per-phrase timeline and starts a new cue whenever the
+# gap between the end of one line and the start of the next exceeds
+# `pause_threshold_ms`.
+#
+# Each input line is a dict with "start", "end" (seconds) and "text" (str).
+# Lines are grouped into cues of up to two lines (YouTube's rolling look).
+# When the gap between consecutive lines is larger than the threshold, the
+# current cue is closed and the next line starts a fresh cue — even if that
+# means a single-line cue.
+#
+# Cue start = first line's own start timestamp. Cue end = last line's own end
+# timestamp (so the screen goes blank during the pause until the next cue).
+#
+# Lines are never split or re-wrapped - we only decide where to break between
+# existing lines, exactly as requested.
+# ---------------------------------------------------------------------------
+PAUSE_CUE_MIN_DUR = 0.2
+
+
+def pause_aware_cues(lines, pause_threshold_ms=PAUSE_THRESHOLD_MS_DEFAULT,
+                     min_dur=PAUSE_CUE_MIN_DUR):
+    """Group subtitle lines into cues, breaking at long speech pauses.
+
+    `lines` is a list of dicts with "start" (float seconds), "end" (float
+    seconds) and "text" (str). They must be sorted by start time.
+
+    Returns (cues, stats). Each cue is a dict with "start", "end", "duration",
+    "words" and "text" (lines joined with "\n"). A cue holds at most two lines.
+
+    A gap between the end of line N and the start of line N+1 that exceeds
+    `pause_threshold_ms` (milliseconds) closes the current cue and starts a
+    new one - producing a blank pause on screen between them. Lines are never
+    split or re-wrapped; only the boundary between existing lines can break a
+    cue.
+
+    `pause_threshold_ms=0` disables pause-based splitting, in which case lines
+    are simply paired in twos like rolling_cues().
+    """
+    if not lines:
+        return [], {"cues": 0, "two_line": 0, "windows": 0}
+
+    threshold_s = pause_threshold_ms / 1000.0
+    laid_out = []
+    current_cue = [lines[0]]
+
+    for i in range(1, len(lines)):
+        prev = lines[i - 1]
+        curr = lines[i]
+        gap = curr["start"] - prev["end"]
+
+        if gap > threshold_s:
+            # Long pause: close current cue, start a fresh one.
+            laid_out.append(_cue_from_lines(current_cue, min_dur))
+            current_cue = [curr]
+        elif len(current_cue) >= 2:
+            # Cue is full (two lines) - close it even without a pause.
+            laid_out.append(_cue_from_lines(current_cue, min_dur))
+            current_cue = [curr]
+        else:
+            current_cue.append(curr)
+
+    # Flush the last cue.
+    laid_out.append(_cue_from_lines(current_cue, min_dur))
+
+    stats = {
+        "cues": len(laid_out),
+        "two_line": sum(1 for c in laid_out if "\n" in c["text"]),
+        "windows": len(lines),
+    }
+    return laid_out, stats
+
+
+def _cue_from_lines(lines, min_dur):
+    """Build a single cue dict from a list of line dicts."""
+    start = lines[0]["start"]
+    end = lines[-1]["end"]
+    if end <= start:
+        end = start + min_dur
+    text = "\n".join(line["text"] for line in lines)
+    return {
+        "start": round(start, 3),
+        "end": round(end, 3),
+        "duration": end - start,
+        "words": sum(len(line.split()) for line in text.split("\n")),
+        "text": text,
+    }

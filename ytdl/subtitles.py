@@ -3,12 +3,13 @@
 Mixin for YTDLPDownloaderGUI (assembled in ytdl/app.py);
 methods access shared state via self."""
 
+import json
 import logging
 import os
 import re
+from ytdl.preferences import PAUSE_THRESHOLD_MS_DEFAULT, strip_bracketed_soundcues
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
-from ytdl.preferences import strip_bracketed_soundcues
-from ytdl.subtitle_layout import rolling_cues
+from ytdl.subtitle_layout import pause_aware_cues, rolling_cues
 from ytdl.utils import (
     SUBTITLE_LANG_ALIASES,
     canonical_subtitle_lang,
@@ -171,12 +172,12 @@ class SubtitleMixin:
         try:
             for fname in os.listdir(out_dir):
                 # Suffix match: the base filename (video title) is arbitrary;
-                # only the trailing "<lang>[-auto].srt/vtt" part identifies a
+                # only the trailing "<lang>[-auto].<ext>" part identifies a
                 # subtitle file. An "a." prefix or a "-auto" suffix marks a
                 # generated track; an unmarked name is resolved via the info
                 # fetch (see _subtitle_type_for_file).
                 m = re.search(
-                    r"(?P<prefix>a\.)?(?P<lang>[A-Za-z0-9]+)(?P<auto>-auto)?\.(?P<ext>srt|vtt)$",
+                    r"(?P<prefix>a\.)?(?P<lang>[A-Za-z0-9]+)(?P<auto>-auto)?\.(?P<ext>srt|vtt|json3)$",
                     fname,
                 )
                 if not m:
@@ -201,12 +202,13 @@ class SubtitleMixin:
             if not candidates:
                 continue
             # Prefer: manual "real" over "auto", canonical names over
-            # "-auto", converted .srt over raw .vtt, then a stable tiebreak.
+            # "-auto", json3 over other extensions (json3 is our source),
+            # then a stable tiebreak.
             candidates.sort(
                 key=lambda p: (
                     found_sub_files[p][1] != "real",
                     "-auto" in p,
-                    found_sub_files[p][2] != "srt",
+                    found_sub_files[p][2] != "json3",
                     p,
                 )
             )
@@ -270,6 +272,11 @@ class SubtitleMixin:
         """
         normalized = []
         for lang, srt_path, sub_type in downloaded_subs:
+            # JSON3 files keep their site-given name until resync; only SRT/VTT
+            # files get renamed to canonical form. JSON3 is processed in place.
+            if srt_path.lower().endswith(".json3"):
+                normalized.append((lang, srt_path, sub_type))
+                continue
             canonical = self._subtitle_output_path(lang, bare=bare)
             if srt_path != canonical and srt_path and os.path.exists(srt_path):
                 try:
@@ -294,7 +301,7 @@ class SubtitleMixin:
         Returns the removed path, or None if there was nothing to remove.
         """
         removed = None
-        for extension in (".srt", ".vtt"):
+        for extension in (".srt", ".vtt", ".json3"):
             path = self.get_full_path(extension)
             if not os.path.isfile(path):
                 continue
@@ -357,22 +364,181 @@ class SubtitleMixin:
         is what lets the standalone path keep the window responsive: the whole
         parse/layout/write happens off-thread and the lines are queued for the
         main thread to print.
+
+        Subtitles can arrive either as SRT (legacy) or JSON3 (per-word
+        timestamps from YouTube's timedtext API). JSON3 is parsed into line
+        units with per-word timing, then passed through `pause_aware_cues()`
+        which breaks cues at long speech pauses (> pause_threshold_ms). SRT
+        uses the existing rolling_cues() path unchanged.
         """
-        lines = []
+        lines_out = []
         if not os.path.exists(srt_path):
             logger.warning(f"Subtitle file not found: {srt_path}")
-            return False, lines
+            return False, lines_out
 
         try:
             with open(srt_path, "r", encoding="utf-8") as f:
-                content = f.read()
+                content_json3 = f.read()
         except (OSError, UnicodeError) as e:
             logger.warning("Could not read subtitle file %s: %s", srt_path, e)
-            lines.append(
+            lines_out.append(
                 f"⚠️ Could not read subtitle file: {os.path.basename(srt_path)}"
             )
-            return False, lines
+            return False, lines_out
 
+        # JSON3 files carry per-word timestamps and are laid out by
+        # pause_aware_cues(); SRT files use the existing rolling_cues() path.
+        if srt_path.lower().endswith(".json3"):
+            return self._resync_json3_subtitles(
+                content_json3, srt_path, output_path, lines_out
+            )
+
+        return self._resync_srt_subtitles(
+            content_json3, srt_path, output_path, lines_out
+        )
+
+    def _parse_json3_subtitles(self, content: str) -> list:
+        """Parse a JSON3 subtitle string into line dicts.
+
+        Each JSON3 `event` is one caption line:
+          - tStartMs / dDurationMs give absolute start/end in ms
+          - segs[].utf8 gives the text (concatenated = full line)
+          - aAppend: 1 means append to the previous line (no line break)
+
+        Returns a list of dicts: {start, end, text}, sorted by start time.
+        Overlapping events are kept as-is; pause detection happens downstream
+        in pause_aware_cues().
+        """
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning("Could not parse JSON3 subtitle file: %s", e)
+            return []
+
+        events = data.get("events", [])
+        lines_out = []
+
+        for ev in events:
+            start_ms = ev.get("tStartMs", 0)
+            dur_ms = ev.get("dDurationMs", 0)
+            end_ms = start_ms + dur_ms
+
+            segs = ev.get("segs", [])
+            text = "".join(s.get("utf8", "") for s in segs).strip()
+
+            if not text:
+                continue
+
+            start_sec = start_ms / 1000.0
+            end_sec = end_ms / 1000.0
+
+            # aAppend=1 means this event continues the previous visual line
+            if ev.get("aAppend") and lines_out:
+                lines_out[-1]["text"] += " " + text
+                lines_out[-1]["end"] = end_sec
+            else:
+                lines_out.append(
+                    {"start": start_sec, "end": end_sec, "text": text}
+                )
+
+        return lines_out
+
+    def _resync_json3_subtitles(
+        self, content: str, srt_path: str, output_path: str, lines_out: list
+    ):
+        """Resync a JSON3 subtitle file using per-word timestamps.
+
+        Parses JSON3 events into lines, then groups them into cues with
+        pause_aware_cues() so that long speech pauses (> pause_threshold_ms)
+        break the cue and leave a blank gap on screen.
+        """
+        subtitle_lines = self._parse_json3_subtitles(content)
+
+        if not subtitle_lines:
+            lines_out.append(
+                "⚠️ No valid subtitle cues found; keeping the original file"
+            )
+            return False, lines_out
+
+        # One decision per file, so a run can never come out half-stripped
+        strip_soundcues = strip_bracketed_soundcues()
+        if strip_soundcues:
+            for sub in subtitle_lines:
+                sub["text"] = self._strip_nonspoken_brackets(sub["text"])
+            # Drop lines that became empty after stripping
+            subtitle_lines = [s for s in subtitle_lines if s["text"].strip()]
+
+        if not subtitle_lines:
+            lines_out.append(
+                "⚠️ No valid subtitle cues found; keeping the original file"
+            )
+            return False, lines_out
+
+        # Pause-aware layout: break cues at long speech pauses
+        pause_ms = pause_threshold_ms()
+        merged_subtitles, layout_stats = pause_aware_cues(
+            subtitle_lines, pause_threshold_ms=pause_ms
+        )
+
+        if not merged_subtitles:
+            logger.warning(
+                "Subtitle processing produced no cues for %s", srt_path
+            )
+            lines_out.append(
+                "⚠️ Subtitle processing produced no cues; keeping the original file"
+            )
+            return False, lines_out
+
+        resynced_blocks = []
+        for i, sub in enumerate(merged_subtitles, 1):
+            time_line = (
+                f"{format_srt_time(sub['start'])} --> {format_srt_time(sub['end'])}"
+            )
+            block = f"{i}\n{time_line}\n{sub['text']}"
+            resynced_blocks.append(block)
+
+        # Write beside the destination and replace atomically
+        temp_path = f"{output_path}.tmp"
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write("\n\n".join(resynced_blocks) + "\n")
+            os.replace(temp_path, output_path)
+        except OSError:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            raise
+
+        lines_out.append("💬 Subtitles merged.")
+
+        two_line_cues = sum(
+            1 for sub in merged_subtitles if "\n" in (sub.get("text") or "")
+        )
+        lines_out.append(
+            "  📊 "
+            + format_subtitle_stats(
+                len(subtitle_lines),
+                len(merged_subtitles),
+                counters={
+                    "two_line": two_line_cues,
+                    "dropped": layout_stats.get("dropped", 0),
+                },
+                name=os.path.basename(output_path),
+            )
+        )
+        lines_out.extend(
+            self._warn_about_dropped_cues(
+                layout_stats.get("dropped_cues") or [],
+                os.path.basename(output_path),
+            )
+        )
+        return True, lines_out
+
+    def _resync_srt_subtitles(
+        self, content: str, srt_path: str, output_path: str, lines_out: list
+    ):
+        """Resync an SRT subtitle file using the existing rolling_cues path."""
         # Accept common CRLF/CR subtitle files as well as Unix LF files.
         normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
         blocks = re.split(r"\n\s*\n", normalized_content.strip())
@@ -386,12 +552,8 @@ class SubtitleMixin:
 
         # First pass: collect all subtitles and find max time
         for block in blocks:
-            # `lines` is the panel output this method returns - the parse loop
-            # must NOT reuse that name for a block's raw text lines. It once
-            # did, and the shadowed list came back holding the LAST source
-            # block verbatim (cue number, timestamp, unstripped text), with the
-            # summary lines appended after it - observed live: a raw
-            # ">> [music]" cue printed into the output panel.
+            # `lines_out` is the panel output this method returns - the parse
+            # loop must NOT reuse that name for a block's raw text lines.
             block_lines = block.split("\n")
 
             # Locate the timestamp line rather than assuming a fixed index:
@@ -442,10 +604,10 @@ class SubtitleMixin:
                 no_text_cues += 1
 
         if not subtitles:
-            lines.append(
+            lines_out.append(
                 "⚠️ No valid subtitle cues found; keeping the original file"
             )
-            return False, lines
+            return False, lines_out
 
         # Drop cues with no usable duration. Timestamps are the source ones -
         # see the docstring for why they are never retimed.
@@ -468,13 +630,14 @@ class SubtitleMixin:
             adjusted_subtitles
         )
 
-        # Write merged and resynced subtitles
         if not merged_subtitles:
-            logger.warning("Subtitle processing produced no cues for %s", srt_path)
-            lines.append(
+            logger.warning(
+                "Subtitle processing produced no cues for %s", srt_path
+            )
+            lines_out.append(
                 "⚠️ Subtitle processing produced no cues; keeping the original file"
             )
-            return False, lines
+            return False, lines_out
 
         resynced_blocks = []
         for i, sub in enumerate(merged_subtitles, 1):
@@ -501,7 +664,7 @@ class SubtitleMixin:
                 pass
             raise
 
-        lines.append("💬 Subtitles merged.")
+        lines_out.append("💬 Subtitles merged.")
 
         # What the layout actually did, per file. A whole video's subtitles can
         # be skipped by the gate upstream (or merged into nothing) without a
@@ -513,7 +676,7 @@ class SubtitleMixin:
         two_line_cues = sum(
             1 for sub in merged_subtitles if "\n" in (sub.get("text") or "")
         )
-        lines.append(
+        lines_out.append(
             "  📊 "
             + format_subtitle_stats(
                 len(adjusted_subtitles),
@@ -527,13 +690,13 @@ class SubtitleMixin:
                 name=os.path.basename(output_path),
             )
         )
-        lines.extend(
+        lines_out.extend(
             self._warn_about_dropped_cues(
                 layout_stats.get("dropped_cues") or [],
                 os.path.basename(output_path),
             )
         )
-        return True, lines
+        return True, lines_out
 
     def _run_subtitle_resync(self, srt_path):
         """Run resync_subtitles() off the GUI thread and print its output.

@@ -973,6 +973,15 @@ class DownloadMixin:
                 except OSError:
                     pass
 
+            # Clean up JSON3 source files after resync (auto and manual)
+            for suffix in (f".a.{code}.json3", f".{code}.json3"):
+                json3_file = self.get_full_path(suffix)
+                if os.path.exists(json3_file):
+                    try:
+                        os.remove(json3_file)
+                    except OSError:
+                        pass
+
             # Also clean up any lingering .resynced or .merged files from previous versions
             for suffix in [".resynced", ".merged"]:
                 old_path = self.get_full_path(f".{code}{suffix}.srt")

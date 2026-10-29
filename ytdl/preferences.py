@@ -82,6 +82,21 @@ TOOLTIP_CHANNEL_NAME_MAP_EDITOR = (
     f"Editing: {PREFERENCES_FILE}"
 )
 
+# Longest gap between spoken phrases before a subtitle cue is broken into two.
+# Below this, phrases stay in the same cue (YouTube's own rolling look).
+# Above this, a blank pause is inserted and the next phrase starts a new cue.
+PAUSE_THRESHOLD_MS_DEFAULT = 2000
+
+TOOLTIP_PAUSE_THRESHOLD_MS = (
+    "pause_threshold_ms: integer milliseconds (default 2000). When "
+    "subtitles are downloaded in JSON3 format, the gap between spoken "
+    "phrases is measured from per-word timestamps. If a gap exceeds this "
+    "threshold, the cue is broken there — a blank pause appears on "
+    "screen and the next phrase starts a new cue. Below it, phrases "
+    "stay in the same cue (YouTube's own rolling look). Set to 0 to "
+    "disable pause-based splitting."
+)
+
 
 def validate_cookies_from_browser(value):
     """Validate cookies_from_browser value. Returns (is_valid, error_msg)."""
@@ -185,6 +200,26 @@ def show_fetchinfo_command(prefs_dict=None):
     return False
 
 
+def pause_threshold_ms(prefs_dict=None):
+    """Longest gap between spoken phrases before a subtitle cue is broken.
+
+    Returns the value in milliseconds as an int. A malformed or missing
+    value falls back to the default (2000ms = 2 seconds).
+    """
+    source = preferences if prefs_dict is None else prefs_dict
+    raw = (source or {}).get("pause_threshold_ms")
+    if isinstance(raw, bool):
+        logger.warning("pause_threshold_ms is bool, not a number — using default")
+        return PAUSE_THRESHOLD_MS_DEFAULT
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    if raw is not None:
+        logger.warning(
+            f"pause_threshold_ms is {type(raw).__name__}, not a number — using default"
+        )
+    return PAUSE_THRESHOLD_MS_DEFAULT
+
+
 def load_preferences():
     """Load preferences from preferences.json (macOS: ~/Library/Application Support/,
     Linux: ~/.config/)."""
@@ -194,6 +229,7 @@ def load_preferences():
         "cookies_from_browser": "",
         "cookies_from_browser_enabled": COOKIES_FROM_BROWSER_ENABLED_DEFAULT,
         "show_fetchinfo_command": False,
+        "pause_threshold_ms": PAUSE_THRESHOLD_MS_DEFAULT,
     }
 
     try:
@@ -242,6 +278,15 @@ def apply_preferences(parsed):
             preferences["cookies_from_browser_enabled"] = bool(
                 COOKIES_FROM_BROWSER_ENABLED_DEFAULT
             )
+    # pause_threshold_ms is an integer number of milliseconds.
+    if "pause_threshold_ms" in parsed:
+        raw = parsed["pause_threshold_ms"]
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            logger.warning(
+                "pause_threshold_ms is not a number — using default %d ms",
+                PAUSE_THRESHOLD_MS_DEFAULT,
+            )
+            preferences["pause_threshold_ms"] = PAUSE_THRESHOLD_MS_DEFAULT
 
 
 # Loaded once at import time
