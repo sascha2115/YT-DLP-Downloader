@@ -180,16 +180,18 @@ def pause_aware_cues(lines, pause_threshold_ms=PAUSE_THRESHOLD_MS_DEFAULT,
 
         if gap > threshold_s:
             # Long pause: close current cue, start a fresh one.
-            laid_out.append(_cue_from_lines(current_cue, min_dur))
+            # End at curr's start so cues never overlap.
+            laid_out.append(_cue_from_lines(current_cue, min_dur, end_override=curr["start"]))
             current_cue = [curr]
         elif len(current_cue) >= 2:
             # Cue is full (two lines) - close it even without a pause.
-            laid_out.append(_cue_from_lines(current_cue, min_dur))
+            # End at curr's start so cues never overlap.
+            laid_out.append(_cue_from_lines(current_cue, min_dur, end_override=curr["start"]))
             current_cue = [curr]
         else:
             current_cue.append(curr)
 
-    # Flush the last cue.
+    # Flush the last cue - uses its own last line's end (no successor).
     laid_out.append(_cue_from_lines(current_cue, min_dur))
 
     stats = {
@@ -200,10 +202,15 @@ def pause_aware_cues(lines, pause_threshold_ms=PAUSE_THRESHOLD_MS_DEFAULT,
     return laid_out, stats
 
 
-def _cue_from_lines(lines, min_dur):
-    """Build a single cue dict from a list of line dicts."""
+def _cue_from_lines(lines, min_dur, end_override=None):
+    """Build a single cue dict from a list of line dicts.
+
+    `end_override` forces the cue end time (used when the next cue's first
+    line starts here, so cues never overlap). When None, uses the last line's
+    own end time (for the final cue which has no successor).
+    """
     start = lines[0]["start"]
-    end = lines[-1]["end"]
+    end = end_override if end_override is not None else lines[-1]["end"]
     if end <= start:
         end = start + min_dur
     text = "\n".join(line["text"] for line in lines)
