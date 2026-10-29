@@ -425,6 +425,8 @@ class SubtitleMixin:
 
             segs = ev.get("segs", [])
             text = "".join(s.get("utf8", "") for s in segs).strip()
+            # Strip >> speaker-change markers, same as SRT path does
+            text = re.sub(r'^>>\s*', '', text, flags=re.MULTILINE).strip()
 
             if not text:
                 continue
