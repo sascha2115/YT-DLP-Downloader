@@ -22,6 +22,33 @@ from ytdl.widgets import BusySpinner, CustomTextEdit, SB_CATEGORY_COLORS, SB_DIS
 logger = logging.getLogger(__name__)
 
 
+def _thumbnail_candidate_urls(thumbnail_url, video_id):
+    """Build thumbnail URL candidates, primary (yt-dlp's value) first.
+
+    yt-dlp now hands out localized YouTube thumbnails
+    (``https://i.ytimg.com/vi_lc/<id>/maxresdefault_en-US.jpg``) that 404 for
+    some videos, while the classic
+    ``https://img.youtube.com/vi/<id>/maxresdefault.jpg`` still works for them.
+    The yt-dlp URL is tried first so unchanged videos keep using it; fallbacks
+    are only added for YouTube-hosted thumbnails, leaving other sites untouched.
+    """
+    candidates = []
+    if thumbnail_url:
+        candidates.append(thumbnail_url)
+    if video_id and ("youtube" in thumbnail_url or "ytimg" in thumbnail_url):
+        candidates.append(f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg")
+        candidates.append(f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg")
+    # De-duplicate while preserving order, so a primary that already equals a
+    # fallback pattern is only tried once.
+    seen = set()
+    unique = []
+    for url in candidates:
+        if url not in seen:
+            seen.add(url)
+            unique.append(url)
+    return unique
+
+
 class UiBuildMixin:
     def check_dependencies(self):
         missing = []
@@ -927,22 +954,31 @@ class UiBuildMixin:
         snapshot_url = thumbnail_url
 
         def _fetch():
-            try:
+            image_data = None
+            last_error = None
+            # Try the yt-dlp URL first, then fall back to unlocalized YouTube
+            # patterns for videos whose localized thumbnail 404s.
+            for url in _thumbnail_candidate_urls(thumbnail_url, self.video_state.get("video_id", "")):
                 try:
-                    response = requests.get(snapshot_url, timeout=10)
+                    response = requests.get(url, timeout=10)
                     response.raise_for_status()
                     image_data = response.content
-                except Exception:
-                    image_data = None
-                self._emit(
-                    "thumbnail_icon_ready",
-                    image_data,
-                    "",
-                    snapshot_url,
-                    snapshot_token,
+                    break
+                except Exception as e:
+                    last_error = e
+            if image_data is None:
+                logger.debug(
+                    "Thumbnail fetch failed for %s: %s",
+                    thumbnail_url,
+                    last_error,
                 )
-            except Exception:
-                pass
+            self._emit(
+                "thumbnail_icon_ready",
+                image_data,
+                "",
+                snapshot_url,
+                snapshot_token,
+            )
 
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -985,18 +1021,26 @@ class UiBuildMixin:
 
         def _fetch_and_show():
             try:
-                try:
-                    response = requests.get(snapshot_url, timeout=10)
-                    response.raise_for_status()
-                    image_data = response.content
-                except Exception as e:
+                image_data = None
+                last_error = None
+                # Try the yt-dlp URL first, then fall back to unlocalized YouTube
+                # patterns for videos whose localized thumbnail 404s.
+                for url in _thumbnail_candidate_urls(thumbnail_url, self.video_state.get("video_id", "")):
+                    try:
+                        response = requests.get(url, timeout=10)
+                        response.raise_for_status()
+                        image_data = response.content
+                        break
+                    except Exception as e:
+                        last_error = e
+                if image_data is None:
                     # Worker thread: route through _emit() so a close in flight
                     # cannot emit into a destroyed QObject. The token and the
-                    # URL travel with the message so a failure for an old
+                    # primary URL travel with the message so a failure for an old
                     # request cannot be logged over the new video.
                     self._emit(
                         "thumbnail_error",
-                        f"🚩 Error loading thumbnail: {e}",
+                        f"🚩 Error loading thumbnail: {last_error}",
                         snapshot_url,
                         snapshot_token,
                     )
@@ -1006,9 +1050,10 @@ class UiBuildMixin:
                 # thread. (QTimer.singleShot from a plain threading.Thread has
                 # no event loop and is silently dropped by Qt 6.) _emit()
                 # guards it too, so a close in flight cannot deliver into a
-                # destroyed window. The description and URL travel with the
-                # image so the dialog cannot mix metadata from two different
-                # videos.
+                # destroyed window. The description and the primary URL travel
+                # with the image so the dialog cannot mix metadata from two
+                # different videos, and the staleness guards in the receivers
+                # keep comparing against video_state["thumbnail_url"].
                 self._emit(
                     "thumbnail_ready", image_data, snapshot_description, snapshot_url, snapshot_token
                 )

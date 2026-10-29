@@ -26,6 +26,13 @@ disagree, this file is right.
 
 ---
 
+## 1.5.9 — 2026-10-29
+
+- **Show Info thumbnail tries a fallback when the source URL 404s.** Some YouTube
+  videos' localized thumbnail URL returned by yt-dlp is not found; Show Info now
+  also tries the standard `https://img.youtube.com/vi/<id>/maxresdefault.jpg`
+  pattern, so the thumbnail loads for those videos too.
+
 ## 1.5.8 — 2026-10-28
 
 - **Show Info thumbnail no longer forced square.** The video thumbnail shown on the
