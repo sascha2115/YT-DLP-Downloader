@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import re
-from ytdl.preferences import PAUSE_THRESHOLD_MS_DEFAULT, strip_bracketed_soundcues
+from ytdl.preferences import PAUSE_THRESHOLD_MS_DEFAULT, pause_threshold_ms, strip_bracketed_soundcues
 from ytdl.sites import DEFAULT_SITE, site_resyncs_auto_subs
 from ytdl.subtitle_layout import pause_aware_cues, rolling_cues
 from ytdl.utils import (
